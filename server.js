@@ -1,4 +1,3 @@
-<meta name='viewport' content='width=device-width, initial-scale=1'/><script>//
 // XamePage v2.1 Server File
 //
 // This server has been rebuilt for production-grade reliability and scalability.
@@ -11,7 +10,8 @@
 // - **NEW:** Implements server-side privacy filtering for profile data and caller identity.
 // - **UPDATE:** Comprehensive API endpoint for permanent chat and contact deletion.
 // - **FIXED:** Implements real-time message deletion logic.
-//
+
+//======================
 const express = require('express');
 const http = require('http');
 const { Server } = require("socket.io");
@@ -23,6 +23,7 @@ const mongoose = require('mongoose');
 const { v4: uuidv4 } = require('uuid');
 const cors = require('cors'); 
 const { body, validationResult } = require('express-validator');
+require('dotenv').config();
 
 // --- Server setup ---
 const app = express();
@@ -34,19 +35,24 @@ const io = new Server(server, {
     }
 });
 
-// --- MongoDB Configuration ---
-require('dotenv').config();
+// Optional: JSON middleware
+app.use(express.json());
 
-// We will use the cloud URI for production-grade persistence
+// --- MongoDB Configuration ---
 const MONGODB_URI = process.env.MONGODB_CLOUD_URI;
 
+// Check if the URI exists
 if (!MONGODB_URI) {
-    console.error('❌ MONGODB_CLOUD_URI is not defined in the environment variables.');
+    console.error('❌ ERROR: MONGODB_CLOUD_URI is not defined in environment variables.');
     process.exit(1);
 }
 
+// Optional: log the first 10 chars to confirm it's loaded (never log full password in prod)
+console.log('✅ Mongo URI loaded:', MONGODB_URI.slice(0, 10) + '...');
+
+// Connect to MongoDB
 mongoose.connect(MONGODB_URI)
-    .then(() => console.log('✅ MongoDB connected'))
+    .then(() => console.log('✅ MongoDB connected successfully'))
     .catch(err => {
         console.error('❌ MongoDB connection error:', err);
         process.exit(1);
@@ -1164,10 +1170,13 @@ io.on('connection', (socket) => {
     
 });
 
+// --- Example Express route ---
+app.get('/', (req, res) => {
+    res.send('Server is live!');
+});
+
+// --- Start server ---
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
-    console.log(`Access the app at http://localhost:${PORT}`);
 });
-
-</script>

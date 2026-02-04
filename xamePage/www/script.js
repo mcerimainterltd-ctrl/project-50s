@@ -1,4 +1,4 @@
-/*
+<meta name='viewport' content='width=device-width, initial-scale=1'/>/*
 // PART 1: Header and Core Setup with Security & Performance Fixes
 */
 
@@ -13,9 +13,9 @@ window.addEventListener('error', (e) => {
 });
 // ===== End debugging block =====
 
-
 // --- Dynamic Server URL based on environment ---
 let socket = null;
+
 let serverURL;
 
 const currentHostname = window.location.hostname;
@@ -25,12 +25,11 @@ if (currentHostname.includes('trycloudflare.com')) {
     serverURL = `https://${currentHostname}`;
     console.log("Using Cloudflare URL:", serverURL);
 } else if (currentHostname === 'localhost' || currentHostname === '127.0.0.1') {
-    serverURL = `http://localhost:${currentPort || 8080}`; // use port 8080 if not defined
+    serverURL = `http://localhost:${currentPort}`;
     console.log("Using Localhost URL:", serverURL);
 } else {
-    // For production (Render or any live URL)
-    serverURL = `https://${currentHostname}`;  // always HTTPS
-    console.log("Using Production URL:", serverURL);
+    serverURL = `http://${currentHostname}:${currentPort}`;
+    console.log("Using Network IP URL:", serverURL);
 }
 
 // ===== DUAL STORAGE: In-Memory + LocalStorage Fallback =====
@@ -12527,3 +12526,4 @@ console.log('📦 Active resources:', window.__XAME_DEBUG__.getResourceCount());
 /*
 // END OF OPTIMIZED XAMEPAGE v2.1
 */
+</script>
