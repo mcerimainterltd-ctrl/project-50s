@@ -16,16 +16,16 @@ window.addEventListener('error', (e) => {
 // --- ✅ FIXED: Dynamic Server URL based on environment ---
 let socket = null;
 
-// ✅ CRITICAL FIX: Use window.location.origin for cross-platform compatibility
-const serverURL = window.location.origin;
-console.log("🌐 Server URL (auto-detected):", serverURL);
-console.log("✅ Works on Termux, Render, and any deployment platform");
+// Detect platform by protocol
+const isPackagedApp = window.location.protocol === 'file:';
 
-// This automatically handles:
-// - http://localhost:8080 (Termux)
-// - https://project-50s.onrender.com (Render)
-// - https://*.trycloudflare.com (Cloudflare)
-// - Any other deployment without code changes
+// Use hardcoded URL for Android/iOS apps, auto-detect for PWA
+const serverURL = isPackagedApp
+    ? 'https://project-50s.onrender.com'   // Android APK / iOS
+    : window.location.origin;               // PWA / Browser (auto-detect)
+
+console.log("🌐 Server URL:", serverURL);
+console.log("📱 Platform:", isPackagedApp ? "Packaged App (APK/iOS)" : "Web/PWA");
 
 // ===== DUAL STORAGE: In-Memory + LocalStorage Fallback =====
 const memoryStorage = new Map();
@@ -67,6 +67,7 @@ const persistentStorage = {
     }
   }
 };
+
 
 // Initialize memory storage from persistent storage on boot
 function initializeMemoryFromPersistent() {
