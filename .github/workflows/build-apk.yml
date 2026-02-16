@@ -25,6 +25,9 @@ jobs:
       - name: Install dependencies
         run: npm install
         
+      - name: Install Capacitor CLI
+        run: npm install -g @capacitor/cli
+        
       - name: Sync Capacitor
         run: npx cap sync
         
@@ -32,7 +35,7 @@ jobs:
         run: cd android && ./gradlew assembleDebug
         
       - name: Upload APK
-        uses: actions/upload-artifact@v4  # <-- CHANGED FROM v3 TO v4
+        uses: actions/upload-artifact@v4
         with:
           name: xamepage-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
