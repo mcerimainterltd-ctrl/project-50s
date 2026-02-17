@@ -34,3 +34,5 @@ uploads/*
 media/profile_pics/*
 !media/profile_pics/.gitkeep
 !media/profile_pics/default.png
+ct-50s-backup/
+ct-50s-backup/

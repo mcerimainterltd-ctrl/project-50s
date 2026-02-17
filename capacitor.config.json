@@ -1,5 +1,12 @@
 {
-  "appId": "com.example.app",
-  "appName": "xamepage-server",
-  "webDir": "www"
+  "appId": "com.xamepage",
+  "appName": "XamePage",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true
+  }
 }
