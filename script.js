@@ -16,16 +16,25 @@ window.addEventListener('error', (e) => {
 // --- ✅ FIXED: Dynamic Server URL based on environment ---
 let socket = null;
 
-// Detect platform by protocol
-const isPackagedApp = window.location.protocol === 'file:';
+// Detect if running in Capacitor native app
+const isCapacitorNative = () => {
+    return window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform();
+};
+
+const isPackagedApp = isCapacitorNative();
+
+// ✅ ADD DEBUG LOGS HERE (before setting serverURL)
+console.log("Protocol:", window.location.protocol);
+console.log("Capacitor available:", !!window.Capacitor);
+console.log("Is native:", window.Capacitor?.isNativePlatform?.());
 
 // Use hardcoded URL for Android/iOS apps, auto-detect for PWA
 const serverURL = isPackagedApp
-    ? 'https://project-50s.onrender.com'   // Android APK / iOS
+    ? 'https://project-50s.onrender.com'   // Android APK / iOS / Native
     : window.location.origin;               // PWA / Browser (auto-detect)
 
 console.log("🌐 Server URL:", serverURL);
-console.log("📱 Platform:", isPackagedApp ? "Packaged App (APK/iOS)" : "Web/PWA");
+console.log("📱 Platform:", isPackagedApp ? "Capacitor Native App" : "Web/PWA");
 
 // ===== DUAL STORAGE: In-Memory + LocalStorage Fallback =====
 const memoryStorage = new Map();
