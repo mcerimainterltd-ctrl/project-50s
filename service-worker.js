@@ -1,67 +1,57 @@
-
-const CACHE_NAME = "xamepage-v2.1-PROD";
-
-const ASSETS = [
+const CACHE_NAME = "xamepage-v2.1-v21"; // Renamed cache for a new version
+const urlsToCache = [
   "./",
   "index.html",
-  "style.css",
-  "script.js",
+  "styles.css",
+  "app.js",
   "manifest.json",
-
-  "xamepage_icon.png",
-  "xamepage_splash.png",
-
-  "xamepage_call.mp3",
-  "xamepage_outgoing.mp3",
-  "xamepage_message.mp3"
+  "offline.html", // New: Add the fallback page to the cache
+  "icons/icon-192x192.png",
+  "icons/icon-512x512.png"
 ];
 
-/* Install: cache everything */
+// Force immediate activation
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', event => event.waitUntil(clients.claim()));
+
+// Install and cache assets
 self.addEventListener("install", event => {
-  self.skipWaiting();
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS))
+    caches.open(CACHE_NAME).then(cache => cache.addAll(urlsToCache))
   );
 });
 
-/* Activate: delete old cache */
+// Clean up old caches
 self.addEventListener("activate", event => {
   event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.map(k => k !== CACHE_NAME && caches.delete(k)))
+    caches.keys().then(names =>
+      Promise.all(names.map(name => name !== CACHE_NAME && caches.delete(name)))
     )
   );
-  self.clients.claim();
 });
 
-/* Fetch: network first for socket, cache first for UI */
+// Serve from cache, fallback to network, then to offline page
 self.addEventListener("fetch", event => {
-  const url = new URL(event.request.url);
-
-  /* Always use network for socket.io */
-  if (url.pathname.includes("/socket.io")) {
-    event.respondWith(fetch(event.request));
+  const url = event.request.url;
+  // Always fetch JS and CSS from network to avoid stale cache issues
+  if (url.endsWith('.js') || url.includes('.js?') || url.endsWith('.css') || url.includes('.css?')) {
+    event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
     return;
   }
-
-  /* Navigation (app start) */
-  if (event.request.mode === "navigate") {
+  if (event.request.mode === 'navigate') {
     event.respondWith(
-      fetch(event.request).catch(() => caches.match("index.html"))
+      fetch(event.request).catch(() => caches.match('offline.html'))
     );
-    return;
+  } else {
+    event.respondWith(
+      caches.match(event.request)
+        .then(response => {
+          if (response) {
+            return response;
+          }
+          return fetch(event.request)
+            .catch(() => caches.match('offline.html'));
+        })
+    );
   }
-
-  /* Static files */
-  event.respondWith(
-    caches.match(event.request).then(res => {
-      return res || fetch(event.request).then(networkRes => {
-        if (networkRes.ok) {
-          const copy = networkRes.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy));
-        }
-        return networkRes;
-      });
-    })
-  );
 });
