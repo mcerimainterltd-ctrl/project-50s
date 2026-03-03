@@ -1,0 +1,576 @@
+<!-- index.html - XamePage v2.1.1 — Fully Integrated Modular Architecture -->
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content, viewport-fit=cover" />
+
+  <!-- PWA / native-feel meta -->
+  <meta name="mobile-web-app-capable"          content="yes" />
+  <meta name="apple-mobile-web-app-capable"    content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title"      content="XamePage" />
+  <meta name="application-name"                content="XamePage" />
+  <meta name="theme-color"                     content="#0f1419" />
+  <meta name="description"                     content="XamePage — secure real-time messaging" />
+  <title>XamePage v2.1</title>
+
+  <link rel="manifest" href="manifest.json" />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+
+  <!-- Cropper.js CSS -->
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.12/cropper.min.css" rel="stylesheet">
+
+  <!-- PWA Splash & Touch Icons -->
+  <link rel="apple-touch-icon" href="/media/icons/icon-192.png">
+  <link rel="apple-touch-startup-image" href="/media/splash/xamepage_splash.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="XamePage">
+  <meta name="msapplication-TileImage" content="/media/icons/icon-144x144.png">
+  <meta name="msapplication-TileColor" content="#1A1F2E">
+
+  <!-- App stylesheets -->
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/modules.css?v=2">
+
+  <!--
+    WaveSurfer — loaded synchronously (no defer) so it is available
+    as a global when messaging.js initialises waveforms.
+  -->
+  <script src="/js/wavesurfer.min.js"></script>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════ APP ROOT ═══════════════════════════════════════ -->
+<div id="app">
+
+  <!-- ┌──────────────────────┐
+       │       LANDING        │
+       └──────────────────────┘ -->
+  <div id="landing" class="screen auth-container">
+    <h1 class="title">XamePage</h1>
+    <p id="auth-subtitle" class="subtitle">Log in or create an account to continue.</p>
+    <div id="auth-buttons" class="landing-buttons">
+      <button id="signUpBtn" class="btn primary"    type="button">Sign Up</button>
+      <button id="signInBtn" class="btn secondary"  type="button">Sign In</button>
+    </div>
+  </div>
+
+  <!-- ┌──────────────────────┐
+       │     REGISTRATION     │
+       └──────────────────────┘ -->
+  <div id="register" class="screen hidden">
+    <header class="auth-container-header">
+      <button id="backToLandingBtn" class="icon-btn" type="button" aria-label="Back">&larr;</button>
+    </header>
+    <div class="auth-content">
+      <h1 class="title">XamePage</h1>
+      <p class="subtitle">Create your account to continue.</p>
+      <form id="registerForm" class="form-section" novalidate>
+
+        <label class="sr-only" for="firstNameInput">First name</label>
+        <input id="firstNameInput" class="input" placeholder="First name"
+               autocomplete="given-name" required maxlength="30" />
+
+        <label class="sr-only" for="lastNameInput">Last name</label>
+        <input id="lastNameInput"  class="input" placeholder="Last name"
+               autocomplete="family-name" required maxlength="30" />
+
+        <!--
+          DOB: three text inputs instead of <input type="date"> because iOS Safari
+          and many Android browsers show inconsistent native date pickers.
+          inputmode="numeric" shows the number keyboard without triggering a date-picker.
+        -->
+        <div class="input-group">
+          <span class="sr-only" id="dobLabel">Date of birth (DD-MM-YYYY)</span>
+          <div class="date-input-container" role="group" aria-labelledby="dobLabel">
+            <input type="text" id="dobDay"   class="date-part" maxlength="2" placeholder="DD"
+                   inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="Day" />
+            <span class="separator" aria-hidden="true">-</span>
+            <input type="text" id="dobMonth" class="date-part" maxlength="2" placeholder="MM"
+                   inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="Month" />
+            <span class="separator" aria-hidden="true">-</span>
+            <input type="text" id="dobYear"  class="date-part" maxlength="4" placeholder="YYYY"
+                   inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="Year" />
+          </div>
+          <div id="dobError" class="error-message" role="alert" aria-live="polite" style="display:none;"></div>
+        </div>
+
+        <!-- Hidden date field consumed by auth.js validation -->
+        <input id="dobHiddenDateInput" type="date" style="display:none;" tabindex="-1" aria-hidden="true" />
+
+        <label class="sr-only" for="registerPasswordInput">Password</label>
+        <input id="registerPasswordInput" class="input" type="password"
+               placeholder="Password (min 8 characters)"
+               autocomplete="new-password" required minlength="8" />
+
+        <label class="sr-only" for="confirmPasswordInput">Confirm password</label>
+        <input id="confirmPasswordInput" class="input" type="password"
+               placeholder="Confirm password"
+               autocomplete="new-password" required minlength="8" />
+
+        <button class="btn primary" type="submit">Create account</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ┌──────────────────────┐
+       │        LOGIN         │
+       └──────────────────────┘ -->
+  <div id="login" class="screen hidden">
+    <header class="auth-container-header">
+      <button id="backToLandingBtn2" class="icon-btn" type="button" aria-label="Back">&larr;</button>
+    </header>
+    <div class="auth-content">
+      <h1 class="title">XamePage</h1>
+      <p class="subtitle">Log in with your Xame-ID</p>
+      <form id="loginForm" class="form-section" novalidate>
+
+        <label class="sr-only" for="loginXameIdInput">Xame-ID</label>
+        <input id="loginXameIdInput" class="input" placeholder="Enter your Xame-ID"
+               autocomplete="username" spellcheck="false" required maxlength="15" />
+
+        <label class="sr-only" for="loginPasswordInput">Password</label>
+        <input id="loginPasswordInput" class="input" type="password"
+               placeholder="Enter your password"
+               autocomplete="current-password" required />
+
+        <button class="btn primary" type="submit">Log in</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════ CONTACTS PAGE ═══════════════════════════════ -->
+  <div id="contacts" class="screen hidden" data-module="contacts">
+    <header class="header">
+      <div class="left">
+        <button id="logoutBtn" class="icon-btn" title="Logout">⎋</button>
+        <div>
+          <div class="h-title">Select contact</div>
+          <div id="contactsCount" class="h-sub"></div>
+        </div>
+      </div>
+      <div class="toolbar">
+        <button id="addContactBtn" class="icon-btn" title="Add Contact">＋</button>
+
+        <!-- Avatar / Profile quick-access -->
+        <div class="menu" id="accountMenu">
+          <button class="icon-btn" id="avatarBtn"
+                  aria-haspopup="menu" aria-expanded="false" title="Account">
+            <span id="avatarInitials" class="account-avatar">U</span>
+          </button>
+        </div>
+
+        <!-- ⋮ More menu -->
+        <div class="menu" id="moreMenu">
+          <button id="moreBtn" class="icon-btn" title="More">⋮</button>
+        </div>
+      </div>
+    </header>
+    <!-- Tab bar -->
+    <div class="contacts-tab-bar">
+      <button class="contacts-tab active" id="tabChats" data-tab="chats">
+        💬 Chats <span id="totalUnreadBadge" class="missed-badge hidden">0</span>
+      </button>
+      <button class="contacts-tab" id="tabCalls" data-tab="calls">
+        📞 Calls <span id="missedCallsBadge" class="missed-badge hidden">0</span>
+      </button>
+    </div>
+
+    <!-- Chats panel -->
+    <div id="chatsPanel">
+      <div class="search-bar">
+        <input id="searchInput" class="search-input" placeholder="Search contacts" />
+      </div>
+      <main id="contactList" class="list"></main>
+    </div>
+
+    <!-- Calls panel -->
+    <div id="callsPanel" class="hidden">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 16px">
+        <span style="font-size:13px;color:var(--text-secondary)">Recent Calls</span>
+        <button class="btn secondary" id="clearCallHistoryBtn" style="font-size:11px;padding:4px 10px">Clear</button>
+      </div>
+      <div id="callHistoryList" class="list"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════ PROFILE PAGE ═══════════════════════════════ -->
+  <div id="profileSection" class="screen hidden">
+    <header class="header">
+      <button id="profileBackBtn" class="icon-btn" type="button" aria-label="Back">&larr;</button>
+      <h3>Profile</h3>
+    </header>
+    <main class="content">
+      <div class="profile-container">
+        <div class="profile-pic-uploader">
+          <img id="profilePicPreview" src="/media/profile_pics/default.png"
+               alt="Your profile picture" class="profile-pic"
+               onerror="this.onerror=null;this.src='/media/profile_pics/default.png';" />
+          <label for="profilePic" class="upload-overlay" aria-label="Change profile picture">
+            <span class="upload-icon" aria-hidden="true">&#128247;</span>
+          </label>
+          <input type="file" id="profilePic" accept="image/*"
+                 style="display:none;" aria-label="Upload profile picture" />
+        </div>
+        <button id="removeProfilePicBtn" class="remove-pic-btn" type="button"
+                style="margin-top:-8px;margin-bottom:4px;">
+          &#128465;&#65039; Remove
+        </button>
+        <div class="status-section">
+          <h4 class="status-title">Personal Status</h4>
+          <div class="status-emoji-row" id="statusEmojiRow">
+            <button class="status-emoji-btn active" data-emoji="🟢" title="Available">🟢</button>
+            <button class="status-emoji-btn" data-emoji="🔴" title="Busy">🔴</button>
+            <button class="status-emoji-btn" data-emoji="🟡" title="Away">🟡</button>
+            <button class="status-emoji-btn" data-emoji="📅" title="In Meeting">📅</button>
+            <button class="status-emoji-btn" data-emoji="✏️" title="Custom">✏️</button>
+          </div>
+          <div class="status-presets" id="statusPresets">
+            <button class="status-preset-btn active" data-status="Available">Available</button>
+            <button class="status-preset-btn" data-status="Busy">Busy</button>
+            <button class="status-preset-btn" data-status="Away">Away</button>
+            <button class="status-preset-btn" data-status="In Meeting">In Meeting</button>
+            <button class="status-preset-btn" data-status="Custom">Custom</button>
+          </div>
+          <div class="status-custom-input hidden" id="statusCustomInput">
+            <input type="text" id="statusMessageInput" class="input" 
+                   placeholder="What's your status?" maxlength="100"/>
+          </div>
+          <button id="saveStatusBtn" class="btn primary" style="margin-top:8px;width:100%">
+            Update Status
+          </button>
+        </div>
+
+        <div class="user-details-form">
+          <div class="input-group">
+            <label for="preferredName">Preferred Name</label>
+            <input type="text" id="preferredName" class="input"
+                   placeholder="Your display name" maxlength="50" autocomplete="nickname" />
+          </div>
+          <div class="input-group privacy-switch-group">
+            <label for="hidePreferredNameSwitch" class="privacy-label">
+              Hide Preferred Name on Calls
+            </label>
+            <input type="checkbox" id="hidePreferredNameSwitch" class="toggle-switch" role="switch" />
+          </div>
+          <div class="input-group privacy-switch-group">
+            <label for="hideProfilePictureSwitch" class="privacy-label">
+              Hide Profile Picture on Calls
+            </label>
+            <input type="checkbox" id="hideProfilePictureSwitch" class="toggle-switch" role="switch" />
+          </div>
+          <div class="input-group">
+            <p>Your Xame-ID: <strong id="xameIdDisplay"></strong></p>
+          </div>
+          <button id="saveProfileBtn"   class="btn primary" type="button">Save Changes</button>
+          <button id="clearAllChatsBtn" class="btn danger"  type="button"
+                  style="margin-top:20px;">Clear All Chats</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- ═══════════════════════════════ SETTINGS PAGE ═══════════════════════════════ -->
+  <!--
+    Scaffold only — settings.js._injectScreen() populates innerHTML at runtime.
+    Must exist in the DOM before settings.js runs so show()/elContacts can find it.
+  -->
+  <div id="settingsSection" class="screen hidden" data-module="settings"></div>
+
+  <!-- ═══════════════════════════════ STATUS PAGE ═══════════════════════════════ -->
+  <div id="statusSection" class="screen hidden" data-module="status">
+    <header class="header">
+      <button id="statusBackBtn" class="icon-btn">←</button>
+      <h3>Status</h3>
+    </header>
+    <main class="status-list">
+      <div class="item status-item my-status">
+        <div class="avatar">
+          <span id="myStatusAvatarInitials" class="account-avatar">U</span>
+        </div>
+        <div class="meta">
+          <div class="name">My status</div>
+          <div id="myStatusTime" class="time">No updates</div>
+        </div>
+      </div>
+    </main>
+    <button id="addStatusBtn" class="fab">+</button>
+  </div>
+
+  <!-- ═══════════════════════════════ CHAT PAGE ═══════════════════════════════ -->
+  <!--
+    NOTE: contacts.js.openChat() rewrites #chatHeader innerHTML entirely.
+    The elements below serve as the initial DOM scaffold; they will be
+    replaced when a chat is opened. IDs inside the header are declared
+    here only so the browser parses them without errors on first load.
+  -->
+  <div id="chat" class="chat hidden" data-module="chat">
+    <header class="header" id="chatHeader">
+      <!-- Rebuilt by openChat() in contacts.js on every chat open -->
+      <div class="icon-btn-group">
+        <button id="backBtn" class="icon-btn">←</button>
+      </div>
+      <div class="header-details">
+        <div class="avatar-container chat-header">
+          <img class="profile-pic" src="" alt="Profile picture" id="chatHeaderPic"
+               data-default-src="/media/profile_pics/default.png" />
+          <span class="online-dot hidden" id="chatOnlineDot"></span>
+        </div>
+        <div class="header-text user-info">
+          <div id="chatName" class="h-title user-name">--</div>
+          <p class="xame-id" id="contactIdDisplay"></p>
+          <span id="chatSub" class="h-sub"></span>
+          <span id="typing" class="typing hidden">typing…</span>
+        </div>
+      </div>
+      <div class="toolbar" id="chatToolbar">
+        <div class="menu" id="chatMoreMenu">
+          <button class="icon-btn" id="chatMoreBtn"
+                  aria-haspopup="menu" aria-expanded="false" title="More options">⋮</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="chat-bg">
+      <div id="messages" class="messages"></div>
+    </div>
+
+    <!--
+      REPLY BANNER — injected before #composer by ReplyModule at runtime.
+    -->
+
+    <form id="composer" class="composer">
+      <div id="more-options-menu">
+        <button id="more-options-btn" class="icon-btn composer-icon" type="button"
+                aria-label="More Options">
+          <span class="icon">&#x22EE;</span>
+        </button>
+        <div id="more-options-dropdown" class="dropdown-menu hidden">
+          <button type="button" id="scheduleMessageBtn"      class="dropdown-item">🕐 Schedule Message</button>
+          <button type="button" id="disappearTimerBtn"      class="dropdown-item">⏱️ Disappearing</button>
+          <button type="button" id="menu-voice-to-text-btn" class="dropdown-item">🗣️ Voice-to-Text</button>
+          <button type="button" id="menu-voice-note-btn"    class="dropdown-item">🎙️ Voice Note</button>
+          <button type="button" id="camera-btn"             class="dropdown-item">📷 Camera</button>
+          <button type="button" id="attachBtn"              class="dropdown-item">📎 Attachment</button>
+        </div>
+      </div>
+
+      <input type="file" id="fileInput" class="hidden" />
+      <input id="messageInput" class="input" placeholder="Type a message…" autocomplete="off" />
+
+      <div id="voiceNoteControl" class="voice-note-control hidden">
+        <button type="button" id="recordBtn"     class="icon-btn record-btn hidden">🔴</button>
+        <button type="button" id="stopRecordBtn" class="icon-btn hidden">⏹</button>
+        <button type="button" id="playBtn"       class="icon-btn hidden">▶</button>
+        <button type="button" id="sendVoiceBtn"  class="icon-btn hidden">⬆️</button>
+      </div>
+
+      <div id="action-icon-container" class="icon-btn-group">
+        <button type="button" id="micBtn" class="icon-btn composer-icon" aria-label="Record Voice Note">
+          <span class="icon">🎙️</span>
+        </button>
+        <button type="submit" id="sendBtn" class="icon-btn composer-icon hidden" aria-label="Send Message">
+          <span class="icon">▶</span>
+        </button>
+      </div>
+    </form>
+
+    <button id="multi-delete-btn" class="fab delete-fab disabled"
+            style="display:none;">🗑️ Delete (0)</button>
+
+    <!-- ═══════ VIDEO CALL OVERLAY ═══════ -->
+    <div id="videoCallOverlay" class="hidden" data-module="webrtc">
+      <video id="remoteVideo" autoplay playsinline></video>
+      <video id="localVideo"  autoplay playsinline muted></video>
+
+      <button id="cameraToggleBtn" class="icon-btn">🔄</button>
+
+      <div class="video-controls">
+        <button id="micMuteBtn"     class="icon-btn active">🎙️</button>
+        <button id="cameraMuteBtn"  class="icon-btn active">📹</button>
+        <button id="loudSpeakerBtn" class="icon-btn">🔊</button>
+        <button id="screenShareBtn" class="icon-btn" title="Share Screen">🖥️</button>
+        <button id="exitCallBtn"    class="icon-btn danger">📞</button>
+      </div>
+    </div>
+  </div><!-- /#chat -->
+
+  <!-- ═══════════════════════════════ CROP MODAL ═══════════════════════════════ -->
+  <div id="cropModal" class="dialog-backdrop hidden" data-module="profile">
+    <div class="dialog modal-content">
+      <div class="modal-buttons">
+        <button id="cropCancelBtn" class="btn secondary">Cancel</button>
+        <button id="cropSaveBtn"   class="btn primary">Save</button>
+      </div>
+      <img id="cropImage" src="" alt="Image to Crop">
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════ SEARCH DIALOG ═══════════════════════════════ -->
+  <div id="searchDialog" class="dialog-backdrop hidden" data-module="contacts">
+    <div class="dialog">
+      <button id="closeSearchDialog" style="position:absolute;top:12px;right:12px;background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-secondary);line-height:1;" title="Close">&#10005;</button>
+      <div class="auth-content">
+        <h3 class="title">Find a User</h3>
+        <p class="subtitle">Enter the Xame-ID of the user you want to find.</p>
+        <div class="form-section">
+          <label class="sr-only" for="searchIdInput">User Xame-ID</label>
+          <input id="searchIdInput" class="input" placeholder="Enter Xame-ID" />
+          <button id="searchUserBtn" class="btn">Search User</button>
+          <div id="searchResults" class="list hidden"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════ LAYER (menus / dialogs) ═══════════════════════════════ -->
+  <div id="layer" data-module="ui"></div>
+
+</div><!-- /#app -->
+
+
+<!-- ═══════════════════════════════ INCOMING CALL OVERLAY ═══════════════════════════════ -->
+<div id="incomingCallOverlay" class="call-overlay hidden" data-module="webrtc">
+  <div class="call-notification-card">
+    <div class="call-avatar-container">
+      <img id="callerPic" class="profile-pic" alt="Caller's profile picture"
+           data-default-src="/media/profile_pics/default.png">
+      <div id="callAvatarInitials" class="profile-initials hidden"></div>
+    </div>
+    <h2 id="callerName"></h2>
+    <p  id="callerId"   class="xame-id"></p>
+    <p  id="callStatus"></p>
+    <div class="call-actions">
+      <button id="declineCallBtn" class="call-btn decline-btn">
+        <span class="icon">📞</span> Decline
+      </button>
+      <button id="replyWithMsgBtn" class="call-btn reply-btn">
+        <span class="icon">💬</span> Message
+      </button>
+      <button id="acceptCallBtn"  class="call-btn accept-btn">
+        <span class="icon">📞</span> Accept
+      </button>
+    </div>
+    <div id="quickReplyPanel" class="hidden" style="margin-top:12px;width:100%">
+      <div id="quickReplyList" style="display:flex;flex-direction:column;gap:6px;max-height:200px;overflow-y:auto"></div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <input type="text" id="customReplyInput" placeholder="Custom message..." style="flex:1;padding:8px;border-radius:20px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.1);color:white;font-size:13px">
+        <button id="sendCustomReplyBtn" style="padding:8px 14px;border-radius:20px;background:var(--accent-color,#0084ff);color:white;border:none;cursor:pointer;font-size:13px">Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════ AUDIO ELEMENTS ═══════════════════════════════ -->
+<audio id="incomingCallSound" preload="auto">
+  <source src="media/audio/xamepage_call.mp3"     type="audio/mpeg">
+</audio>
+<audio id="outgoingCallSound" preload="auto">
+  <source src="media/audio/xamepage_outgoing.mp3" type="audio/mpeg">
+</audio>
+<audio id="messageSound" preload="auto">
+  <source src="media/audio/xamepage_message.mp3"  type="audio/mpeg">
+</audio>
+
+
+<!-- ═══════════════════════════════ PWA INSTALL BANNER ═══════════════════════════════ -->
+<div id="pwaInstallBanner" role="complementary"
+     style="display:none; position:fixed; bottom:0; left:0; right:0;
+            background:#1e2732; padding:16px 20px; z-index:99999;
+            border-top:1px solid #38444d; align-items:center; gap:16px;
+            box-shadow:0 -4px 20px rgba(0,0,0,0.4);">
+  <img src="/media/icons/icon-72x72.png" width="48" height="48"
+       alt="XamePage icon" style="border-radius:12px; flex-shrink:0;" />
+  <div style="flex:1;">
+    <div style="font-weight:700; color:#e9edef; font-size:16px;">Install XamePage</div>
+    <div style="font-size:13px; color:#9aa8b2;">Add to your home screen for the best experience</div>
+  </div>
+  <button id="pwaInstallBtn" type="button"
+          style="background:#0084ff; color:#fff; border:none; padding:10px 20px;
+                 border-radius:20px; font-weight:600; cursor:pointer; font-size:14px; flex-shrink:0;">
+    Install
+  </button>
+  <button id="pwaInstallDismiss" type="button" aria-label="Dismiss install banner"
+          style="background:transparent; color:#9aa8b2; border:none; font-size:22px;
+                 cursor:pointer; padding:4px; flex-shrink:0;">
+    &#x2715;
+  </button>
+</div>
+
+
+<!-- ═══════════════════════════════════════ SCRIPTS ═══════════════════════════════════════
+     Load order matters — plain globals, no import/export.
+     Third-party libs first, then our modules in dependency order.
+
+     New modules dependency summary:
+       settings.js     needs: storage, state, utils, ui
+       themes.js       needs: settings, storage, utils
+       screen-share.js needs: state
+       reply.js        needs: state, storage, utils
+       reactions.js    needs: state, utils
+       disappearing.js needs: state, storage, settings, utils
+       conference.js   needs: config, state, utils, screen-share
+     ═══════════════════════════════════════════════════════════════════════════════════ -->
+
+<!-- 1. Socket.IO client -->
+<script src="/socket.io/socket.io.js"></script>
+
+<!-- 2. Cropper.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.12/cropper.min.js"></script>
+
+<!-- 3. Our modules — strict dependency order -->
+<script src="/js/config.js"></script>
+<script src="/js/storage.js"></script>
+<script src="/js/state.js"></script>
+<script src="/js/utils.js"></script>
+<script src="/js/audio.js"></script>
+<script src="/js/ui.js"></script>
+<script src="/js/auth.js"></script>
+<script src="/js/contacts.js"></script>
+<script src="/js/messaging.js?v=13"></script>
+<script src="/js/call-settings.js"></script>
+<script src="/js/gallery.js"></script>
+<script src="/js/groups.js?v=5"></script>
+  <script src="/js/broadcast.js"></script>
+  <script src="/js/schedule.js"></script>
+  <script src="/js/call-schedule.js"></script>
+  <script src="/js/sms-templates.js"></script>
+  <script src="/js/call-history.js"></script>
+<script src="/js/webrtc.js"></script>
+<script src="/js/screen-share.js"></script>   <!-- no deps beyond state; must precede conference -->
+<script src="/js/socket.js?v=5"></script>
+<script src="/js/camera.js"></script>
+<script src="/js/voice.js?v=3"></script>
+<script src="/js/profile.js"></script>
+<script src="/js/push.js"></script>
+<script src="/js/pwa.js"></script>
+<script src="/js/settings.js"></script>       <!-- needs storage, state, utils, ui -->
+<script src="/js/themes.js"></script>         <!-- needs settings, storage, utils -->
+<script src="/js/reply.js?v=2"></script>          <!-- needs state, storage, utils -->
+<script src="/js/reactions.js?v=2"></script>      <!-- needs state, utils -->
+<script src="/js/disappearing.js?v=2"></script>   <!-- needs state, storage, settings, utils -->
+<script src="/js/conference.js?v=2"></script>     <!-- needs config, state, utils, screen-share -->
+<script src="/js/chat.js"></script>
+<script src="/js/keyboard.js"></script>
+<script src="/js/lifecycle.js"></script>
+<script src="/js/debug.js"></script>
+<script src="/js/app.js"></script>
+
+<!-- 4. Service Worker registration (plain script — no import needed) -->
+<script>
+  if ('serviceWorker' in navigator) {
+    false && navigator.serviceWorker.register('/service-worker.js')
+      .then(() => console.log('✅ Service Worker registered'))
+      .catch(err => console.error('❌ Service Worker failed', err));
+  }
+</script>
+
+</body>
+</html>
