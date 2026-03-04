@@ -494,7 +494,17 @@ const walletModule = (() => {
         scList.addEventListener('touchmove', e=>{ const dy=startY-e.touches[0].clientY; scList.scrollTop=startScroll+dy; e.stopPropagation(); }, {passive:true});
       }
       let sCont=null,aTab='contact';
-      c.querySelectorAll('.send-tab').forEach(b=>b.addEventListener('click',()=>{aTab=b.dataset.tab;c.querySelectorAll('.send-tab').forEach(x=>{x.style.background='var(--bg-secondary,#111e2e)';x.style.border='1px solid rgba(255,255,255,0.1)';});b.style.background='#00B0A0';b.style.border='none';c.querySelector('#sendContactTab').style.display=aTab==='contact'?'block':'none';c.querySelector('#sendBankTab').style.display=aTab==='bank'?'block':'none';}));
+      c.querySelectorAll('.send-tab').forEach(b=>b.addEventListener('click',()=>{
+        try{
+          aTab=b.dataset.tab;
+          c.querySelectorAll('.send-tab').forEach(x=>{x.style.background='var(--bg-secondary,#111e2e)';x.style.border='1px solid rgba(255,255,255,0.1)';});
+          b.style.background='#00B0A0';b.style.border='none';
+          const contactTab=c.querySelector('#sendContactTab');
+          const bankTab=c.querySelector('#sendBankTab');
+          if(contactTab) contactTab.style.display=aTab==='contact'?'block':'none';
+          if(bankTab) bankTab.style.display=aTab==='bank'?'block':'none';
+        }catch(e){console.error('Tab switch error:',e);}
+      }));
       // Bank search functionality
     const bankSearch = c.querySelector('#bankSearch');
     const bankListContainer = c.querySelector('#bankListContainer');
