@@ -452,9 +452,7 @@ const walletModule = (() => {
     if(screen==='bills')c.querySelectorAll('.bill-cat-btn').forEach(b=>b.addEventListener('click',()=>renderS('bill-pay',{billId:b.dataset.bill})));
     if(screen==='bill-pay'){c.querySelector('#payBillBtn')?.addEventListener('click',()=>{const prov=c.querySelector('#billProvider')?.value,acc=c.querySelector('#billAccountNo')?.value,amt=parseFloat(c.querySelector('#billAmount')?.value);if(!acc){showNotification('Enter account number');return;}if(!amt||amt<1){showNotification('Enter amount');return;}processPayment('bill',{provider:prov,accountNo:acc,amount:amt,billId:data.billId});});}
     if(screen==='send'){
-      // Load real bank list from API if keys configured
-      const flwSecret = persistentStorage.get('wallet:flw:secretKey') || WALLET_CONFIG.flutterwave.secretKey;
-      const pskSecret = persistentStorage.get('wallet:psk:secretKey') || WALLET_CONFIG.paystack.secretKey;
+      // Keys are server-side - always fetch bank list from server
       const _curr = persistentStorage.get('wallet:currency') || WALLET_CONFIG.currency || 'NGN';
       // Full currency to country code map - Flutterwave supports all these
       const CURR_TO_CC = {'NGN':'NG','GHS':'GH','KES':'KE','ZAR':'ZA','TZS':'TZ','UGX':'UG','ZMW':'ZM','RWF':'RW','ETB':'ET','USD':'US','GBP':'GB','EUR':'DE','INR':'IN','CAD':'CA','AUD':'AU','MXN':'MX','BRL':'BR','PHP':'PH','MYR':'MY','INR':'IN','EGP':'EG','MAD':'MA','XOF':'SN','CMR':'CM'};
@@ -479,13 +477,9 @@ const walletModule = (() => {
           });
         }).catch(()=>processPayment('load-card',{amount:amt}));
       };
-      if(flwSecret || pskSecret){
         fetch('/api/wallet/banklist?cc='+cc).then(r=>r.json()).then(data=>{
           if(data.success && data.banks && data.banks.length){ loadBankList(data.banks); }
-        }).catch(()=>{ loadBankList(getBanks().map(b=>({name:b,code:b}))); });
-      } else {
-        loadBankList(getBanks().map(b=>({name:b,code:b})));
-      }
+        }).catch(()=>{ loadBankList([]); });
       // Fix touch scrolling on contact list
       const scList = c.querySelector('#contactScrollList');
       if(scList){
