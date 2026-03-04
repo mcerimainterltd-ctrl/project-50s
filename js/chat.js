@@ -23,7 +23,7 @@ fileInput?.addEventListener('change', async (e) => {
 
   if (file.type.startsWith('image/')) {
     const result = await showImagePreview(file);
-    if (result && result.send) sendFile(file, result.caption);
+    if (result && result.send) sendFile(file, result.caption, result.viewOnce);
     else fileInput.value = '';
   } else {
     sendFile(file);
@@ -46,6 +46,7 @@ composer?.addEventListener('submit', (e) => {
 
 //  Typing indicator 
 let typingTimer;
+messageInput?.addEventListener('compositionend', () => { updateComposerButtons(); });
 messageInput?.addEventListener('input', () => {
   clearTimeout(typingTimer);
   const typingEnabled = typeof getSetting === 'function' ? getSetting('account.privacy.typingIndicators') !== false : true;

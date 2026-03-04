@@ -123,17 +123,23 @@ const callHistoryModule = (() => {
 
   // ── Tab switching ───────────────────────────────────────────────────────
   function initTabs() {
+    document.getElementById('tabWallet')?.addEventListener('click', () => {
+      document.querySelectorAll('.contacts-tab').forEach(t => t.classList.remove('active'));
+      document.getElementById('tabWallet')?.classList.add('active');
+      if (typeof walletModule !== 'undefined') walletModule.show();
+    });
+
     document.getElementById('tabChats')?.addEventListener('click', () => {
       document.getElementById('chatsPanel')?.classList.remove('hidden');
       document.getElementById('callsPanel')?.classList.add('hidden');
+      document.querySelectorAll('.contacts-tab').forEach(t => t.classList.remove('active'));
       document.getElementById('tabChats')?.classList.add('active');
-      document.getElementById('tabCalls')?.classList.remove('active');
     });
     document.getElementById('tabCalls')?.addEventListener('click', () => {
       document.getElementById('callsPanel')?.classList.remove('hidden');
       document.getElementById('chatsPanel')?.classList.add('hidden');
+      document.querySelectorAll('.contacts-tab').forEach(t => t.classList.remove('active'));
       document.getElementById('tabCalls')?.classList.add('active');
-      document.getElementById('tabChats')?.classList.remove('active');
       load().then(() => {
         // Mark all missed calls as seen in memory
         _history.forEach(c => { c.seen = true; });

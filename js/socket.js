@@ -102,6 +102,24 @@ function connectSocket() {
       );
     });
 
+    // Wallet P2P receive
+    socket.on('wallet:receive', ({ senderId, senderName, amount, currency }) => {
+      const sym = {'NGN':'₦','GHS':'GH₵','KES':'KSh','ZAR':'R','USD':'$','EUR':'€','GBP':'£'};
+      const s = sym[currency] || currency + ' ';
+      // Credit via walletModule if available (keeps module state in sync)
+      if (typeof walletModule !== 'undefined' && walletModule._credit) {
+        walletModule._credit(amount, senderName || senderId);
+      } else {
+        // Fallback: write directly to storage
+        const bal = persistentStorage.get('wallet:balance') || 0;
+        persistentStorage.set('wallet:balance', bal + amount);
+        const txs = persistentStorage.get('wallet:transactions') || [];
+        txs.unshift({ id: Date.now(), label: 'Received from ' + (senderName || senderId), icon: '💸', amount, type: 'credit', status: 'Completed', ts: new Date().toISOString() });
+        persistentStorage.set('wallet:transactions', txs.slice(0, 100));
+      }
+      showNotification('💸 You received ' + s + Number(amount).toLocaleString() + ' from ' + (senderName || senderId));
+    });
+
     // WebRTC signaling
     socket.on('call-user', async ({ offer, callerId, caller, callType, callId }) => {
       console.log('📞 Incoming call from:', callerId, 'Type:', callType);
@@ -182,7 +200,16 @@ function registerSocketHandlers(socket) {
   socket.on('connect', () => {
     console.log('✅ Connected to server!');
     showNotification('Connected to server');
-    if (USER?.xameId) socket.emit('user-online', { userId: USER.xameId, timestamp: Date.now() });
+    if (USER?.xameId) {
+      if (localStorage.getItem('xame:stealth') === 'true') {
+        // In stealth mode: briefly connected but immediately go offline
+        setTimeout(() => {
+          if (socket?.connected) socket.emit('user-offline', { userId: USER.xameId });
+        }, 500);
+      } else {
+        socket.emit('user-online', { userId: USER.xameId, timestamp: Date.now() });
+      }
+    }
     setTimeout(() => {
       if (socket?.connected && USER?.xameId) {
         socket.emit('request_online_users');
@@ -199,7 +226,14 @@ function registerSocketHandlers(socket) {
   socket.on('reconnect', (attemptNumber) => {
     console.log(`Reconnected after ${attemptNumber} attempts`);
     showNotification('Reconnected successfully!');
-    if (USER?.xameId) { socket.emit('user-online', { userId: USER.xameId, timestamp: Date.now() }); socket.emit('request_online_users'); }
+    if (USER?.xameId) {
+      if (localStorage.getItem('xame:stealth') === 'true') {
+        setTimeout(() => { if (socket?.connected) socket.emit('user-offline', { userId: USER.xameId }); }, 500);
+      } else {
+        socket.emit('user-online', { userId: USER.xameId, timestamp: Date.now() });
+      }
+      socket.emit('request_online_users');
+    }
   });
 
   socket.on('reconnect_failed', () => { console.error('Failed to reconnect after all attempts'); showNotification('Failed to reconnect. Please refresh the page.'); });
@@ -297,6 +331,7 @@ function registerSocketHandlers(socket) {
       expiresAt: message.expiresAt || null,
       replyTo:   message.replyTo  || null,
       forwarded: message.forwarded || false,
+      viewOnce:  message.viewOnce  || false,
     };
     chat.push(newMsg); setChat(senderId, chat);
 
@@ -353,19 +388,34 @@ function registerSocketHandlers(socket) {
 }
 
 // ── Heartbeat ────────────────────────────────────────────────────────────
+// ── Stealth enforcer ─────────────────────────────────────────────────────
+let stealthInterval = null;
+
+function startStealthMode() {
+  stopStealthMode();
+  if (socket?.connected && USER?.xameId) socket.emit('user-offline', { userId: USER.xameId });
+  stealthInterval = setInterval(() => {
+    if (socket?.connected && USER?.xameId) socket.emit('user-offline', { userId: USER.xameId });
+  }, 8000);
+}
+
+function stopStealthMode() {
+  if (stealthInterval) { clearInterval(stealthInterval); stealthInterval = null; }
+}
+
 function startHeartbeat() {
   stopHeartbeat();
   if (!USER?.xameId) return;
   console.log('💓 Starting presence heartbeat');
   heartbeatInterval = setInterval(() => {
     if (socket?.connected && USER?.xameId) {
-      socket.emit('heartbeat', { userId: USER.xameId, timestamp: Date.now() });
+      if (localStorage.getItem('xame:stealth') !== 'true') socket.emit('heartbeat', { userId: USER.xameId, timestamp: Date.now() });
     } else if (!socket?.connected) {
       console.log('💔 Heartbeat: socket disconnected, attempting reconnect');
       connectSocket();
     }
   }, HEARTBEAT_INTERVAL);
-  if (socket?.connected) socket.emit('heartbeat', { userId: USER.xameId, timestamp: Date.now() });
+  if (socket?.connected && localStorage.getItem('xame:stealth') !== 'true') socket.emit('heartbeat', { userId: USER.xameId, timestamp: Date.now() });
 }
 
 function stopHeartbeat() {

@@ -84,6 +84,12 @@ function messageBubble(m) {
               <polyline points="20 6 9 17 4 12"></polyline>
             </svg> Select
           </div>
+          <div class="menu-item" id="bubbleTranslateBtn">
+            <span style="margin-right:8px;font-size:16px;">&#127758;</span> Translate
+          </div>
+          <div class="menu-item" id="bubbleCopyBtn">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg> Copy
+          </div>
         `;
         
         const rect = div.getBoundingClientRect();
@@ -102,6 +108,22 @@ function messageBubble(m) {
           menu.remove();
           if (selectedMessages.length === 0) enterSelectMode();
           toggleMessageSelection(m);
+        });
+
+        menu.querySelector('#bubbleTranslateBtn').addEventListener('click', () => {
+          menu.remove();
+          const msgText = m.text || m.content || m.body || '';
+          if (typeof translationModule !== 'undefined' && msgText) {
+            translationModule.showTranslateDialog(msgText, div);
+          } else {
+            showNotification('No text to translate');
+          }
+        });
+
+        menu.querySelector('#bubbleCopyBtn').addEventListener('click', () => {
+          menu.remove();
+          const msgText = m.text || m.content || m.body || '';
+          navigator.clipboard?.writeText(msgText).then(() => showNotification('Copied!'));
         });
 
         setTimeout(() => {
@@ -147,6 +169,15 @@ function messageBubble(m) {
 
   // --- Text message ---
   if (m.text && !(m.file && m.file.url)) {
+    const _emojiOnly = /^[\p{Emoji}\s]+$/u.test(m.text.trim()) && m.text.trim().length > 0;
+    if (_emojiOnly) {
+      div.classList.add('emoji-only-msg');
+      div.innerHTML = '<div class="emoji-standalone">' + m.text.trim() + '</div>'
+        + '<div class="time-row" style="justify-content:center;">'
+        + '<span>' + fmtTime(m.ts) + '</span>'
+        + (m.type === 'sent' ? '<span class="ticks">' + renderTicks(m.status) + '</span>' : '')
+        + '</div>';
+    } else {
     div.innerHTML = fwdBanner + '<div>' + escapeHtml(m.text) + '</div>'
       + '<div class="time-row">'
       + '<button class="icon-btn speak-btn">&#128266;</button>'
@@ -155,15 +186,25 @@ function messageBubble(m) {
       + '</div>';
     div.querySelector('.speak-btn')?.addEventListener('click', (e) => { e.stopPropagation(); textToVoice(m.text); });
     if (m.replyTo && typeof replyModule !== 'undefined') replyModule.renderQuote(m.replyTo, div);
+    }
 
   // --- File message ---
-  } else if (m.file && m.file.url) {
-    const fileUrl  = constructFileUrl(m.file.url);
+  } else if (m.file && (m.file.url || m.voOpened)) {
+    const fileUrl  = m.file.url ? constructFileUrl(m.file.url) : null;
     const fileType = m.file.type;
     const fileName = m.file.name || 'file';
     let fileContent = '';
 
     if (fileType.startsWith('image/')) {
+      if (m.viewOnce) {
+        if (m.type === 'sent') {
+          fileContent = '<div class="view-once-sent" style="padding:10px;text-align:center;opacity:0.7;font-size:13px">👁️ View Once sent</div>';
+        } else if (m.voOpened) {
+          fileContent = '<div class="view-once-opened" style="padding:10px;text-align:center;opacity:0.5;font-size:13px">Opened</div>';
+        } else {
+          fileContent = `<div class="view-once-tap" data-url="${escapeHtml(fileUrl)}" data-id="${escapeHtml(m.id)}" style="padding:14px 20px;text-align:center;cursor:pointer;background:rgba(255,255,255,0.07);border-radius:12px;font-size:14px">👁️ Tap to view</div>`;
+        }
+      } else
       fileContent = `
         <div class="image-preview" data-url="${escapeHtml(fileUrl)}">
           <img src="${escapeHtml(fileUrl)}" alt="${escapeHtml(fileName)}" loading="lazy">
@@ -221,6 +262,15 @@ function messageBubble(m) {
     div.querySelector('.image-preview')?.addEventListener('click', (e) => {
       if (selectedMessages.length > 0) return;
       e.stopPropagation(); openImageFullscreen(fileUrl, fileName);
+    });
+
+    // View once tap handler
+    div.querySelector('.view-once-tap')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openImageFullscreen(fileUrl, fileName);
+      const chat = getChat(ACTIVE_ID);
+      const idx = chat.findIndex(msg => msg.id === m.id);
+      if (idx !== -1) { chat[idx].voOpened = true; chat[idx].file.url = null; setChat(ACTIVE_ID, chat); renderMessages(); }
     });
 
     // Video fullscreen
@@ -495,8 +545,9 @@ function renderDeleteMenu() {
   const count = selectedMessages.length;
   if (count === 0) return;
 
+  const snapshot = [...selectedMessages]; // capture before any async/dialog clears it
   const currentChat     = getChat(ACTIVE_ID);
-  const hasSentMessages = selectedMessages.some(id => currentChat.find(m => m.id === id)?.type === 'sent');
+  const hasSentMessages = snapshot.some(id => currentChat.find(m => m.id === id)?.type === 'sent');
 
   const options = [
     { 
@@ -505,13 +556,13 @@ function renderDeleteMenu() {
                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
              </svg>`,  
-      action: () => { playUiSound('outgoing'); copyMessages(selectedMessages); exitSelectMode(); closeDialog(); } 
+      action: () => { playUiSound('outgoing'); copyMessages(snapshot); exitSelectMode(); closeDialog(); } 
     },
-    { label: `Forward ${count} message${count === 1 ? '' : 's'}`, icon: '➡',  action: () => { playUiSound('outgoing'); forwardMessages(selectedMessages); exitSelectMode(); closeDialog(); } },
-    { label: `Email ${count} message${count === 1 ? '' : 's'}`, icon: '📧', action: () => { emailMessages(selectedMessages); exitSelectMode(); closeDialog(); } },
+    { label: `Forward ${count} message${count === 1 ? '' : 's'}`, icon: '➡',  action: () => { playUiSound('outgoing'); forwardMessages(snapshot); exitSelectMode(); closeDialog(); } },
+    { label: `Email ${count} message${count === 1 ? '' : 's'}`, icon: '📧', action: () => { emailMessages(snapshot); exitSelectMode(); closeDialog(); } },
     { label: `Delete for me (${count})`, icon: '🗑', action: () => {
         if (confirm(`Are you sure you want to delete ${count} message${count === 1 ? '' : 's'} for yourself?`)) {
-          playUiSound('call'); deleteMessages(selectedMessages, false); closeDialog();
+          playUiSound('call'); deleteMessages(snapshot, false); closeDialog();
         }
       }
     },
@@ -520,7 +571,7 @@ function renderDeleteMenu() {
   if (hasSentMessages) {
     options.push({ label: `Delete for everyone (${count})`, icon: '🗑', action: () => {
         if (confirm(`Are you sure you want to delete ${count} message${count === 1 ? '' : 's'} for everyone?`)) {
-          playUiSound('call'); deleteMessages(selectedMessages, true); closeDialog();
+          playUiSound('call'); deleteMessages(snapshot, true); closeDialog();
         }
       }
     });
@@ -559,8 +610,26 @@ function renderDeleteMenu() {
 }
 
 async function deleteMessages(messageIds, deleteForEveryone = false) {
-  if (!socket?.connected) { console.error('Cannot sync deletions: Socket not connected'); return false; }
-  // Implementation of deletion logic goes here
+
+  if (!ACTIVE_ID) return;
+  const chat = getChat(ACTIVE_ID);
+  const updated = chat.filter(m => !messageIds.includes(m.id));
+
+  // Write synchronously so deletion survives page refresh
+  memoryStorage.set(KEYS.chat(ACTIVE_ID), updated);
+  persistentStorage.set(KEYS.chat(ACTIVE_ID), updated);
+
+  const deletedIds = new Set(JSON.parse(localStorage.getItem('xame:deleted_msgs') || '[]'));
+  messageIds.forEach(id => deletedIds.add(id));
+  localStorage.setItem('xame:deleted_msgs', JSON.stringify([...deletedIds]));
+
+  selectedMessages.length = 0;
+  renderMessages();
+  exitSelectMode();
+
+  if (deleteForEveryone) {
+    await syncDeletionsWithServer({ chat: { messageIds, contactId: ACTIVE_ID, deleteForEveryone: true } });
+  }
 }
 
 function copyMessages(messageIds) {
@@ -673,12 +742,10 @@ function forwardMessages(messageIds) {
 
 async function syncDeletionsWithServer(deletionData) {
   if (!socket?.connected) { console.error('Cannot sync deletions: Socket not connected'); return false; }
-  return new Promise((resolve) => {
-    socket.emit('sync-deletions', deletionData, (response) => {
-      resolve(!!(response?.success));
-    });
-    setTimeout(() => { console.error('Deletion sync timeout'); resolve(false); }, 5000);
+  socket.emit('sync-deletions', deletionData, (response) => {
+    if (!response?.success) console.error('sync-deletions failed:', response);
   });
+  return true;
 }
 
 // Send text message
@@ -736,7 +803,7 @@ function sendMessage(text) {
 }
 
 // Send file
-function sendFile(file, caption) {
+function sendFile(file, caption, viewOnce) {
   const inGroup = typeof ACTIVE_GROUP !== 'undefined' && ACTIVE_GROUP;
 
   if ((!ACTIVE_ID && !inGroup) || !socket) {
@@ -773,7 +840,7 @@ function sendFile(file, caption) {
       try {
         const data = JSON.parse(xhr.responseText);
         if (data.success && data.url) {
-          const finalMessage = { id: msgId, file: { name: file.name, type: file.type, url: data.url }, type: 'sent', ts, status: 'sending', text: caption || '' };
+          const finalMessage = { id: msgId, file: { name: file.name, type: file.type, url: data.url }, type: 'sent', ts, status: 'sending', text: caption || '', viewOnce: !!viewOnce };
 
           if (inGroup) {
             const msg = { senderId: USER.xameId, senderName: USER.preferredName || USER.firstName, file: finalMessage.file, text: caption || '', ts };
@@ -857,7 +924,7 @@ async function intelligentMerge(serverChatHistory) {
               return true;
             });
 
-            const validLocal = localMessages.filter(m => !m.expiresAt || m.expiresAt > now);
+            const validLocal = localMessages.filter(m => (!m.expiresAt || m.expiresAt > now) && !deletedIds.has(m.id));
             const merged = [...validLocal, ...newMessages].sort((a, b) => (a.ts || 0) - (b.ts || 0));
             storage.set(KEYS.chat(contactId), merged);
           });

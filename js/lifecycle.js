@@ -61,7 +61,7 @@ window.addEventListener('beforeunload', () => {
 window.addEventListener('online', () => {
   console.log('🌐 Network restored');
   showNotification('Connection restored');
-  if (USER) { connectSocket(); startHeartbeat(); }
+  if (USER) { connectSocket(); if (localStorage.getItem('xame:stealth') === 'true') { setTimeout(startStealthMode, 1000); } else { startHeartbeat(); } }
 });
 
 window.addEventListener('offline', () => {

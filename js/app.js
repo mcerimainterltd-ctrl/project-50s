@@ -61,8 +61,7 @@ function setupEventListeners() {
       const body = { firstName, lastName, dob: dobValue };
       if (password) body.password = password;
 
-      // FIX: Use serverURL prefix
-      const response = await fetch(`${serverURL}/api/register`, {
+      const response = await fetch('/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -85,7 +84,7 @@ function setupEventListeners() {
     }
   });
 
-  //  Login form 
+  //  Login form 
   loginForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
     console.log(' Login form submitted');
@@ -105,8 +104,7 @@ function setupEventListeners() {
 
     try {
       // Step 1: Check if user exists
-      // FIX: Use serverURL prefix
-      const checkResponse = await fetch(`${serverURL}/api/get-user-name`, {
+      const checkResponse = await fetch('/api/get-user-name', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ xameId }),
       });
@@ -125,8 +123,7 @@ function setupEventListeners() {
       }
 
       // Step 3: Login with password
-      // FIX: Use serverURL prefix
-      const loginResponse = await fetch(`${serverURL}/api/login`, {
+      const loginResponse = await fetch('/api/login', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ xameId, password }),
       });
@@ -176,8 +173,9 @@ function bootstrapApp() {
   ensurePlaceholderStyles();
 
   // 5) Initialise new modules
-  if (typeof settingsModule !== 'undefined') settingsModule.init();
-  if (typeof themeModule    !== 'undefined') themeModule.init();
+  if (typeof settingsModule    !== 'undefined') settingsModule.init();
+  if (typeof themeModule       !== 'undefined') themeModule.init();
+  if (typeof callHistoryModule !== 'undefined') callHistoryModule.initTabs();
 
   // 6) Restore previous session or show landing
   const savedUser = storage.get(KEYS.user);

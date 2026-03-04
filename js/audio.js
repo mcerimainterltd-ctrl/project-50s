@@ -154,7 +154,7 @@ function debugPlayAllSounds() {
 }
 
 const TONE_TEMPLATES = [
-  { id: 'default', label: 'Default', file: 'xamepage_message.mp3' },
+  { id: 'default', label: 'Default', file: 'media/audio/xamepage_message.mp3' },
   { id: 'soft',    label: 'Soft',    gen: (ctx) => { const o=ctx.createOscillator(),g=ctx.createGain(); o.connect(g);g.connect(ctx.destination); o.type='sine'; o.frequency.setValueAtTime(520,ctx.currentTime); o.frequency.exponentialRampToValueAtTime(720,ctx.currentTime+0.1); g.gain.setValueAtTime(0.2,ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.3); o.start(); o.stop(ctx.currentTime+0.3); } },
   { id: 'chime',   label: 'Chime',   gen: (ctx) => { [880,1100,1320].forEach((f,i) => { const o=ctx.createOscillator(),g=ctx.createGain(); o.connect(g);g.connect(ctx.destination); o.type='sine'; o.frequency.value=f; g.gain.setValueAtTime(0,ctx.currentTime+i*0.1); g.gain.linearRampToValueAtTime(0.15,ctx.currentTime+i*0.1+0.02); g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+i*0.1+0.25); o.start(ctx.currentTime+i*0.1); o.stop(ctx.currentTime+i*0.1+0.25); }); } },
   { id: 'pop',     label: 'Pop',     gen: (ctx) => { const o=ctx.createOscillator(),g=ctx.createGain(); o.connect(g);g.connect(ctx.destination); o.type='sine'; o.frequency.setValueAtTime(1200,ctx.currentTime); o.frequency.exponentialRampToValueAtTime(400,ctx.currentTime+0.08); g.gain.setValueAtTime(0.25,ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.1); o.start(); o.stop(ctx.currentTime+0.1); } },
@@ -165,7 +165,7 @@ const TONE_TEMPLATES = [
 
 function playToneTemplate(toneId, customDataUrl) {
   try {
-    if (toneId === 'default') { new Audio('xamepage_message.mp3').play().catch(()=>{}); return; }
+    if (toneId === 'default') { new Audio('media/audio/xamepage_message.mp3').play().catch(()=>{}); return; }
     if (toneId === 'custom' && customDataUrl) { new Audio(customDataUrl).play().catch(()=>{}); return; }
     const tmpl = TONE_TEMPLATES.find(t => t.id === toneId);
     if (tmpl && tmpl.gen) { const ctx = new (window.AudioContext || window.webkitAudioContext)(); tmpl.gen(ctx); }
@@ -293,7 +293,7 @@ function showRingtonePicker(type) {
   dlg.querySelectorAll('.preview-ring-btn').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
-      if (btn.dataset.id === 'default') { new Audio(type==='incomingCall'?'xamepage_call.mp3':'xamepage_outgoing.mp3').play().catch(()=>{}); }
+      if (btn.dataset.id === 'default') { new Audio(type==='incomingCall'?'media/audio/xamepage_call.mp3':'media/audio/xamepage_outgoing.mp3').play().catch(()=>{}); }
       else { playRingtoneTemplate(btn.dataset.id, type==='outgoingCall'?'outgoing':''); }
     });
   });
@@ -316,3 +316,28 @@ function showRingtonePicker(type) {
     reader.readAsDataURL(file);
   });
 }
+
+// ── Unlock audio on first user interaction ────────────────────────────────
+(function unlockAudioOnInteraction() {
+  const unlock = () => {
+    // Resume any suspended AudioContext
+    if (window.AudioContext || window.webkitAudioContext) {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      ctx.resume().then(() => ctx.close());
+    }
+    // Pre-play all sounds silently to unlock
+    Object.values(APP_SOUNDS || {}).forEach(audio => {
+      if (!audio) return;
+      audio.volume = 0;
+      audio.play().then(() => {
+        audio.pause();
+        audio.currentTime = 0;
+        audio.volume = 1;
+      }).catch(() => {});
+    });
+    document.removeEventListener('touchstart', unlock);
+    document.removeEventListener('click', unlock);
+  };
+  document.addEventListener('touchstart', unlock, { once: true });
+  document.addEventListener('click', unlock, { once: true });
+})();

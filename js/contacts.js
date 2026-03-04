@@ -128,6 +128,8 @@ function renderContacts(filter = '') {
   const selfContact   = USER ? sorted.find(c => c.id === USER.xameId)  : null;
   const otherContacts = sorted.filter(c => c.id !== (USER ? USER.xameId : null));
 
+  const selfContactRow = document.getElementById('selfContactRow');
+  if (selfContactRow) selfContactRow.innerHTML = '';
   if (!filter && selfContact) {
     const selfRow = document.createElement('div');
     selfRow.className      = 'item fade-in';
@@ -149,7 +151,8 @@ function renderContacts(filter = '') {
       </div>
     `;
     selfRow.addEventListener('click', () => openChat(selfContact.id));
-    contactList.appendChild(selfRow);
+    if (selfContactRow) selfContactRow.appendChild(selfRow);
+    else contactList.appendChild(selfRow);
   }
 
   if (otherContacts.length === 0 && !filter) {
@@ -179,7 +182,17 @@ function renderContacts(filter = '') {
 const debouncedRenderContacts = debounce(renderContacts, 150);
 
 // ── Open a chat ───────────────────────────────────────────────────────────
+function closeChat() {
+  if (ACTIVE_ID && typeof chatLockModule !== "undefined" && chatLockModule.isLocked(ACTIVE_ID)) {
+    chatLockModule.lockChat(ACTIVE_ID);
+  }
+}
+
 function openChat(id) {
+  if (typeof chatLockModule !== "undefined" && chatLockModule.isLocked(id) && !chatLockModule.isUnlocked(id)) {
+    chatLockModule.checkLock(id, () => openChat(id));
+    return;
+  }
   ACTIVE_ID = id;
 
   if (elContacts) elContacts.classList.add('hidden');
@@ -241,6 +254,7 @@ function openChat(id) {
   $('#contactIdDisplay').textContent = c.id;
 
   $('#backBtn')?.addEventListener('click', () => {
+    closeChat();
     elChat?.classList.add('hidden');
     elContacts?.classList.remove('hidden');
     debouncedRenderContacts();
@@ -289,6 +303,7 @@ function renderChatMoreMenu() {
     <div class="menu-item" id="viewGalleryBtn">🖼 View Gallery</div>
     <div class="menu-item" id="editContactBtn">✍️ Edit Contact Name</div>
     <div class="menu-item" id="clearChatBtn">🗑 Clear Chat</div>
+    <div class="menu-item" id="lockChatBtn">🔒 Lock Chat</div>
     <div class="menu-item" id="blockContactBtn">🚫 Block Contact</div>
     <div class="menu-item" id="deleteContactBtn">❌ Delete Contact</div>
   `;
@@ -373,6 +388,13 @@ function renderChatMoreMenu() {
     const c = CONTACTS.find(x => x.id === ACTIVE_ID);
     if (c && ACTIVE_ID !== USER.xameId) { closeDialog(); openDialog(renderEditContactDialog(c)); }
     else notifyWithFeedback('Cannot edit this contact.');
+  });
+  wrap.querySelector('#lockChatBtn')?.addEventListener('click', () => {
+    closeDialog();
+    if (!ACTIVE_ID) return;
+    const c = CONTACTS.find(x => x.id === ACTIVE_ID);
+    if (typeof chatLockModule !== 'undefined') chatLockModule.showSetPinDialog(ACTIVE_ID, c?.name || ACTIVE_ID);
+    else notifyWithFeedback('Chat lock not available.');
   });
   wrap.querySelector('#clearChatBtn')?.addEventListener('click', () => {
     if (!ACTIVE_ID) return;

@@ -173,14 +173,38 @@ function openMenuDialog(node) {
 // ─────────────────────────────────────────────────────────────────────────
 // Composer helpers
 // ─────────────────────────────────────────────────────────────────────────
+function isOnlyEmojis(str) {
+  const trimmed = str.trim();
+  if (!trimmed) return false;
+  const emojiRegex = /^[\p{Emoji}\s]+$/u;
+  return emojiRegex.test(trimmed);
+}
+
 function updateComposerButtons() {
   if (!messageInput || !micBtn || !sendBtn) return;
-  if (messageInput.value.trim().length > 0) {
+  const val = messageInput.value;
+  if (val.trim().length > 0) {
     micBtn.classList.add('hidden');
     sendBtn.classList.remove('hidden');
+    // Show emoji quick-send hint if only emojis
+    let emojiHint = document.getElementById('emojiQuickSend');
+    if (isOnlyEmojis(val)) {
+      if (!emojiHint) {
+        emojiHint = document.createElement('div');
+        emojiHint.id = 'emojiQuickSend';
+        emojiHint.style.cssText = 'position:absolute;bottom:100%;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.75);color:#fff;font-size:11px;padding:4px 10px;border-radius:20px;white-space:nowrap;pointer-events:none;margin-bottom:4px;';
+        emojiHint.textContent = '2x tap to send instantly';
+        sendBtn.style.position = 'relative';
+        sendBtn.parentElement.style.position = 'relative';
+        sendBtn.parentElement.appendChild(emojiHint);
+      }
+    } else {
+      emojiHint?.remove();
+    }
   } else {
     micBtn.classList.remove('hidden');
     sendBtn.classList.add('hidden');
+    document.getElementById('emojiQuickSend')?.remove();
   }
 }
 
@@ -244,6 +268,11 @@ function showImagePreview(file) {
             <input type="text" id="imageCaptionInput" placeholder="Add a caption..." 
               style="width:100%;padding:10px;background:var(--color-input-bg,var(--dark-card));color:var(--text-primary);border:1px solid var(--divider-color);border-radius:20px;box-sizing:border-box;font-size:14px;">
           </div>
+          <div style="margin:8px 0;">
+            <button id="viewOnceToggle" data-on="false" style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:8px 14px;color:#fff;font-size:13px;cursor:pointer;">
+              &#128065;&#65039; View Once: <span id="voStatus" style="color:#7a9bb5;font-weight:600;">OFF</span>
+            </button>
+          </div>
           <div class="preview-actions">
             <button class="btn secondary" id="cancelImageSend">Cancel</button>
             <button class="btn primary"   id="confirmImageSend">Send</button>
@@ -254,17 +283,28 @@ function showImagePreview(file) {
       // Focus caption input
       setTimeout(() => overlay.querySelector('#imageCaptionInput')?.focus(), 100);
       overlay.querySelector('#cancelImageSend').addEventListener('click', () => { overlay.remove(); resolve(false); });
+      overlay.querySelector('#viewOnceToggle')?.addEventListener('click', () => {
+        const btn = overlay.querySelector('#viewOnceToggle');
+        const on = btn.dataset.on === 'true';
+        btn.dataset.on = !on;
+        const st = overlay.querySelector('#voStatus');
+        st.textContent = !on ? 'ON' : 'OFF';
+        st.style.color = !on ? '#00B0A0' : '#7a9bb5';
+        btn.style.borderColor = !on ? 'rgba(0,176,160,0.5)' : 'rgba(255,255,255,0.1)';
+      });
       overlay.querySelector('#confirmImageSend').addEventListener('click', () => {
         const caption = overlay.querySelector('#imageCaptionInput')?.value.trim() || '';
+        const viewOnce = overlay.querySelector('#viewOnceToggle')?.dataset.on === 'true';
         overlay.remove();
-        resolve({ send: true, caption });
+        resolve({ send: true, caption, viewOnce });
       });
       // Allow Enter key to send
       overlay.querySelector('#imageCaptionInput')?.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
           const caption = e.target.value.trim() || '';
+          const viewOnce = overlay.querySelector('#viewOnceToggle')?.dataset.on === 'true';
           overlay.remove();
-          resolve({ send: true, caption });
+          resolve({ send: true, caption, viewOnce });
         }
       });
     };
@@ -455,6 +495,7 @@ function openAccountMenu() {
     <div class="menu-item" id="accountBroadcast">📢 Mass Messaging</div>
     <div class="menu-item" id="accountSmsTemplates">💬 SMS Templates</div>
     <div class="menu-item" id="accountCallSchedule">📅 Call Schedule</div>
+    <div class="menu-item" id="accountStealth" style="display:flex;align-items:center;justify-content:space-between">🕵️ Stealth Mode <span id="stealthBadge" style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(255,255,255,0.1);color:#aaa">OFF</span></div>
   `;
   accountMenu?.appendChild(panel);
   panel.querySelector('#accountProfile')?.addEventListener('click', () => {
@@ -468,6 +509,38 @@ function openAccountMenu() {
   panel.querySelector('#accountGroups')?.addEventListener('click', () => { closeAccountMenu(); if (typeof groupsModule !== 'undefined') { groupsModule.init().then(() => groupsModule.showGroupsList()); } });
   panel.querySelector('#accountBroadcast')?.addEventListener('click', () => { closeAccountMenu(); if (typeof broadcastModule !== 'undefined') { broadcastModule.init().then(() => broadcastModule.showBroadcastScreen()); } });
   panel.querySelector('#accountSmsTemplates')?.addEventListener('click', () => { closeAccountMenu(); if (typeof smsTemplates !== 'undefined') smsTemplates.showManageDialog(); });
+  // Stealth mode init
+  const stealthBadge = panel.querySelector('#stealthBadge');
+  const stealthOn = localStorage.getItem('xame:stealth') === 'true';
+  if (stealthBadge) {
+    stealthBadge.textContent = stealthOn ? 'ON' : 'OFF';
+    stealthBadge.style.background = stealthOn ? 'rgba(0,200,150,0.3)' : 'rgba(255,255,255,0.1)';
+    stealthBadge.style.color = stealthOn ? '#00c896' : '#aaa';
+  }
+  panel.querySelector('#accountStealth')?.addEventListener('click', () => {
+    const isOn = localStorage.getItem('xame:stealth') === 'true';
+    const next = !isOn;
+    localStorage.setItem('xame:stealth', next);
+    if (stealthBadge) {
+      stealthBadge.textContent = next ? 'ON' : 'OFF';
+      stealthBadge.style.background = next ? 'rgba(0,200,150,0.3)' : 'rgba(255,255,255,0.1)';
+      stealthBadge.style.color = next ? '#00c896' : '#aaa';
+    }
+    if (next) {
+      if (typeof stopHeartbeat === 'function') stopHeartbeat();
+      if (typeof startStealthMode === 'function') startStealthMode();
+      showNotification('🕵️ Stealth Mode ON — you appear offline');
+    } else {
+      if (typeof stopStealthMode === 'function') stopStealthMode();
+      if (typeof startHeartbeat === 'function') startHeartbeat();
+      if (socket?.connected && USER?.xameId) {
+        socket.emit('user-online', { userId: USER.xameId, timestamp: Date.now() });
+        socket.emit('request_online_users');
+      }
+      showNotification('Stealth Mode OFF — you appear online');
+    }
+  });
+
   panel.querySelector('#accountCallSchedule')?.addEventListener('click', () => {
     closeAccountMenu();
     const overlay = document.createElement('div');
