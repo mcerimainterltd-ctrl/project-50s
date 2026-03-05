@@ -562,7 +562,7 @@ function renderDeleteMenu() {
     { label: `Email ${count} message${count === 1 ? '' : 's'}`, icon: '📧', action: () => { emailMessages(snapshot); exitSelectMode(); closeDialog(); } },
     { label: `Delete for me (${count})`, icon: '🗑', action: () => {
         if (confirm(`Are you sure you want to delete ${count} message${count === 1 ? '' : 's'} for yourself?`)) {
-          playUiSound('call'); deleteMessages(snapshot, false); closeDialog();
+          deleteMessages(snapshot, false); closeDialog();
         }
       }
     },
@@ -571,7 +571,7 @@ function renderDeleteMenu() {
   if (hasSentMessages) {
     options.push({ label: `Delete for everyone (${count})`, icon: '🗑', action: () => {
         if (confirm(`Are you sure you want to delete ${count} message${count === 1 ? '' : 's'} for everyone?`)) {
-          playUiSound('call'); deleteMessages(snapshot, true); closeDialog();
+          deleteMessages(snapshot, true); closeDialog();
         }
       }
     });
