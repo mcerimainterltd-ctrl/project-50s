@@ -769,14 +769,29 @@ app.post('/api/delete-chat-and-contact',
 // API — FILES & PROFILE
 // ============================================================
 
-app.post('/api/upload-file', diskUpload.single('file'), async (req, res) => {
+app.post('/api/upload-file', memoryUpload.single('file'), async (req, res) => {
     if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded.' });
     try {
-        const ext     = path.extname(req.file.originalname);
-        const newName = `${uuidv4()}${ext}`;
-        const newPath = path.join(uploadDir, newName);
-        await fsPromises.rename(req.file.path, newPath);
-        res.json({ success: true, url: `/uploads/${newName}` });
+        const cloudinaryOk = process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET;
+        if (cloudinaryOk) {
+            const isVideo = req.file.mimetype.startsWith('video');
+            const isAudio = req.file.mimetype.startsWith('audio');
+            const resourceType = isVideo ? 'video' : isAudio ? 'video' : 'auto';
+            const url = await new Promise((resolve, reject) => {
+                const stream = cloudinary.uploader.upload_stream(
+                    { folder: 'xamepage_chat', resource_type: resourceType },
+                    (err, result) => err ? reject(err) : resolve(result.secure_url)
+                );
+                stream.end(req.file.buffer);
+            });
+            res.json({ success: true, url });
+        } else {
+            const ext = path.extname(req.file.originalname);
+            const newName = `${uuidv4()}${ext}`;
+            const newPath = path.join(uploadDir, newName);
+            await fsPromises.writeFile(newPath, req.file.buffer);
+            res.json({ success: true, url: `/uploads/${newName}` });
+        }
     } catch (err) {
         console.error('File upload error:', err);
         res.status(500).json({ success: false, message: 'File processing failed.' });
