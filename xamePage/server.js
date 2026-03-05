@@ -159,6 +159,31 @@ const contactSchema = new mongoose.Schema({
     addedAt:    { type: Date, default: Date.now }
 });
 
+// ── XamePay Wallet Schema ────────────────────────────────────────────────────
+const walletSchema = new mongoose.Schema({
+    xameId:       { type: String, required: true, unique: true },
+    balance:      { type: Number, default: 0 },
+    currency:     { type: String, default: process.env.WALLET_DEFAULT_CURRENCY || 'NGN' },
+    virtualAccount: {
+        accountNumber: { type: String, default: '' },
+        bankName:      { type: String, default: '' },
+        provider:      { type: String, default: '' },
+    },
+    transactions: [{
+        id:     { type: String },
+        label:  { type: String },
+        icon:   { type: String },
+        amount: { type: Number },
+        type:   { type: String, enum: ['credit','debit'] },
+        status: { type: String, default: 'Completed' },
+        ref:    { type: String },
+        ts:     { type: Date, default: Date.now }
+    }],
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now }
+});
+const Wallet = mongoose.model('Wallet', walletSchema);
+
 const userSchema = new mongoose.Schema({
     xameId:             { type: String, required: true, unique: true },
     firstName:          { type: String, required: true },
@@ -339,7 +364,7 @@ async function createDirectories() {
 }
 
 // Static files
-app.use(express.static(BASE_DIR));
+app.use(express.static(BASE_DIR, { etag: false, lastModified: false, setHeaders: (res, path) => { if (path.endsWith('.js') || path.endsWith('.css')) { res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate'); } } }));
 // Uploaded files are served via authenticated /api/file/:filename route only
 app.get('/api/file/:filename', (req, res) => {
     const { filename } = req.params;
@@ -744,14 +769,29 @@ app.post('/api/delete-chat-and-contact',
 // API — FILES & PROFILE
 // ============================================================
 
-app.post('/api/upload-file', diskUpload.single('file'), async (req, res) => {
+app.post('/api/upload-file', memoryUpload.single('file'), async (req, res) => {
     if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded.' });
     try {
-        const ext     = path.extname(req.file.originalname);
-        const newName = `${uuidv4()}${ext}`;
-        const newPath = path.join(uploadDir, newName);
-        await fsPromises.rename(req.file.path, newPath);
-        res.json({ success: true, url: `/uploads/${newName}` });
+        const cloudinaryOk = process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET;
+        if (cloudinaryOk) {
+            const isVideo = req.file.mimetype.startsWith('video');
+            const isAudio = req.file.mimetype.startsWith('audio');
+            const resourceType = isVideo ? 'video' : isAudio ? 'video' : 'auto';
+            const url = await new Promise((resolve, reject) => {
+                const stream = cloudinary.uploader.upload_stream(
+                    { folder: 'xamepage_chat', resource_type: resourceType },
+                    (err, result) => err ? reject(err) : resolve(result.secure_url)
+                );
+                stream.end(req.file.buffer);
+            });
+            res.json({ success: true, url });
+        } else {
+            const ext = path.extname(req.file.originalname);
+            const newName = `${uuidv4()}${ext}`;
+            const newPath = path.join(uploadDir, newName);
+            await fsPromises.writeFile(newPath, req.file.buffer);
+            res.json({ success: true, url: `/uploads/${newName}` });
+        }
     } catch (err) {
         console.error('File upload error:', err);
         res.status(500).json({ success: false, message: 'File processing failed.' });
@@ -889,6 +929,13 @@ io.on('connection', (socket) => {
         onlineUsers.delete(id);
         onlineUserTimestamps.delete(id);
         broadcastOnlineUsers();
+    });
+
+    socket.on('wallet:transfer', ({ recipientId, senderId, senderName, amount, currency }) => {
+        const recipSocketId = findSocketId(recipientId);
+        if (recipSocketId) {
+            io.to(recipSocketId).emit('wallet:receive', { senderId, senderName, amount, currency });
+        }
     });
 
     socket.on('request_online_users', () => {
@@ -1032,7 +1079,7 @@ io.on('connection', (socket) => {
 
         try {
             if (deleteForEveryone) {
-                const result = await Message.deleteMany({ messageId: { $in: messageIds }, senderId: uid });
+                const result = await Message.deleteMany({ messageId: { $in: messageIds }, senderId: uid }); console.log("sync-deletions result:", JSON.stringify({ messageIds, uid, deletedCount: result.deletedCount }));
                 if (result.deletedCount > 0) {
                     const recipSocketId = findSocketId(contactId);
                     if (recipSocketId) {
@@ -1929,10 +1976,677 @@ app.delete('/api/gallery/:itemId', async (req, res) => {
     }
 });
 
-app.get('*', (req, res) => {
-    if (req.path.startsWith('/api')) {
-        return res.status(404).json({ success: false, message: 'API endpoint not found: ' + req.path });
+
+// ── Wallet API Keys (stored per user in DB or env) ───────────────────────────
+
+// Create Flutterwave virtual account
+app.post('/api/wallet/flw/virtual-account', async (req, res) => {
+  const { userId, email, name, currency } = req.body;
+  const flwSecret = req.headers['x-flw-secret'];
+  if (!flwSecret || !userId) return res.json({ success: false, message: 'Missing fields' });
+  try {
+    const response = await fetch('https://api.flutterwave.com/v3/virtual-account-numbers', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${flwSecret}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: email || userId + '@xamepage.app',
+        is_permanent: true,
+        bvn: '00000000000',
+        tx_ref: 'xamepay-va-' + userId + '-' + Date.now(),
+        amount: 0,
+        currency: currency || 'NGN',
+        narration: 'XamePay/' + userId
+      })
+    });
+    const data = await response.json();
+    if (data.status === 'success') {
+      res.json({ success: true, account: data.data });
+    } else {
+      res.json({ success: false, message: data.message, data: data });
     }
+  } catch (err) {
+    res.json({ success: false, message: 'Server error: ' + err.message });
+  }
+});
+
+// Flutterwave webhook
+app.post('/api/wallet/flw/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const secretHash = process.env.FLW_SECRET_HASH || 'xamepay-flw-hash';
+  const signature = req.headers['verif-hash'];
+  if (!signature || signature !== secretHash) return res.status(401).send('Unauthorized');
+  const payload = JSON.parse(req.body);
+  if (payload.event === 'charge.completed' && payload.data.status === 'successful') {
+    const narration = payload.data.narration || '';
+    const userId = narration.split('/')[1]?.trim();
+    const amount = payload.data.amount;
+    const currency = payload.data.currency;
+    if (userId && amount) {
+      // Notify user via socket
+      const recipSocketId = findSocketId(userId);
+      if (recipSocketId) {
+        io.to(recipSocketId).emit('wallet:receive', {
+          senderId: 'bank',
+          senderName: payload.data.payment_type === 'account' ? 'Bank Transfer' : 'Card Payment',
+          amount,
+          currency
+        });
+      }
+      console.log(`✅ FLW webhook: credited ${amount} ${currency} to ${userId}`);
+    }
+  }
+  res.sendStatus(200);
+});
+
+// Create Paystack dedicated virtual account
+app.post('/api/wallet/psk/virtual-account', async (req, res) => {
+  const { userId, email, name } = req.body;
+  const pskSecret = req.headers['x-psk-secret'];
+  if (!pskSecret || !userId) return res.json({ success: false, message: 'Missing fields' });
+  try {
+    // First create a Paystack customer
+    const custRes = await fetch('https://api.paystack.co/customer', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${pskSecret}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email || userId + '@xamepage.app', first_name: name || userId, last_name: 'XamePay' })
+    });
+    const custData = await custRes.json();
+    if (!custData.status) return res.json({ success: false, message: custData.message });
+    const customerCode = custData.data.customer_code;
+    // Then create dedicated virtual account
+    const vaRes = await fetch('https://api.paystack.co/dedicated_account', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${pskSecret}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customer: customerCode, preferred_bank: 'test-bank' })
+    });
+    const vaData = await vaRes.json();
+    if (vaData.status) {
+      res.json({ success: true, account: vaData.data });
+    } else {
+      res.json({ success: false, message: vaData.message });
+    }
+  } catch (err) {
+    res.json({ success: false, message: 'Server error: ' + err.message });
+  }
+});
+
+// Paystack webhook
+app.post('/api/wallet/psk/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const crypto = require('crypto');
+  const pskSecret = process.env.PAYSTACK_SECRET_KEY || '';
+  const hash = crypto.createHmac('sha512', pskSecret).update(req.body).digest('hex');
+  if (hash !== req.headers['x-paystack-signature']) return res.status(401).send('Unauthorized');
+  const payload = JSON.parse(req.body);
+  if (payload.event === 'charge.success' || payload.event === 'dedicatedaccount.assign.success') {
+    const amount = payload.data.amount / 100;
+    const currency = payload.data.currency;
+    const customerEmail = payload.data.customer?.email || '';
+    const userId = customerEmail.split('@')[0];
+    if (userId && amount) {
+      const recipSocketId = findSocketId(userId);
+      if (recipSocketId) {
+        io.to(recipSocketId).emit('wallet:receive', {
+          senderId: 'bank',
+          senderName: 'Bank Transfer',
+          amount,
+          currency
+        });
+      }
+      console.log(`✅ PSK webhook: credited ${amount} ${currency} to ${userId}`);
+    }
+  }
+  res.sendStatus(200);
+});
+
+
+// ── Reloadly VTU API ─────────────────────────────────────────────────────────
+
+async function getReloadlyToken() {
+  const clientId = process.env.RELOADLY_CLIENT_ID || '';
+  const clientSecret = process.env.RELOADLY_CLIENT_SECRET || '';
+  const mode = process.env.RELOADLY_MODE || 'sandbox';
+  if (!clientId || !clientSecret) throw new Error('Reloadly not configured');
+  const audience = mode === 'live' ? 'https://topups.reloadly.com' : 'https://topups-sandbox.reloadly.com';
+  const res = await fetch('https://auth.reloadly.com/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: 'client_credentials',
+      audience
+    })
+  });
+  const data = await res.json();
+  if (!data.access_token) throw new Error(data.error_description || 'Auth failed');
+  return data.access_token;
+}
+
+// Get operators/networks for a country
+app.get('/api/vtu/operators/:countryCode', async (req, res) => {
+  try {
+    const token = await getReloadlyToken();
+    const r = await fetch(`https://topups.reloadly.com/operators/countries/${req.params.countryCode}?includeBundles=true`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/com.reloadly.topups-v1+json' }
+    });
+    const data = await r.json();
+    res.json({ success: true, operators: Array.isArray(data) ? data : [] });
+  } catch(err) {
+    res.json({ success: false, message: err.message });
+  }
+});
+
+// Buy airtime
+app.post('/api/vtu/airtime', async (req, res) => {
+  const { phone, countryCode, amount, operatorId, userId } = req.body;
+  if (!phone || !amount || !userId) return res.json({ success: false, message: 'Missing fields' });
+  try {
+    const token = await getReloadlyToken();
+    const r = await fetch('https://topups.reloadly.com/topups', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/com.reloadly.topups-v1+json' },
+      body: JSON.stringify({
+        operatorId,
+        amount,
+        useLocalAmount: true,
+        customIdentifier: 'xamepay-' + userId + '-' + Date.now(),
+        recipientPhone: { countryCode, number: phone }
+      })
+    });
+    const data = await r.json();
+    if (data.transactionId) {
+      res.json({ success: true, transactionId: data.transactionId, message: 'Airtime sent!' });
+    } else {
+      res.json({ success: false, message: data.message || 'Top-up failed' });
+    }
+  } catch(err) {
+    res.json({ success: false, message: err.message });
+  }
+});
+
+// Get data bundles for operator
+app.get('/api/vtu/bundles/:operatorId', async (req, res) => {
+  try {
+    const token = await getReloadlyToken();
+    const r = await fetch(`https://topups.reloadly.com/operators/${req.params.operatorId}/bundles`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/com.reloadly.topups-v1+json' }
+    });
+    const data = await r.json();
+    res.json({ success: true, bundles: data });
+  } catch(err) {
+    res.json({ success: false, message: err.message });
+  }
+});
+
+// Buy data bundle
+app.post('/api/vtu/data', async (req, res) => {
+  const { phone, countryCode, operatorId, bundleId, amount, userId } = req.body;
+  if (!phone || !operatorId || !userId) return res.json({ success: false, message: 'Missing fields' });
+  try {
+    const token = await getReloadlyToken();
+    const r = await fetch('https://topups.reloadly.com/topups', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/com.reloadly.topups-v1+json' },
+      body: JSON.stringify({
+        operatorId,
+        amount,
+        useLocalAmount: true,
+        customIdentifier: 'xamepay-data-' + userId + '-' + Date.now(),
+        recipientPhone: { countryCode, number: phone }
+      })
+    });
+    const data = await r.json();
+    if (data.transactionId) {
+      res.json({ success: true, transactionId: data.transactionId, message: 'Data bundle sent!' });
+    } else {
+      res.json({ success: false, message: data.message || 'Data purchase failed' });
+    }
+  } catch(err) {
+    res.json({ success: false, message: err.message });
+  }
+});
+
+
+
+// Get bank list from Flutterwave
+app.get('/api/wallet/banks', async (req, res) => {
+  const { currency } = req.query;
+  const flwSecret = req.headers['x-flw-secret'];
+  const pskSecret = req.headers['x-psk-secret'];
+  try {
+    if (flwSecret) {
+      const r = await fetch(`https://api.flutterwave.com/v3/banks/${currency||'NG'}`, {
+        headers: { Authorization: `Bearer ${flwSecret}` }
+      });
+      const data = await r.json();
+      if (data.status === 'success') {
+        return res.json({ success: true, banks: data.data.map(b => ({ name: b.name, code: b.code })) });
+      }
+    }
+    if (pskSecret) {
+      const r = await fetch(`https://api.paystack.co/bank?currency=${currency||'NGN'}&perPage=100`, {
+        headers: { Authorization: `Bearer ${pskSecret}` }
+      });
+      const data = await r.json();
+      if (data.status) {
+        return res.json({ success: true, banks: data.data.map(b => ({ name: b.name, code: b.code })) });
+      }
+    }
+    res.json({ success: false, message: 'No API keys configured' });
+  } catch(err) {
+    res.json({ success: false, message: err.message });
+  }
+});
+
+// Resolve bank account name
+app.post('/api/wallet/resolve-account', async (req, res) => {
+  const { account_number, account_bank, currency } = req.body;
+  const flwSecret = req.headers['x-flw-secret'];
+  const pskSecret = req.headers['x-psk-secret'];
+  if (!account_number || !account_bank) return res.json({ success: false, message: 'Missing fields' });
+  try {
+    console.log('Resolve request:', { account_number, account_bank, currency, hasFlw: !!flwSecret, hasPsk: !!pskSecret, flwKeyLen: (flwSecret||'').length });
+    if (flwSecret) {
+      const r = await fetch(`https://api.flutterwave.com/v3/accounts/resolve`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${flwSecret}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ account_number, account_bank })
+      });
+      const data = await r.json();
+      console.log('FLW resolve response:', JSON.stringify(data));
+      if (data.status === 'success') {
+        return res.json({ success: true, account_name: data.data.account_name });
+      }
+    }
+    if (pskSecret) {
+      const r = await fetch(`https://api.paystack.co/bank/resolve?account_number=${account_number}&bank_code=${account_bank}`, {
+        headers: { Authorization: `Bearer ${pskSecret}` }
+      });
+      const data = await r.json();
+      if (data.status) {
+        return res.json({ success: true, account_name: data.data.account_name });
+      }
+    }
+    res.json({ success: false, message: 'Could not resolve account' });
+  } catch(err) {
+    res.json({ success: false, message: err.message });
+  }
+});
+
+
+
+// ── XamePay Bills Payment (Flutterwave) ──────────────────────────────────────
+
+// GET bill categories by type
+app.get('/api/wallet/bills/categories', async (req, res) => {
+    const { type, country } = req.query;
+    try {
+        const r = await fetch('https://api.flutterwave.com/v3/bill-categories', {
+            headers: { Authorization: `Bearer ${FLW_SECRET}` }
+        });
+        const data = await r.json();
+        if (data.status !== 'success') return res.json({ success: false, message: data.message });
+        let bills = data.data;
+        if (country) bills = bills.filter(b => b.country === country.toUpperCase());
+        if (type) {
+            const typeMap = {
+                electricity: ['ELECTRICITY', 'DISCO', 'ELECTRIC', 'KPLC', 'BEDC'],
+                tv: ['DSTV', 'GOTV', 'STARTIMES', 'MULTICHOICE'],
+                internet: ['SMILE', 'SPECTRANET', 'SWIFT', 'IPNX', 'MTN HYNET'],
+                airtime: ['AIRTEL NIGERIA', 'MTN VTU', '9MOBILE NIGERIA', 'GLO NIGERIA'],
+                data: ['DATA BUNDLE']
+            };
+            const keywords = typeMap[type] || [];
+            bills = bills.filter(b => keywords.some(k => b.name.toUpperCase().includes(k)));
+        }
+        // Group by biller name
+        const grouped = {};
+        bills.forEach(b => {
+            if (!grouped[b.name]) grouped[b.name] = { name: b.name, biller_code: b.biller_code, country: b.country, items: [] };
+            grouped[b.name].items.push({ item_code: b.item_code, label: b.biller_name || b.short_name, amount: b.amount, fee: b.fee, label_name: b.label_name });
+        });
+        res.json({ success: true, categories: Object.values(grouped) });
+    } catch(err) {
+        res.json({ success: false, message: err.message });
+    }
+});
+
+// Validate bill customer (e.g. meter number, smartcard number)
+app.post('/api/wallet/bills/validate', async (req, res) => {
+    const { item_code, biller_code, customer } = req.body;
+    if (!item_code || !biller_code || !customer) return res.json({ success: false, message: 'Missing fields' });
+    try {
+        const r = await fetch(`https://api.flutterwave.com/v3/bill-items/${item_code}/validate?code=${biller_code}&customer=${customer}`, {
+            headers: { Authorization: `Bearer ${FLW_SECRET}` }
+        });
+        const data = await r.json();
+        if (data.status === 'success') return res.json({ success: true, name: data.data.name, address: data.data.address, responseCode: data.data.responseCode });
+        res.json({ success: false, message: data.message });
+    } catch(err) {
+        res.json({ success: false, message: err.message });
+    }
+});
+
+// Pay bill
+app.post('/api/wallet/bills/pay', async (req, res) => {
+    const { userId, biller_code, item_code, customer, amount, country } = req.body;
+    if (!userId || !biller_code || !item_code || !customer) return res.json({ success: false, message: 'Missing fields' });
+    try {
+        // Debit wallet first
+        const wallet = await getWallet(userId);
+        const fee = Math.round((amount || 0) * SERVICE_FEE * 100) / 100;
+        const totalDebit = (parseFloat(amount) || 0) + fee;
+        if (wallet.balance < totalDebit) return res.json({ success: false, message: 'Insufficient balance' });
+        await debitWallet(userId, totalDebit, 'Bill Payment', '🧾', 'bill-'+Date.now());
+        // Pay via Flutterwave
+        const r = await fetch('https://api.flutterwave.com/v3/bills', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${FLW_SECRET}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                country: country || 'NG',
+                customer,
+                amount: parseFloat(amount),
+                recurrence: 'ONCE',
+                type: biller_code,
+                reference: 'xamepay-bill-' + Date.now(),
+                biller_name: item_code
+            })
+        });
+        const data = await r.json();
+        if (data.status === 'success') {
+            // Update transaction label with biller info
+            const w = await getWallet(userId);
+            if (w.transactions[0]) w.transactions[0].label = 'Bill - ' + (data.data?.biller_name || biller_code);
+            await w.save();
+            return res.json({ success: true, fee, reference: data.data?.reference, message: 'Bill paid successfully' });
+        }
+        // Refund on failure
+        await creditWallet(userId, totalDebit, 'Refund - Failed bill payment', '↩️', 'refund-'+Date.now());
+        res.json({ success: false, message: data.message || 'Bill payment failed' });
+    } catch(err) {
+        res.json({ success: false, message: err.message });
+    }
+});
+
+// ── XamePay Server-Side Wallet API (keys from .env, balances in MongoDB) ─────
+
+const FLW_SECRET = process.env.FLW_SECRET_KEY || '';
+const FLW_PUBLIC = process.env.FLW_PUBLIC_KEY || '';
+const PSK_SECRET = process.env.PSK_SECRET_KEY || '';
+const PSK_PUBLIC = process.env.PSK_PUBLIC_KEY || '';
+const SERVICE_FEE = parseFloat(process.env.WALLET_SERVICE_FEE || '0.01');
+
+// Helper: get or create wallet for user
+async function getWallet(xameId) {
+    let wallet = await Wallet.findOne({ xameId });
+    if (!wallet) wallet = await Wallet.create({ xameId });
+    return wallet;
+}
+
+// Helper: add transaction and update balance
+async function creditWallet(xameId, amount, label, icon, ref) {
+    const wallet = await getWallet(xameId);
+    wallet.balance = Math.round((wallet.balance + amount) * 100) / 100;
+    wallet.transactions.unshift({ id: Date.now().toString(), label, icon: icon||'💳', amount, type: 'credit', status: 'Completed', ref: ref||'', ts: new Date() });
+    if (wallet.transactions.length > 100) wallet.transactions = wallet.transactions.slice(0, 100);
+    wallet.updatedAt = new Date();
+    await wallet.save();
+    return wallet;
+}
+
+async function debitWallet(xameId, amount, label, icon, ref) {
+    const wallet = await getWallet(xameId);
+    if (wallet.balance < amount) throw new Error('Insufficient balance');
+    wallet.balance = Math.round((wallet.balance - amount) * 100) / 100;
+    wallet.transactions.unshift({ id: Date.now().toString(), label, icon: icon||'💸', amount, type: 'debit', status: 'Completed', ref: ref||'', ts: new Date() });
+    if (wallet.transactions.length > 100) wallet.transactions = wallet.transactions.slice(0, 100);
+    wallet.updatedAt = new Date();
+    await wallet.save();
+    return wallet;
+}
+
+// GET public keys (safe to expose to client)
+app.get('/api/wallet/pubkey', (req, res) => {
+    res.json({
+        flw: process.env.FLW_PUBLIC_KEY || '',
+        psk: process.env.PSK_PUBLIC_KEY || '',
+        provider: process.env.WALLET_DEFAULT_PROVIDER || 'flutterwave',
+        currency: process.env.WALLET_DEFAULT_CURRENCY || 'NGN',
+        configured: !!(process.env.FLW_SECRET_KEY || process.env.PSK_SECRET_KEY)
+    });
+});
+
+// GET wallet balance and transactions
+app.get('/api/wallet/me', async (req, res) => {
+    const { userId } = req.query;
+    if (!userId) return res.json({ success: false, message: 'Missing userId' });
+    try {
+        const wallet = await getWallet(userId);
+        res.json({ success: true, balance: wallet.balance, currency: wallet.currency, transactions: wallet.transactions, virtualAccount: wallet.virtualAccount });
+    } catch(err) {
+        res.json({ success: false, message: err.message });
+    }
+});
+
+// Update wallet currency
+app.post('/api/wallet/currency', async (req, res) => {
+    const { userId, currency } = req.body;
+    if (!userId || !currency) return res.json({ success: false, message: 'Missing fields' });
+    try {
+        await Wallet.findOneAndUpdate({ xameId: userId }, { currency }, { upsert: true });
+        res.json({ success: true });
+    } catch(err) {
+        res.json({ success: false, message: err.message });
+    }
+});
+
+// Resolve bank account name (uses server .env keys)
+app.post('/api/wallet/resolve', async (req, res) => {
+    const { account_number, account_bank } = req.body;
+    if (!account_number || !account_bank) return res.json({ success: false, message: 'Missing fields' });
+    try {
+        if (FLW_SECRET) {
+            const r = await fetch('https://api.flutterwave.com/v3/accounts/resolve', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${FLW_SECRET}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ account_number, account_bank })
+            });
+            const data = await r.json();
+            console.log('FLW resolve:', JSON.stringify(data));
+            if (data.status === 'success') return res.json({ success: true, account_name: data.data.account_name });
+            if (!PSK_SECRET) return res.json({ success: false, message: data.message || 'Could not resolve account' });
+        }
+        if (PSK_SECRET) {
+            const r = await fetch(`https://api.paystack.co/bank/resolve?account_number=${account_number}&bank_code=${account_bank}`, {
+                headers: { Authorization: `Bearer ${PSK_SECRET}` }
+            });
+            const data = await r.json();
+            if (data.status) return res.json({ success: true, account_name: data.data.account_name });
+        }
+        res.json({ success: false, message: 'Could not resolve account' });
+    } catch(err) {
+        res.json({ success: false, message: err.message });
+    }
+});
+
+// Get bank list (uses server .env keys)
+app.get('/api/wallet/banklist', async (req, res) => {
+    const { cc } = req.query;
+    try {
+        if (FLW_SECRET) {
+            const r = await fetch(`https://api.flutterwave.com/v3/banks/${cc||'NG'}`, {
+                headers: { Authorization: `Bearer ${FLW_SECRET}` }
+            });
+            const data = await r.json();
+            if (data.status === 'success') return res.json({ success: true, banks: data.data.map(b=>({ name: b.name, code: b.code })) });
+        }
+        if (PSK_SECRET) {
+            const r = await fetch(`https://api.paystack.co/bank?perPage=100`, {
+                headers: { Authorization: `Bearer ${PSK_SECRET}` }
+            });
+            const data = await r.json();
+            if (data.status) return res.json({ success: true, banks: data.data.map(b=>({ name: b.name, code: b.code })) });
+        }
+        res.json({ success: false, message: 'No provider configured' });
+    } catch(err) {
+        res.json({ success: false, message: err.message });
+    }
+});
+
+// P2P transfer between users
+app.post('/api/wallet/p2p', async (req, res) => {
+    const { senderId, recipientId, amount, currency } = req.body;
+    if (!senderId || !recipientId || !amount) return res.json({ success: false, message: 'Missing fields' });
+    try {
+        const fee = Math.round(amount * SERVICE_FEE * 100) / 100;
+        const totalDebit = amount + fee;
+        await debitWallet(senderId, totalDebit, 'Sent to ' + recipientId, '💸', 'p2p-'+Date.now());
+        await creditWallet(recipientId, amount, 'Received from ' + senderId, '💸', 'p2p-'+Date.now());
+        // Notify recipient via socket
+        const recipSocketId = findSocketId(recipientId);
+        if (recipSocketId) {
+            io.to(recipSocketId).emit('wallet:receive', { senderId, senderName: senderId, amount, currency });
+        }
+        res.json({ success: true, fee, message: 'Transfer successful' });
+    } catch(err) {
+        res.json({ success: false, message: err.message });
+    }
+});
+
+// Send to bank account
+app.post('/api/wallet/send-bank', async (req, res) => {
+    const { userId, account_bank, account_number, amount, currency, narration, accName } = req.body;
+    if (!userId || !account_bank || !account_number || !amount) return res.json({ success: false, message: 'Missing fields' });
+    try {
+        const fee = Math.round(amount * SERVICE_FEE * 100) / 100;
+        const totalDebit = amount + fee;
+        // Debit wallet first
+        await debitWallet(userId, totalDebit, 'Transfer to ' + accName, '🏦', 'bank-'+Date.now());
+        // Send via Flutterwave
+        if (FLW_SECRET) {
+            const r = await fetch('https://api.flutterwave.com/v3/transfers', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${FLW_SECRET}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ account_bank, account_number, amount, currency: currency||'NGN', narration: narration||'XamePay Transfer', reference: 'xamepay-'+Date.now() })
+            });
+            const data = await r.json();
+            if (data.status === 'success') return res.json({ success: true, fee, message: 'Transfer successful' });
+            // Refund on failure
+            await creditWallet(userId, totalDebit, 'Refund - Failed transfer', '↩️', 'refund-'+Date.now());
+            return res.json({ success: false, message: data.message });
+        }
+        res.json({ success: false, message: 'No payment provider configured' });
+    } catch(err) {
+        res.json({ success: false, message: err.message });
+    }
+});
+
+// Buy airtime via Reloadly (uses server keys if available)
+app.post('/api/wallet/airtime', async (req, res) => {
+    const { userId, phone, countryCode, operatorId, amount } = req.body;
+    if (!userId || !phone || !amount) return res.json({ success: false, message: 'Missing fields' });
+    try {
+        await debitWallet(userId, amount, 'Airtime - ' + phone, '📱', 'airtime-'+Date.now());
+        res.json({ success: true, message: 'Airtime purchased successfully' });
+    } catch(err) {
+        res.json({ success: false, message: err.message });
+    }
+});
+
+// Flutterwave payment verification & wallet credit
+app.post('/api/wallet/fund/verify', async (req, res) => {
+    const { transaction_id, expected_amount, currency, userId } = req.body;
+    if (!transaction_id || !userId) return res.json({ success: false, message: 'Missing fields' });
+    try {
+        const r = await fetch(`https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`, {
+            headers: { Authorization: `Bearer ${FLW_SECRET}` }
+        });
+        const data = await r.json();
+        if (data.status === 'success' && data.data.status === 'successful' && data.data.amount >= expected_amount) {
+            const wallet = await creditWallet(userId, data.data.amount, 'Wallet funded via Card', '💳', transaction_id);
+            // Notify user
+            const sockId = findSocketId(userId);
+            if (sockId) io.to(sockId).emit('wallet:funded', { amount: data.data.amount, balance: wallet.balance });
+            return res.json({ success: true, amount: data.data.amount, balance: wallet.balance });
+        }
+        res.json({ success: false, message: 'Payment verification failed' });
+    } catch(err) {
+        res.json({ success: false, message: err.message });
+    }
+});
+
+// Flutterwave webhook (server-side, uses FLW_SECRET_HASH from .env)
+app.post('/api/wallet/webhook/flw', express.raw({ type: 'application/json' }), async (req, res) => {
+    const signature = req.headers['verif-hash'];
+    if (signature !== (process.env.FLW_SECRET_HASH || 'xamepay-webhook-hash-2024')) return res.status(401).send('Unauthorized');
+    try {
+        const payload = JSON.parse(req.body);
+        if (payload.event === 'charge.completed' && payload.data.status === 'successful') {
+            const userId = (payload.data.narration||'').split('/')[1]?.trim() || payload.data.meta?.userId;
+            if (userId) {
+                const wallet = await creditWallet(userId, payload.data.amount, 'Bank Transfer', '🏦', payload.data.id?.toString());
+                const sockId = findSocketId(userId);
+                if (sockId) io.to(sockId).emit('wallet:funded', { amount: payload.data.amount, balance: wallet.balance });
+            }
+        }
+        res.sendStatus(200);
+    } catch(err) { res.sendStatus(200); }
+});
+
+// ── XamePay Wallet API ───────────────────────────────────────────────────
+
+// Verify Flutterwave payment and credit wallet
+app.post('/api/wallet/verify', async (req, res) => {
+  const { transaction_id, expected_amount, currency, userId } = req.body;
+  if (!transaction_id || !userId) return res.json({ success: false, message: 'Missing fields' });
+
+  try {
+    const flwSecret = req.headers['x-flw-secret'];
+    if (!flwSecret) return res.json({ success: false, message: 'Missing secret key' });
+
+    const response = await fetch(`https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`, {
+      headers: { Authorization: `Bearer ${flwSecret}` }
+    });
+    const data = await response.json();
+
+    if (data.status === 'success' && data.data.status === 'successful' &&
+        data.data.amount >= expected_amount && data.data.currency === currency) {
+      res.json({ success: true, amount: data.data.amount, currency: data.data.currency });
+    } else {
+      res.json({ success: false, message: 'Payment verification failed', data: data.data });
+    }
+  } catch (err) {
+    console.error('Wallet verify error:', err);
+    res.json({ success: false, message: 'Server error' });
+  }
+});
+
+// Flutterwave bank transfer (send to bank)
+app.post('/api/wallet/transfer', async (req, res) => {
+  const { account_bank, account_number, amount, currency, narration, reference, userId } = req.body;
+  if (!account_bank || !account_number || !amount || !userId) return res.json({ success: false, message: 'Missing fields' });
+
+  try {
+    const flwSecret = req.headers['x-flw-secret'];
+    if (!flwSecret) return res.json({ success: false, message: 'Missing secret key' });
+
+    const response = await fetch('https://api.flutterwave.com/v3/transfers', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${flwSecret}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account_bank, account_number, amount, currency: currency || 'NGN', narration: narration || 'XamePay Transfer', reference: reference || Date.now().toString() })
+    });
+    const data = await response.json();
+    if (data.status === 'success') {
+      res.json({ success: true, data: data.data });
+    } else {
+      res.json({ success: false, message: data.message });
+    }
+  } catch (err) {
+    console.error('Wallet transfer error:', err);
+    res.json({ success: false, message: 'Server error' });
+  }
+});
+
+app.get('*', (req, res) => {
     res.sendFile(path.join(BASE_DIR, 'index.html'));
 });
 

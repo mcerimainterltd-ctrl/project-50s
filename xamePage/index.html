@@ -43,6 +43,7 @@
     as a global when messaging.js initialises waveforms.
   -->
   <script src="/js/wavesurfer.min.js"></script>
+  <script src="https://checkout.flutterwave.com/v3.js"></script>
 </head>
 <body>
 
@@ -180,6 +181,9 @@
       <button class="contacts-tab" id="tabCalls" data-tab="calls">
         📞 Calls <span id="missedCallsBadge" class="missed-badge hidden">0</span>
       </button>
+      <button class="contacts-tab" id="tabWallet" data-tab="wallet">
+        💰 Pay
+      </button>
     </div>
 
     <!-- Chats panel -->
@@ -187,6 +191,7 @@
       <div class="search-bar">
         <input id="searchInput" class="search-input" placeholder="Search contacts" />
       </div>
+      <div id="selfContactRow"></div>
       <main id="contactList" class="list"></main>
     </div>
 
@@ -221,6 +226,10 @@
         <button id="removeProfilePicBtn" class="remove-pic-btn" type="button"
                 style="margin-top:-8px;margin-bottom:4px;">
           &#128465;&#65039; Remove
+        </button>
+        <button id="buildAvatarBtn" class="remove-pic-btn" type="button"
+                style="margin-top:0;margin-bottom:4px;background:rgba(0,176,160,0.15);border-color:rgba(0,176,160,0.4);color:#00B0A0;">
+          &#127912; Build Avatar
         </button>
         <div class="status-section">
           <h4 class="status-title">Personal Status</h4>
@@ -561,6 +570,15 @@
 <script src="/js/keyboard.js"></script>
 <script src="/js/lifecycle.js"></script>
 <script src="/js/debug.js"></script>
+<script src="https://checkout.flutterwave.com/v3.js"></script>
+<script src="https://js.paystack.co/v1/inline.js"></script>
+<script src="/js/wallet.js"></script>
+<script src="/js/translation.js"></script>
+<script src="/js/chat-lock.js"></script>
+<script src="/js/avatar-builder.js"></script>
+<script src="/js/translation.js"></script>
+<script src="/js/chat-lock.js"></script>
+<script src="/js/avatar-builder.js"></script>
 <script src="/js/app.js"></script>
 
 <!-- 4. Service Worker registration (plain script — no import needed) -->
