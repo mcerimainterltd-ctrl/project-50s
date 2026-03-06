@@ -569,7 +569,7 @@ const walletModule = (() => {
           } else {
             const ngnSupported = ['NG','GH','KE','ZA','TZ','UG','ZM','RW','ET'].includes(cc);
             if(ngnSupported){
-              resolvedEl.textContent = '❌ ' + (data.message || 'Account not found — check details');
+              resolvedEl.textContent = '❌ Account not found — please check your details';
               resolvedEl.style.color = '#ff6464';
             } else {
               resolvedEl.textContent = '⚠️ Verification not available for your region — you can still send money';
