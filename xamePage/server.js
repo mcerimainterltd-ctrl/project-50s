@@ -2647,6 +2647,9 @@ app.post('/api/wallet/transfer', async (req, res) => {
 });
 
 app.get('*', (req, res) => {
+    if (req.path.startsWith('/api/')) {
+        return res.status(404).json({ success: false, message: 'API endpoint not found' });
+    }
     res.sendFile(path.join(BASE_DIR, 'index.html'));
 });
 
