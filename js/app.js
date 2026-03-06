@@ -68,6 +68,8 @@ function setupEventListeners() {
       });
 
       if (!response.ok) throw new Error(`Server error: ${response.status}`);
+      const ct = response.headers.get('content-type') || '';
+      if (!ct.includes('application/json')) throw new Error('No internet connection');
       const result = await response.json();
 
       if (result.success) {
@@ -109,6 +111,8 @@ function setupEventListeners() {
         body: JSON.stringify({ xameId }),
       });
       if (!checkResponse.ok) throw new Error(`Server error: ${checkResponse.status}`);
+      const ct1 = checkResponse.headers.get('content-type') || '';
+      if (!ct1.includes('application/json')) throw new Error('No internet connection');
       const checkResult = await checkResponse.json();
 
       if (!checkResult.success) { showNotification(checkResult.message || 'Login failed. Please check your Xame-ID.'); return; }
@@ -128,6 +132,8 @@ function setupEventListeners() {
         body: JSON.stringify({ xameId, password }),
       });
       if (!loginResponse.ok) throw new Error(`Server error: ${loginResponse.status}`);
+      const ct2 = loginResponse.headers.get('content-type') || '';
+      if (!ct2.includes('application/json')) throw new Error('No internet connection');
       const loginResult = await loginResponse.json();
 
       if (loginResult.success) {
