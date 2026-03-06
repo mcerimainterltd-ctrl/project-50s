@@ -33,11 +33,26 @@ self.addEventListener("activate", event => {
 // Serve from cache, fallback to network, then to offline page
 self.addEventListener("fetch", event => {
   const url = event.request.url;
+
+  // Never intercept API calls - always go to network
+  if (url.includes('/api/')) {
+    event.respondWith(
+      fetch(event.request).catch(() =>
+        new Response(JSON.stringify({ success: false, message: 'No internet connection' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      )
+    );
+    return;
+  }
+
   // Always fetch JS and CSS from network to avoid stale cache issues
   if (url.endsWith('.js') || url.includes('.js?') || url.endsWith('.css') || url.includes('.css?')) {
     event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
     return;
   }
+
   if (event.request.mode === 'navigate') {
     event.respondWith(
       fetch(event.request).catch(() => caches.match('offline.html'))
@@ -45,13 +60,9 @@ self.addEventListener("fetch", event => {
   } else {
     event.respondWith(
       caches.match(event.request)
-        .then(response => {
-          if (response) {
-            return response;
-          }
-          return fetch(event.request)
-            .catch(() => caches.match('offline.html'));
-        })
+        .then(response => response || fetch(event.request)
+          .catch(() => caches.match('offline.html'))
+        )
     );
   }
 });
