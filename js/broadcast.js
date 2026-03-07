@@ -13,7 +13,7 @@ const broadcastModule = (() => {
 
   async function _loadLists() {
     try {
-      const r = await fetch('/api/broadcast/' + USER.xameId);
+      const r = await fetch(serverURL+'/api/broadcast/' + USER.xameId);
       const d = await r.json();
       if (d.success) _lists = d.lists;
     } catch (e) { console.error('Broadcast load error:', e); }
@@ -282,7 +282,7 @@ const broadcastModule = (() => {
       formData.append('senderId', USER.xameId);
       formData.append('recipientId', 'broadcast');
       formData.append('messageId', Date.now().toString());
-      const r = await fetch('/api/upload-file', { method: 'POST', body: formData });
+      const r = await fetch(serverURL+'/api/upload-file', { method: 'POST', body: formData });
       const d = await r.json();
       if (d.success && d.url) return { name: file.name, type: file.type, url: d.url };
       return null;
@@ -292,7 +292,7 @@ const broadcastModule = (() => {
   // ── API helpers ─────────────────────────────────────────────────────────
   async function _createList(name, members) {
     try {
-      const r = await fetch('/api/broadcast/create', {
+      const r = await fetch(serverURL+'/api/broadcast/create', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ownerId: USER.xameId, name, members })
       });
@@ -303,7 +303,7 @@ const broadcastModule = (() => {
 
   async function _updateList(listId, name, members) {
     try {
-      const r = await fetch('/api/broadcast/' + listId, {
+      const r = await fetch(serverURL+'/api/broadcast/' + listId, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ownerId: USER.xameId, name, members })
       });
@@ -314,7 +314,7 @@ const broadcastModule = (() => {
 
   async function _deleteList(listId) {
     try {
-      await fetch('/api/broadcast/' + listId, {
+      await fetch(serverURL+'/api/broadcast/' + listId, {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ownerId: USER.xameId })
       });

@@ -9,7 +9,7 @@ const callHistoryModule = (() => {
 
   async function load() {
     try {
-      const r = await fetch('/api/call-history/' + USER.xameId);
+      const r = await fetch(serverURL+'/api/call-history/' + USER.xameId);
       const d = await r.json();
       if (d.success) {
         _history = d.calls;
@@ -116,7 +116,7 @@ const callHistoryModule = (() => {
 
   async function clearHistory() {
     try {
-      await fetch('/api/call-history/' + USER.xameId, { method: 'DELETE' });
+      await fetch(serverURL+'/api/call-history/' + USER.xameId, { method: 'DELETE' });
       _history = []; _missedCount = 0; _updateBadge(); render();
     } catch (e) { console.error('Clear history error:', e); }
   }
@@ -149,7 +149,7 @@ const callHistoryModule = (() => {
         if (badge) { badge.textContent = '0'; badge.classList.add('hidden'); }
         render();
         // Persist seen status to server
-        fetch('/api/call-history/' + USER.xameId + '/seen', { method: 'PATCH' })
+        fetch(serverURL+'/api/call-history/' + USER.xameId + '/seen', { method: 'PATCH' })
           .catch(e => console.warn('Failed to mark calls seen:', e));
       });
     });

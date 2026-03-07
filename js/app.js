@@ -61,7 +61,7 @@ function setupEventListeners() {
       const body = { firstName, lastName, dob: dobValue };
       if (password) body.password = password;
 
-      const response = await fetch('/api/register', {
+      const response = await fetch(serverURL+'/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -106,7 +106,7 @@ function setupEventListeners() {
 
     try {
       // Step 1: Check if user exists
-      const checkResponse = await fetch('/api/get-user-name', {
+      const checkResponse = await fetch(serverURL+'/api/get-user-name', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ xameId }),
       });
@@ -127,7 +127,7 @@ function setupEventListeners() {
       }
 
       // Step 3: Login with password
-      const loginResponse = await fetch('/api/login', {
+      const loginResponse = await fetch(serverURL+'/api/login', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ xameId, password }),
       });

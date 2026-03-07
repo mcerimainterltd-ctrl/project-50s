@@ -20,7 +20,7 @@ const groupsModule = {
 
   async loadGroups() {
     try {
-      const res  = await fetch('/api/groups/' + USER.xameId);
+      const res  = await fetch(serverURL+'/api/groups/' + USER.xameId);
       const data = await res.json();
       this._groups = data.groups || [];
     } catch (e) { this._groups = []; }
@@ -130,7 +130,7 @@ const groupsModule = {
       const btn = dlg.querySelector('#createGroupConfirmBtn');
       btn.textContent = 'Creating...'; btn.disabled = true;
       try {
-        const res  = await fetch('/api/groups/create', {
+        const res  = await fetch(serverURL+'/api/groups/create', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ userId: USER.xameId, name, description: desc, memberIds: checked })
         });
@@ -208,7 +208,7 @@ const groupsModule = {
 
     // Load messages
     try {
-      const res  = await fetch('/api/groups/messages/' + group.groupId);
+      const res  = await fetch(serverURL+'/api/groups/messages/' + group.groupId);
       const data = await res.json();
       this._messages = data.messages || [];
       this._renderGroupMessages();
@@ -308,7 +308,7 @@ const groupsModule = {
       formData.append('groupId', group.groupId);
       formData.append('userId', USER.xameId);
       try {
-        const res  = await fetch('/api/groups/upload-avatar', { method: 'POST', body: formData });
+        const res  = await fetch(serverURL+'/api/groups/upload-avatar', { method: 'POST', body: formData });
         const data = await res.json();
         if (data.success) {
           group.avatar = data.avatarUrl;
@@ -322,7 +322,7 @@ const groupsModule = {
 
     dlg.querySelector('#leaveGroupBtn').addEventListener('click', async () => {
       if (!confirm('Leave this group?')) return;
-      await fetch('/api/groups/remove-member', {
+      await fetch(serverURL+'/api/groups/remove-member', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ groupId: group.groupId, requesterId: group.createdBy, userId: USER.xameId })
       });
@@ -340,7 +340,7 @@ const groupsModule = {
     dlg.querySelectorAll('[data-remove]').forEach(btn => {
       btn.addEventListener('click', async () => {
         if (!confirm('Remove this member?')) return;
-        await fetch('/api/groups/remove-member', {
+        await fetch(serverURL+'/api/groups/remove-member', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ groupId: group.groupId, requesterId: USER.xameId, userId: btn.dataset.remove })
         });
@@ -374,7 +374,7 @@ const groupsModule = {
       const selected = [...dlg.querySelectorAll('input:checked')].map(i => i.value);
       if (selected.length === 0) { showNotification('Select at least one member'); return; }
       for (const userId of selected) {
-        const res = await fetch('/api/groups/add-member', {
+        const res = await fetch(serverURL+'/api/groups/add-member', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ groupId: group.groupId, requesterId: USER.xameId, userId })
         });
