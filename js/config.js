@@ -12,12 +12,8 @@ const isCapacitorNative = () =>
 
 const isPackagedApp = isCapacitorNative();
 
-// Use Render URL if running as APK or if origin is capacitor/localhost
-const _origin = window.location.origin;
-const _isLocal = _origin.includes('localhost') || _origin.includes('capacitor') || _origin.includes('ionic') || _origin === 'null' || _origin === 'file://';
-const serverURL = (isPackagedApp || _isLocal)
-  ? 'https://project-50s.onrender.com'
-  : _origin;
+// Always use Render URL - works for APK, PWA, and localhost
+const serverURL = 'https://project-50s.onrender.com';
 
 //  Storage keys 
 const KEYS = {
