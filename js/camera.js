@@ -205,7 +205,7 @@ async function openCamera() {
       audio: false
     });
     cameraVideoElement.srcObject = cameraStream;
-  } catch (error) { alert('Camera access denied.'); closeCamera(); }
+  } catch (error) { console.error('Camera error:', error); alert('Cam err: ' + error.name + ' - ' + error.message); closeCamera(); }
 }
 
 function closeCamera() {
@@ -265,3 +265,11 @@ function sendCameraMedia() {
     closeCamera();
   });
 }
+
+// Close camera on Android back button
+document.addEventListener('backbutton', function(e) {
+  if (cameraModal && !cameraModal.classList.contains('hidden')) {
+    e.preventDefault();
+    closeCamera();
+  }
+}, false);
