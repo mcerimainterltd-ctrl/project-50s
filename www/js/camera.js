@@ -71,50 +71,24 @@ async function takeNativePhoto() {
 }
 
 function recordNativeVideo() {
-  // Create a hidden file input that specifically opens video camera
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = 'video/*';
-  input.capture = 'camcorder';
-  input.style.display = 'none';
-  document.body.appendChild(input);
-
-  // Show cancel button while recorder is open
-  const cancelBar = document.createElement('div');
-  cancelBar.id = 'video-cancel-bar';
-  cancelBar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:rgba(18,18,18,0.97);backdrop-filter:blur(20px);border-radius:24px 24px 0 0;padding:20px 20px 40px;z-index:12000;display:flex;flex-direction:column;gap:10px;';
-  cancelBar.innerHTML = `
-    <p style="color:rgba(255,255,255,0.6);text-align:center;margin:0;font-size:14px;">🎥 Video recorder is open...</p>
-    <button id="video-cancel-btn" style="padding:14px;border-radius:14px;background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.7);border:1px solid rgba(255,255,255,0.1);font-size:15px;cursor:pointer;">✕ Cancel</button>
-  `;
-  document.body.appendChild(cancelBar);
-
-  function cleanup() {
-    cancelBar.remove();
-    input.remove();
-  }
-
-  document.getElementById('video-cancel-btn').onclick = cleanup;
-
-  input.onchange = () => {
-    cleanup();
-    const file = input.files[0];
-    if (file) {
-      sendFile(new File([file], 'video.mp4', { type: file.type || 'video/mp4' }));
-    }
-  };
-
-  // Detect when user returns without selecting (Android focus event)
-  window.addEventListener('focus', function onFocus() {
-    window.removeEventListener('focus', onFocus);
-    setTimeout(() => {
-      if (document.getElementById('video-cancel-bar')) {
-        if (!input.files || input.files.length === 0) {
-          cleanup();
-        }
-      }
-    }, 500);
-  });
-
-  input.click();
+  removeCancelBar();
+  showCancelBar('🎥 Video recorder is open...');
+  try {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'video/mp4,video/*';
+    input.capture = 'camcorder';
+    input.style.display = 'none';
+    document.body.appendChild(input);
+    input.onchange = () => {
+      removeCancelBar();
+      const file = input.files[0];
+      if (file) sendFile(new File([file], 'video.mp4', { type: file.type }));
+      input.remove();
+    };
+    window.addEventListener('focus', function onFocus() {
+      window.removeEventListener('focus', onFocus);
+    });
+    input.click();
+  } catch(e) { removeCancelBar(); console.error('Video error:', e); }
 }
