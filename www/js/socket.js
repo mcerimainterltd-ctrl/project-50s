@@ -35,7 +35,7 @@ function connectSocket() {
   console.log('🔌 Connecting socket for user:', USER.xameId);
 
   try {
-    socket = io({
+    socket = io(serverURL, {
       query:                  { userId: USER.xameId },
       transports:             ['polling', 'websocket'],
       path:                   '/socket.io/',
