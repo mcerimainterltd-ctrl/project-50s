@@ -98,7 +98,7 @@ saveProfileBtn?.addEventListener('click', async () => {
     closeCropModal();
 
     console.log('📤 Sending to: /api/update-profile');
-    const response = await fetch('/api/update-profile', { method: 'POST', body: formData });
+    const response = await fetch(serverURL+'/api/update-profile', { method: 'POST', body: formData });
 
     if (!response.ok) throw new Error(`Server error: ${response.status} ${response.statusText}`);
 

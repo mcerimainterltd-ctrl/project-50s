@@ -185,7 +185,7 @@ function renderPasswordSetupDialog(userData) {
     feedbackEl.textContent = 'Please wait...'; feedbackEl.style.color = '#007bff';
 
     try {
-      const response = await fetch('/api/set-password', {
+      const response = await fetch(serverURL+'/api/set-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ xameId: userData.xameId, newPassword: password }),

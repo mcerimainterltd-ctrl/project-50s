@@ -89,7 +89,7 @@ addContactBtn?.addEventListener('click', () => {
       if (!xameId) return showNotification('Please enter a Xame-ID.');
 
       try {
-        const res  = await fetch('/api/search-user', {
+        const res  = await fetch(serverURL+'/api/search-user', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ xameId }),
         });
@@ -111,7 +111,7 @@ addContactBtn?.addEventListener('click', () => {
         `;
 
         item.querySelector('#confirmAddContactBtn').addEventListener('click', async () => {
-          const res2  = await fetch('/api/add-contact', {
+          const res2  = await fetch(serverURL+'/api/add-contact', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userId: USER.xameId, contactId: u.xameId }),
           });

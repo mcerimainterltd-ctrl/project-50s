@@ -13,7 +13,7 @@ const scheduleModule = (() => {
 
   async function _load() {
     try {
-      const r = await fetch('/api/schedule/' + USER.xameId);
+      const r = await fetch(serverURL+'/api/schedule/' + USER.xameId);
       const d = await r.json();
       if (d.success) _scheduled = d.messages;
     } catch (e) { console.error('Schedule load error:', e); }
@@ -100,7 +100,7 @@ const scheduleModule = (() => {
         if (!fileData) { showNotification('File upload failed'); return; }
       }
 
-      const r = await fetch('/api/schedule/create', {
+      const r = await fetch(serverURL+'/api/schedule/create', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ senderId: USER.xameId, recipientId, text, file: fileData, sendAt })
       });
@@ -157,7 +157,7 @@ const scheduleModule = (() => {
 
   async function _cancel(scheduleId) {
     try {
-      await fetch('/api/schedule/' + scheduleId, {
+      await fetch(serverURL+'/api/schedule/' + scheduleId, {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: USER.xameId })
       });
@@ -173,7 +173,7 @@ const scheduleModule = (() => {
       formData.append('senderId', USER.xameId);
       formData.append('recipientId', 'scheduled');
       formData.append('messageId', Date.now().toString());
-      const r = await fetch('/api/upload-file', { method: 'POST', body: formData });
+      const r = await fetch(serverURL+'/api/upload-file', { method: 'POST', body: formData });
       const d = await r.json();
       if (d.success && d.url) return { name: file.name, type: file.type, url: d.url };
       return null;

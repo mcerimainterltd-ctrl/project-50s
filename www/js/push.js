@@ -26,7 +26,7 @@ async function subscribeToPushNotifications() {
       });
     }
 
-    await fetch('/api/save-push-subscription', {
+    await fetch(serverURL+'/api/save-push-subscription', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ userId: USER.xameId, subscription }),

@@ -13,7 +13,7 @@ const walletModule = (() => {
   async function loadWallet() {
     if (!USER?.xameId) return;
     try {
-      const r = await fetch('/api/wallet/me?userId=' + USER.xameId);
+      const r = await fetch(serverURL+'/api/wallet/me?userId=' + USER.xameId);
       const data = await r.json();
       if (data.success) {
         _balance = data.balance;
@@ -35,7 +35,7 @@ const walletModule = (() => {
   function isConfigured(){ return _serverConfigured; }
   // Pre-load everything on module init (eager loading)
   function _init() {
-    fetch('/api/wallet/pubkey').then(r=>r.json()).then(d=>{
+    fetch(serverURL+'/api/wallet/pubkey').then(r=>r.json()).then(d=>{
     _serverConfigured = d.configured || false;
     // Only use server currency if user hasn't set a preference
     if(d.currency && !persistentStorage.get('wallet:currency')) WALLET_CONFIG.currency = d.currency;
@@ -151,7 +151,7 @@ const walletModule = (() => {
     const cc = {'NGN':'NG','GHS':'GH','KES':'KE','ZAR':'ZA','USD':'US','GBP':'GB'}[WALLET_CONFIG.currency]||'NG';
     content.innerHTML = '<div style="padding:24px 20px;"><button id="billsBack" style="background:none;border:none;color:#00B0A0;font-size:14px;cursor:pointer;margin-bottom:16px;">← Back</button><h3 style="font-size:18px;font-weight:700;color:#fff;margin-bottom:16px;">Loading...</h3></div>';
     ov.querySelector('#billsBack')?.addEventListener('click',()=>{ content.innerHTML=rBills(); attachBillsListeners(ov); });
-    fetch('/api/wallet/bills/categories?type='+type+'&country='+cc)
+    fetch(serverURL+'/api/wallet/bills/categories?type='+type+'&country='+cc)
       .then(r=>r.json()).then(data=>{
         if(!data.success || !data.categories.length){
           content.innerHTML='<div style="padding:24px 20px;"><button id="billsBack2" style="background:none;border:none;color:#00B0A0;font-size:14px;cursor:pointer;margin-bottom:16px;">← Back</button><div style="text-align:center;padding:40px;color:#7a9bb5;"><div style="font-size:48px;">😕</div><div style="margin-top:12px;">No billers available for your region</div></div></div>';
@@ -207,7 +207,7 @@ const walletModule = (() => {
       validateEl.textContent = 'Validating...'; validateEl.style.color='#7a9bb5';
       validateTimer = setTimeout(()=>{
         const itemCode = ov.querySelector('#billItem')?.value || firstItem.item_code;
-        fetch('/api/wallet/bills/validate', {
+        fetch(serverURL+'/api/wallet/bills/validate', {
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ item_code: itemCode, biller_code: cat.biller_code, customer: val })
         }).then(r=>r.json()).then(res=>{
@@ -228,7 +228,7 @@ const walletModule = (() => {
       if(amt>_balance){ showNotification('Insufficient balance'); return; }
       const cc = {'NGN':'NG','GHS':'GH','KES':'KE','ZAR':'ZA'}[WALLET_CONFIG.currency]||'NG';
       showNotification('Processing payment...');
-      fetch('/api/wallet/bills/pay',{
+      fetch(serverURL+'/api/wallet/bills/pay',{
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ userId:USER?.xameId, biller_code:cat.biller_code, item_code:itemCode, customer, amount:amt, country:cc })
       }).then(r=>r.json()).then(res=>{
@@ -274,7 +274,7 @@ const walletModule = (() => {
       const amt=parseFloat(d.querySelector('#cardAmount')?.value);
       if(!amt||amt<1){showNotification('Enter amount');return;}
       // Get public key from server
-      fetch('/api/wallet/pubkey').then(r=>r.json()).then(pubData=>{
+      fetch(serverURL+'/api/wallet/pubkey').then(r=>r.json()).then(pubData=>{
         const flwPub = pubData.flw||'';
         const pskPub = pubData.psk||'';
         if(!flwPub && !pskPub){ processPayment('load-card',{amount:amt}); return; }
@@ -312,7 +312,7 @@ const walletModule = (() => {
           if(response.status === 'successful') {
             showNotification('Verifying payment...');
             try {
-              const res = await fetch('/api/wallet/fund/verify', {
+              const res = await fetch(serverURL+'/api/wallet/fund/verify', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ transaction_id: response.transaction_id, expected_amount: amt, currency: WALLET_CONFIG.currency, userId: USER?.xameId })
@@ -477,7 +477,7 @@ const walletModule = (() => {
           });
         }).catch(()=>processPayment('load-card',{amount:amt}));
       };
-        fetch('/api/wallet/banklist?cc='+cc).then(r=>r.json()).then(data=>{
+        fetch(serverURL+'/api/wallet/banklist?cc='+cc).then(r=>r.json()).then(data=>{
           if(data.success && data.banks && data.banks.length){ loadBankList(data.banks); }
         }).catch(()=>{ loadBankList([]); });
       // Fix touch scrolling on contact list
@@ -551,7 +551,7 @@ const walletModule = (() => {
       if (accNum.length < 10) { resolvedEl.textContent = 'Enter account number to verify'; resolvedEl.style.color = '#7a9bb5'; return; }
       resolvedEl.textContent = 'Verifying...'; resolvedEl.style.color = '#7a9bb5';
       resolveTimer = setTimeout(() => {
-        fetch('/api/wallet/resolve', {
+        fetch(serverURL+'/api/wallet/resolve', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ account_number: accNum, account_bank: getBankCode(bankCode), currency: WALLET_CONFIG.currency })
@@ -585,7 +585,7 @@ const walletModule = (() => {
       c.querySelector('#sendMoneyBtn')?.addEventListener('click',()=>{const amt=parseFloat(c.querySelector('#sendAmount')?.value);if(!amt||amt<1){showNotification('Enter amount');return;}if(aTab==='contact'){
             if(!sCont){showNotification('Select a contact');return;}
             if(amt>_balance){showNotification('Insufficient balance');return;}
-            fetch('/api/wallet/p2p',{
+            fetch(serverURL+'/api/wallet/p2p',{
               method:'POST',
               headers:{'Content-Type':'application/json'},
               body:JSON.stringify({senderId:USER?.xameId,recipientId:sCont.id,amount:amt,currency:WALLET_CONFIG.currency})
@@ -597,7 +597,7 @@ const walletModule = (() => {
           }else{const bk=c.querySelector('#bankName')?.value,ba=c.querySelector('#bankAccount')?.value,bn=c.querySelector('#bankAccName')?.value;if(!ba||!bn){showNotification('Fill all bank details');return;}
           if(amt > _balance){showNotification('Insufficient balance');return;}
           showNotification('Processing transfer...');
-          fetch('/api/wallet/send-bank',{
+          fetch(serverURL+'/api/wallet/send-bank',{
             method:'POST',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({account_bank:getBankCode(bk),account_number:ba,amount:amt,currency:WALLET_CONFIG.currency,narration:'XamePay Transfer to '+bn,accName:bn,userId:USER?.xameId})
@@ -641,7 +641,7 @@ const walletModule = (() => {
       WALLET_CONFIG.testMode = false;
       WALLET_CONFIG.currency=dlg.querySelector('#wCo').value;
       persistentStorage.set('wallet:currency',WALLET_CONFIG.currency);
-      fetch('/api/wallet/currency',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:USER?.xameId,currency:WALLET_CONFIG.currency})}).catch(()=>{});
+      fetch(serverURL+'/api/wallet/currency',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:USER?.xameId,currency:WALLET_CONFIG.currency})}).catch(()=>{});
       persistentStorage.set('wallet:provider',WALLET_CONFIG.defaultProvider);
 
       showNotification('Wallet settings saved!');

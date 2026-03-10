@@ -19,7 +19,7 @@ const galleryModule = {
     const grid = document.getElementById('galleryGrid');
     if (grid) grid.innerHTML = '<p style="color:var(--text-secondary);text-align:center;padding:20px">Loading...</p>';
     try {
-      const res  = await fetch('/api/gallery/' + this._viewingUserId + '?requesterId=' + USER?.xameId);
+      const res  = await fetch(serverURL+'/api/gallery/' + this._viewingUserId + '?requesterId=' + USER?.xameId);
       const data = await res.json();
       this._items = data.items || [];
       this._renderGrid();
@@ -193,7 +193,7 @@ const galleryModule = {
     formData.append('mode', mode);
 
     try {
-      const res  = await fetch('/api/gallery/upload', { method: 'POST', body: formData });
+      const res  = await fetch(serverURL+'/api/gallery/upload', { method: 'POST', body: formData });
       const data = await res.json();
       if (data.success) {
         dlg.remove();
@@ -211,7 +211,7 @@ const galleryModule = {
 
   async _deleteItem(itemId) {
     try {
-      const res  = await fetch('/api/gallery/' + itemId, {
+      const res  = await fetch(serverURL+'/api/gallery/' + itemId, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: USER.xameId })

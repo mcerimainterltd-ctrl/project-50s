@@ -13,7 +13,7 @@ const callScheduleModule = (() => {
 
   async function _load() {
     try {
-      const r = await fetch('/api/schedule-call/' + USER.xameId);
+      const r = await fetch(serverURL+'/api/schedule-call/' + USER.xameId);
       const d = await r.json();
       if (d.success) _calls = d.calls;
     } catch (e) { console.error('Call schedule load error:', e); }
@@ -102,7 +102,7 @@ const callScheduleModule = (() => {
       const callAt = new Date(date + 'T' + time).getTime();
       if (callAt <= Date.now()) { showNotification('Please select a future time'); return; }
 
-      const r = await fetch('/api/schedule-call/create', {
+      const r = await fetch(serverURL+'/api/schedule-call/create', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ callerId: USER.xameId, recipientId, callType: selectedType, callAt })
       });
@@ -158,7 +158,7 @@ const callScheduleModule = (() => {
 
   async function _cancel(scheduleId) {
     try {
-      await fetch('/api/schedule-call/' + scheduleId, {
+      await fetch(serverURL+'/api/schedule-call/' + scheduleId, {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: USER.xameId })
       });
