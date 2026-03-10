@@ -9,7 +9,7 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.BridgeActivity;
 import com.capacitorjs.plugins.camera.CameraPlugin;
-import com.capacitor.community.camera.preview.CameraPreview;
+import com.ahm.capacitor.camera.preview.CameraPreview;
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(android.os.Bundle savedInstanceState) {
