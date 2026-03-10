@@ -198,7 +198,6 @@ function setCameraMode(mode) {
 }
 
 async function openCamera() {
-  }
   if (cameraModal) cameraModal.classList.remove('hidden');
   try {
     cameraStream = await navigator.mediaDevices.getUserMedia({
