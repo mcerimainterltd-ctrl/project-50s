@@ -8,7 +8,15 @@ import android.webkit.WebView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.BridgeActivity;
+import com.capacitorjs.plugins.camera.CameraPlugin;
+import com.capacitor.community.camera.preview.CameraPreview;
 public class MainActivity extends BridgeActivity {
+    @Override
+    public void onCreate(android.os.Bundle savedInstanceState) {
+        registerPlugin(CameraPlugin.class);
+        registerPlugin(CameraPreview.class);
+        super.onCreate(savedInstanceState);
+    }
     @Override
     public void onStart() {
         super.onStart();
