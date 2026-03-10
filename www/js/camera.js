@@ -201,8 +201,8 @@ async function openCamera() {
   // Use Capacitor Camera on APK
   if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) {
     try {
-      const { Camera, CameraResultType, CameraSource } = window.Capacitor.Plugins;
-      const image = await Camera.getPhoto({ quality: 90, allowEditing: false, resultType: CameraResultType.DataUrl, source: CameraSource.Camera });
+      alert("Native cam"); const { Camera } = window.Capacitor.Plugins;
+      const image = await Camera.getPhoto({ quality: 90, allowEditing: false, resultType: "dataUrl", source: "CAMERA" });
       if (image && image.dataUrl) {
         const blob = await fetch(image.dataUrl).then(r => r.blob());
         sendFile(new File([blob], "snap.jpg", { type: "image/jpeg" }));
