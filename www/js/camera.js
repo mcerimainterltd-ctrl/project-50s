@@ -4,12 +4,24 @@
  * camera switch, size-mode toggle, send media.
  * Includes: Flash Control & Self-Timer (3s/5s/10s).
  * XamePage v2.1
+ * Uses @capacitor-community/camera-preview on APK,
+ * falls back to getUserMedia on PWA/browser.
  */
 
-let cameraTimerInterval = null; // For self-timer countdown
-let recordingInterval = null;   // For video duration timer
-let selectedTimer = 0;          // 0, 3, 5, 10 seconds
+let cameraTimerInterval = null;
+let recordingInterval = null;
+let selectedTimer = 0;
 let isFlashOn = false;
+let isNativeCamera = false;
+let nativeCameraRecording = false;
+
+function isNativePlatform() {
+  return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+}
+
+function getCameraPreviewPlugin() {
+  return window.Capacitor?.Plugins?.CameraPreview;
+}
 
 function initCameraFunctionality() {
   createCameraModal();
@@ -45,7 +57,7 @@ function createCameraModal() {
         </div>
       </div>
 
-      <div class="camera-preview" style="position: relative; background: #000; min-height: 300px;">
+      <div class="camera-preview" style="position: relative; background: transparent; min-height: 300px;">
         <video id="camera-video" autoplay playsinline muted style="width: 100%; display: block;"></video>
         <canvas id="camera-canvas" style="display:none;"></canvas>
         
@@ -90,7 +102,6 @@ function createCameraModal() {
 
   document.body.appendChild(cameraModal);
 
-  // References
   cameraVideoElement = document.getElementById('camera-video');
   cameraCanvasElement = document.getElementById('camera-canvas');
   cameraCaptureBtn = document.getElementById('camera-capture-btn');
@@ -99,7 +110,6 @@ function createCameraModal() {
   cameraCloseBtn = document.querySelector('.close-camera');
   cameraSwitchBtn = document.getElementById('camera-switch-camera');
   
-  // Listeners
   document.getElementById('camera-flash-btn').addEventListener('click', toggleFlash);
   document.getElementById('camera-timer-select').addEventListener('change', (e) => selectedTimer = parseInt(e.target.value));
   cameraCloseBtn.addEventListener('click', closeCamera);
@@ -116,13 +126,19 @@ function createCameraModal() {
 }
 
 async function toggleFlash() {
+  const CameraPreview = getCameraPreviewPlugin();
+  if (isNativeCamera && CameraPreview) {
+    isFlashOn = !isFlashOn;
+    try {
+      await CameraPreview.setFlashMode({ flashMode: isFlashOn ? 'on' : 'off' });
+      document.getElementById('camera-flash-btn').style.color = isFlashOn ? '#ffcc00' : 'white';
+    } catch(e) { console.error('Flash error:', e); }
+    return;
+  }
   if (!cameraStream) return;
   const track = cameraStream.getVideoTracks()[0];
   const caps = track.getCapabilities();
-  if (!caps.torch) {
-    alert("Flash not supported on this device.");
-    return;
-  }
+  if (!caps.torch) { alert("Flash not supported on this device."); return; }
   isFlashOn = !isFlashOn;
   try {
     await track.applyConstraints({ advanced: [{ torch: isFlashOn }] });
@@ -150,11 +166,32 @@ function handleCaptureWithTimer() {
 }
 
 async function startCameraRecording() {
+  const CameraPreview = getCameraPreviewPlugin();
+  if (isNativeCamera && CameraPreview) {
+    try {
+      await CameraPreview.startRecordVideo({});
+      nativeCameraRecording = true;
+      let seconds = 0;
+      const timerDisplay = document.getElementById('timerDisplay');
+      timerDisplay.textContent = "00:00";
+      recordingInterval = setInterval(() => {
+        seconds++;
+        const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
+        const secs = (seconds % 60).toString().padStart(2, '0');
+        if (timerDisplay) timerDisplay.textContent = `${mins}:${secs}`;
+      }, 1000);
+      document.getElementById('recordingTimer').style.display = 'flex';
+      cameraStartRecordingBtn.style.display = 'none';
+      cameraStopRecordingBtn.style.display = 'block';
+      cameraStopRecordingBtn.disabled = false;
+    } catch(e) { console.error('Native recording error:', e); }
+    return;
+  }
+
   cameraRecordedChunks = [];
   const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
   cameraMediaRecorder = new MediaRecorder(stream);
   
-  // START RECORDING TIMER FIX
   let seconds = 0;
   const timerDisplay = document.getElementById('timerDisplay');
   timerDisplay.textContent = "00:00";
@@ -167,7 +204,7 @@ async function startCameraRecording() {
 
   cameraMediaRecorder.ondataavailable = (e) => cameraRecordedChunks.push(e.data);
   cameraMediaRecorder.onstop = () => {
-    clearInterval(recordingInterval); 
+    clearInterval(recordingInterval);
     showCameraPreview('video', new Blob(cameraRecordedChunks, { type: 'video/webm' }));
     stream.getTracks().forEach(t => t.stop());
   };
@@ -179,7 +216,24 @@ async function startCameraRecording() {
   cameraStopRecordingBtn.disabled = false;
 }
 
-function stopCameraRecording() {
+async function stopCameraRecording() {
+  const CameraPreview = getCameraPreviewPlugin();
+  if (isNativeCamera && CameraPreview && nativeCameraRecording) {
+    try {
+      clearInterval(recordingInterval);
+      const result = await CameraPreview.stopRecordVideo();
+      nativeCameraRecording = false;
+      document.getElementById('recordingTimer').style.display = 'none';
+      cameraStartRecordingBtn.style.display = 'block';
+      cameraStopRecordingBtn.style.display = 'none';
+      if (result && result.videoFilePath) {
+        const response = await fetch(result.videoFilePath);
+        const blob = await response.blob();
+        showCameraPreview('video', blob);
+      }
+    } catch(e) { console.error('Stop recording error:', e); }
+    return;
+  }
   cameraMediaRecorder?.stop();
   document.getElementById('recordingTimer').style.display = 'none';
   cameraStartRecordingBtn.style.display = 'block';
@@ -195,32 +249,108 @@ function setCameraMode(mode) {
   currentCameraMode = mode;
   cameraModal.classList.remove('fullscreen', 'halfscreen', 'thumbnail');
   cameraModal.classList.add(mode);
+  if (isNativeCamera) updateNativeCameraSize(mode);
+}
+
+function updateNativeCameraSize(mode) {
+  const CameraPreview = getCameraPreviewPlugin();
+  if (!CameraPreview) return;
+  const modalRect = cameraModal.querySelector('.camera-preview').getBoundingClientRect();
+  CameraPreview.startCamera({
+    position: currentFacingMode === 'user' ? 'front' : 'rear',
+    toBack: true,
+    x: Math.round(modalRect.left),
+    y: Math.round(modalRect.top),
+    width: Math.round(modalRect.width),
+    height: Math.round(modalRect.height),
+  }).catch(() => {});
 }
 
 async function openCamera() {
   if (cameraModal) cameraModal.classList.remove('hidden');
+
+  const CameraPreview = getCameraPreviewPlugin();
+  if (isNativePlatform() && CameraPreview) {
+    isNativeCamera = true;
+    cameraVideoElement.style.display = 'none';
+    const previewEl = cameraModal.querySelector('.camera-preview');
+    previewEl.style.background = 'transparent';
+    previewEl.style.minHeight = '300px';
+
+    try {
+      const rect = previewEl.getBoundingClientRect();
+      await CameraPreview.start({
+        position: currentFacingMode === 'user' ? 'front' : 'rear',
+        toBack: true,
+        x: Math.round(rect.left),
+        y: Math.round(rect.top),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        enableHighResolution: true,
+      });
+      cameraModal.style.background = 'transparent';
+      cameraModal.querySelector('.camera-modal-content').style.background = 'transparent';
+    } catch(e) {
+      console.error('Native camera start error:', e);
+      isNativeCamera = false;
+      cameraVideoElement.style.display = 'block';
+      fallbackToGetUserMedia();
+    }
+    return;
+  }
+  fallbackToGetUserMedia();
+}
+
+async function fallbackToGetUserMedia() {
   try {
     cameraStream = await navigator.mediaDevices.getUserMedia({
       video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: currentFacingMode },
       audio: false
     });
     cameraVideoElement.srcObject = cameraStream;
-  } catch (error) { console.error('Camera error:', error); alert('Cam err: ' + error.name + ' - ' + error.message); closeCamera(); }
+  } catch (error) {
+    console.error('Camera error:', error);
+    closeCamera();
+  }
 }
 
-function closeCamera() {
+async function closeCamera() {
+  const CameraPreview = getCameraPreviewPlugin();
+  if (isNativeCamera && CameraPreview) {
+    try { await CameraPreview.stop(); } catch(e) {}
+    isNativeCamera = false;
+    cameraModal.style.background = '';
+    const content = cameraModal.querySelector('.camera-modal-content');
+    if (content) content.style.background = 'rgba(18, 18, 18, 0.9)';
+    cameraVideoElement.style.display = 'block';
+  }
   if (isFlashOn) toggleFlash();
   clearInterval(cameraTimerInterval);
   clearInterval(recordingInterval);
   cameraModal?.classList.add('hidden');
-  stopCamera(); resetCameraPreview();
+  stopCamera();
+  resetCameraPreview();
 }
 
 function stopCamera() {
-  cameraStream?.getTracks().forEach(t => t.stop()); cameraStream = null;
+  cameraStream?.getTracks().forEach(t => t.stop());
+  cameraStream = null;
 }
 
-function capturePhoto() {
+async function capturePhoto() {
+  const CameraPreview = getCameraPreviewPlugin();
+  if (isNativeCamera && CameraPreview) {
+    try {
+      const result = await CameraPreview.capture({ quality: 90 });
+      if (result && result.value) {
+        const dataUrl = 'data:image/jpeg;base64,' + result.value;
+        const response = await fetch(dataUrl);
+        const blob = await response.blob();
+        showCameraPreview('photo', blob);
+      }
+    } catch(e) { console.error('Native capture error:', e); }
+    return;
+  }
   const context = cameraCanvasElement.getContext('2d');
   cameraCanvasElement.width = cameraVideoElement.videoWidth;
   cameraCanvasElement.height = cameraVideoElement.videoHeight;
@@ -228,9 +358,15 @@ function capturePhoto() {
   cameraCanvasElement.toBlob(blob => showCameraPreview('photo', blob), 'image/jpeg', 0.8);
 }
 
-function switchCamera() {
+async function switchCamera() {
   currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
-  stopCamera(); openCamera();
+  const CameraPreview = getCameraPreviewPlugin();
+  if (isNativeCamera && CameraPreview) {
+    try { await CameraPreview.flip(); } catch(e) { console.error('Flip error:', e); }
+    return;
+  }
+  stopCamera();
+  fallbackToGetUserMedia();
 }
 
 function showCameraPreview(type, blob) {
@@ -264,6 +400,15 @@ function sendCameraMedia() {
     sendFile(new File([blob], fileName, { type: blob.type }));
     closeCamera();
   });
+}
+
+function resetCameraPreview() {
+  const previewArea = document.querySelector('.camera-preview-area');
+  const cameraPreview = document.querySelector('.camera-preview');
+  const cameraCtrls = document.querySelector('.camera-controls');
+  if (previewArea) previewArea.style.display = 'none';
+  if (cameraPreview) cameraPreview.style.display = 'block';
+  if (cameraCtrls) cameraCtrls.style.display = 'block';
 }
 
 // Close camera on Android back button
