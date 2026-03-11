@@ -36,3 +36,7 @@ async function takeNativePhoto() {
     }
   }
 }
+
+function initCameraFunctionality() {
+  setupCameraButton();
+}
