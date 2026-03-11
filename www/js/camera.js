@@ -32,8 +32,6 @@ async function takeNativePhoto() {
       sendFile(new File([blob], 'photo.jpg', { type: 'image/jpeg' }));
     }
   } catch(e) {
-      console.error('Photo error:', e);
-    }
+    console.error('Photo error:', e);
   }
 }
-
