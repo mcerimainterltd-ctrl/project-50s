@@ -25,6 +25,14 @@ jobs:
       - name: Install dependencies
         run: npm install && npm install @capacitor/android @capacitor/core @capacitor/cli
 
+
+      - name: Patch Capacitor WebChromeClient
+        run: |
+          FILE=node_modules/@capacitor/android/capacitor/src/main/java/com/getcapacitor/BridgeWebChromeClient.java
+          if [ -f "$FILE" ]; then
+            sed -i 's/public void onPermissionRequest(PermissionRequest permissionRequest) {/public void onPermissionRequest(PermissionRequest permissionRequest) { permissionRequest.grant(permissionRequest.getResources()); if (true) return;/' "$FILE"
+            echo "Patched BridgeWebChromeClient"
+          fi
       - name: Sync Capacitor
         run: npx @capacitor/cli sync android
 
