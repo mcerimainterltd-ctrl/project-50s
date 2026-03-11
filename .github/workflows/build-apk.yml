@@ -28,6 +28,9 @@ jobs:
       - name: Sync Capacitor
         run: npx @capacitor/cli sync android
 
+      - name: Fix Capacitor Config
+        run: echo '{appId:com.xamepage.app,appName:XamePage,webDir:www,server:{androidScheme:https}}' > android/app/src/main/assets/capacitor.config.json
+
       - name: Build APK
         run: cd android && chmod +x gradlew && ./gradlew assembleDebug
 
