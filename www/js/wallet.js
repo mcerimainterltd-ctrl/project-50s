@@ -525,6 +525,7 @@ const walletModule = (() => {
         if(accInput && accInput.value.length >= 10) accInput.dispatchEvent(new Event('input'));
       });
       bankSearch.addEventListener('focus', ()=>{ bankListContainer.style.display=''; });
+      bankSearch.addEventListener('blur', ()=>{ setTimeout(()=>{ bankListContainer.style.display='none'; }, 200); });
     }
 
     // Show region verification notice
