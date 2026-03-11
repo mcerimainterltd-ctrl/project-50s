@@ -44,6 +44,9 @@ public class MainActivity extends BridgeActivity {
                 request.grant(request.getResources());
             }
         });
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
+            WebView.setWebContentsDebuggingEnabled(true);
+        }
     }
 
     class VideoBridge {
