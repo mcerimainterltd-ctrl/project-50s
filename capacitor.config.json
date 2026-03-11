@@ -1,8 +1,1 @@
-{
-  "appId": "com.xamepage.app",
-  "appName": "XamePage",
-  "webDir": "www",
-  "server": {
-    "androidScheme": "https"
-  }
-}
+{"appId":"com.xamepage.app","appName":"XamePage","webDir":"www"}
