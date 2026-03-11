@@ -32,6 +32,18 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(CameraPreview.class);
         super.onCreate(savedInstanceState);
         getBridge().getWebView().addJavascriptInterface(new VideoBridge(), "AndroidVideoBridge");
+        WebView webView = getBridge().getWebView();
+        WebSettings settings = webView.getSettings();
+        settings.setMediaPlaybackRequiresUserGesture(false);
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onPermissionRequest(PermissionRequest request) {
+                request.grant(request.getResources());
+            }
+        });
     }
 
     class VideoBridge {
