@@ -41,7 +41,7 @@ public class MainActivity extends BridgeActivity {
                 String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
                 File videoFile = new File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), "VID_" + timeStamp + ".mp4");
                 pendingVideoPath = videoFile.getAbsolutePath();
-                Uri videoUri = FileProvider.getUriForFile(MainActivity.this, getApplicationContext().getPackageName() + ".provider", videoFile);
+                Uri videoUri = FileProvider.getUriForFile(MainActivity.this, getApplicationContext().getPackageName() + ".fileprovider", videoFile);
                 Intent intent = new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
                 intent.putExtra(MediaStore.EXTRA_OUTPUT, videoUri);
                 intent.putExtra(MediaStore.EXTRA_VIDEO_QUALITY, 1);
