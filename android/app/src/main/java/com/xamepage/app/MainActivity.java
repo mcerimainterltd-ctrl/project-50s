@@ -54,7 +54,10 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != VIDEO_CAPTURE_REQUEST) {
+            super.onActivityResult(requestCode, resultCode, data);
+            return;
+        }
         if (requestCode == VIDEO_CAPTURE_REQUEST) {
             if (resultCode == Activity.RESULT_OK && pendingVideoPath != null) {
                 final String path = pendingVideoPath;
