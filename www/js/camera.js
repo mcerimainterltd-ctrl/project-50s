@@ -73,22 +73,30 @@ async function takeNativePhoto() {
 function recordNativeVideo() {
   removeCancelBar();
   showCancelBar('🎥 Video recorder is open...');
-  try {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'video/mp4,video/*';
-    input.capture = 'camcorder';
-    input.style.display = 'none';
-    document.body.appendChild(input);
-    input.onchange = () => {
-      removeCancelBar();
-      const file = input.files[0];
-      if (file) sendFile(new File([file], 'video.mp4', { type: file.type }));
-      input.remove();
-    };
-    window.addEventListener('focus', function onFocus() {
-      window.removeEventListener('focus', onFocus);
-    });
-    input.click();
-  } catch(e) { removeCancelBar(); console.error('Video error:', e); }
+
+  // Set up callbacks for native bridge
+  window.onNativeVideoReady = async (filePath) => {
+    removeCancelBar();
+    window.onNativeVideoReady = null;
+    window.onNativeVideoCancelled = null;
+    try {
+      const response = await fetch(filePath);
+      const blob = await response.blob();
+      sendFile(new File([blob], 'video.mp4', { type: 'video/mp4' }));
+    } catch(e) { console.error('Video fetch error:', e); }
+  };
+
+  window.onNativeVideoCancelled = () => {
+    removeCancelBar();
+    window.onNativeVideoReady = null;
+    window.onNativeVideoCancelled = null;
+  };
+
+  // Use Android native bridge
+  if (window.AndroidVideoBridge) {
+    window.AndroidVideoBridge.recordVideo();
+  } else {
+    removeCancelBar();
+    alert('Video recording not supported on this device.');
+  }
 }
