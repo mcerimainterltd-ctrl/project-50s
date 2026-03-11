@@ -90,8 +90,8 @@ recordBtn?.addEventListener('click', async () => {
     console.log(' Recording started...');
 
   } catch (err) {
-    console.error(" Recording failed:", err.name, err.message, err);
-    showNotification("Recording error: " + (err.name || err.message || "unknown"))');
+    console.error(' Recording failed:', err);
+    showNotification('Could not start recording. Check microphone permissions.');
     resetVoiceRecorderUI();
   }
 });
