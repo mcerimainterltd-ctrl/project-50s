@@ -9,7 +9,14 @@
   },
   "plugins": {
     "Microphone": {
-      "permissions": ["microphone"]
+      "permissions": [
+        "microphone"
+      ]
+    },
+    "Camera": {
+      "permissions": [
+        "camera"
+      ]
     }
   }
 }
