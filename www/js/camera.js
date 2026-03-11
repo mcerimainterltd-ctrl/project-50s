@@ -1,7 +1,6 @@
 /*
  * camera.js - XamePage v2.1
- * Photo: Capacitor Camera.getPhoto (opens native camera, photo only)
- * Video: HTML file input with capture=camcorder (opens native video camera)
+ * Photo only for now via Capacitor Camera plugin
  */
 
 function initCameraFunctionality() {
@@ -15,39 +14,8 @@ function setupCameraButton() {
 
 async function openCamera() {
   if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) {
-    showNativeCameraOptions();
-  } else {
-    alert('Camera only works on the app.');
+    takeNativePhoto();
   }
-}
-
-function removeOverlay() {
-  document.getElementById('native-cam-overlay')?.remove();
-}
-
-function showNativeCameraOptions() {
-  removeOverlay();
-  const overlay = document.createElement('div');
-  overlay.id = 'native-cam-overlay';
-  overlay.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:rgba(18,18,18,0.97);backdrop-filter:blur(20px);border-radius:24px 24px 0 0;padding:30px 20px 40px;z-index:12000;display:flex;flex-direction:column;gap:14px;';
-  overlay.innerHTML = `
-    <div style="width:40px;height:4px;background:rgba(255,255,255,0.2);border-radius:2px;margin:0 auto 10px;"></div>
-    <h3 style="color:white;text-align:center;margin:0 0 6px;font-size:18px;font-weight:600;">Camera</h3>
-    <button id="cam-photo-btn" style="padding:16px;border-radius:14px;background:linear-gradient(135deg,#007aff,#00c6ff);color:white;border:none;font-size:16px;font-weight:600;cursor:pointer;">📸 Take Photo</button>
-    <button id="cam-video-btn" style="padding:16px;border-radius:14px;background:linear-gradient(135deg,#6c3483,#a93226,#e74c3c);color:white;border:none;font-size:16px;font-weight:600;cursor:pointer;">🎥 Record Video</button>
-    <button id="cam-cancel-btn" style="padding:14px;border-radius:14px;background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.7);border:1px solid rgba(255,255,255,0.1);font-size:15px;cursor:pointer;">✕ Cancel</button>
-  `;
-  document.body.appendChild(overlay);
-
-  document.getElementById('cam-photo-btn').onclick = () => { removeOverlay(); takeNativePhoto(); };
-  document.getElementById('cam-video-btn').onclick = () => { removeOverlay(); recordNativeVideo(); };
-  document.getElementById('cam-cancel-btn').onclick = removeOverlay;
-
-  document.addEventListener('backbutton', function onBack(e) {
-    e.preventDefault();
-    removeOverlay();
-    document.removeEventListener('backbutton', onBack);
-  }, false);
 }
 
 async function takeNativePhoto() {
@@ -64,39 +32,7 @@ async function takeNativePhoto() {
       sendFile(new File([blob], 'photo.jpg', { type: 'image/jpeg' }));
     }
   } catch(e) {
-    if (!e.message?.includes('cancelled') && !e.message?.includes('cancel') && !e.message?.includes('No image')) {
       console.error('Photo error:', e);
     }
-  }
-}
-
-function recordNativeVideo() {
-  removeCancelBar();
-  showCancelBar('🎥 Video recorder is open...');
-
-  // Set up callbacks for native bridge
-  window.onNativeVideoReady = async (filePath) => {
-    removeCancelBar();
-    window.onNativeVideoReady = null;
-    window.onNativeVideoCancelled = null;
-    try {
-      const response = await fetch(filePath);
-      const blob = await response.blob();
-      sendFile(new File([blob], 'video.mp4', { type: 'video/mp4' }));
-    } catch(e) { console.error('Video fetch error:', e); }
-  };
-
-  window.onNativeVideoCancelled = () => {
-    removeCancelBar();
-    window.onNativeVideoReady = null;
-    window.onNativeVideoCancelled = null;
-  };
-
-  // Use Android native bridge
-  if (window.AndroidVideoBridge) {
-    window.AndroidVideoBridge.recordVideo();
-  } else {
-    removeCancelBar();
-    alert('Video recording not supported on this device.');
   }
 }

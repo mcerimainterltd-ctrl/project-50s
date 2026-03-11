@@ -37,7 +37,7 @@ function connectSocket() {
   try {
     socket = io(serverURL, {
       query:                  { userId: USER.xameId },
-      transports:             ['websocket', 'polling'],
+      transports:             ['polling', 'websocket'],
       path:                   '/socket.io/',
       reconnection:           true,
       reconnectionDelay:      1000,

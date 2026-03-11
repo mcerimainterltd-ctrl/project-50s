@@ -438,3 +438,12 @@ loudSpeakerBtn?.addEventListener('click', () => {
   if (remoteVideo) remoteVideo.muted = !isLoudspeakerOn;
   loudSpeakerBtn.textContent = isLoudspeakerOn ? '🔊' : '🔈';
 });
+
+// Handle Android back button to close call/camera overlay
+document.addEventListener('backbutton', function(e) {
+  const overlay = document.getElementById('videoCallOverlay');
+  if (overlay && !overlay.classList.contains('hidden')) {
+    e.preventDefault();
+    endCall();
+  }
+}, false);
