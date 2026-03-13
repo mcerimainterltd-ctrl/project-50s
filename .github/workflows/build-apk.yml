@@ -31,6 +31,9 @@ jobs:
       - name: Patch Capacitor WebChromeClient
         run: cp BridgeWebChromeClient.java.patch node_modules/@capacitor/android/capacitor/src/main/java/com/getcapacitor/BridgeWebChromeClient.java
 
+      - name: Fix Capacitor Config
+        run: cp capacitor.config.json android/app/src/main/assets/capacitor.config.json
+
       - name: Build APK
         run: cd android && chmod +x gradlew && ./gradlew assembleDebug
 
