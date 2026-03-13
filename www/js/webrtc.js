@@ -147,8 +147,8 @@ async function startCall(recipientId, callType) {
   }, 60000));
   // Auto-timeout if unanswered after 60 seconds
   } catch (err) {
-    console.error('Failed to start call:', err);
-    showNotification('Failed to start call. Check permissions.'); exitVideoCall();
+    console.error('Call error:', err.name, err.message);
+    showNotification('Call failed: ' + (err.name || err.message || String(err))); exitVideoCall();
   }
 }
 
