@@ -29,19 +29,7 @@ jobs:
         run: npx @capacitor/cli sync android
 
       - name: Patch Capacitor WebChromeClient
-        run: |
-          FILE=$(find . -path '*/getcapacitor/BridgeWebChromeClient.java' 2>/dev/null | head -1)
-          if [ -n "$FILE" ]; then
-            node -e "
-              const fs = require('fs');
-              let code = fs.readFileSync('$FILE', 'utf8');
-              code = code.replace(/public void onPermissionRequest\(final PermissionRequest request\) \{[\s\S]*?\}(?=\s*/\*)/, 'public void onPermissionRequest(final PermissionRequest request) {\n        request.grant(request.getResources());\n    }');
-              fs.writeFileSync('$FILE', code);
-              console.log('Patched successfully');
-            "
-          else
-            echo "BridgeWebChromeClient.java not found"
-          fi
+        run: cp BridgeWebChromeClient.java.patch node_modules/@capacitor/android/capacitor/src/main/java/com/getcapacitor/BridgeWebChromeClient.java
 
       - name: Build APK
         run: cd android && chmod +x gradlew && ./gradlew assembleDebug
