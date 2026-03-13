@@ -32,8 +32,13 @@ jobs:
         run: |
           FILE=$(find . -path '*/getcapacitor/BridgeWebChromeClient.java' 2>/dev/null | head -1)
           if [ -n "$FILE" ]; then
-            sed -i 's/super.onPermissionRequest(permissionRequest);/permissionRequest.grant(permissionRequest.getResources());/' "$FILE"
-            echo "Patched: $FILE"
+            node -e "
+              const fs = require('fs');
+              let code = fs.readFileSync('$FILE', 'utf8');
+              code = code.replace(/public void onPermissionRequest\(final PermissionRequest request\) \{[\s\S]*?\}(?=\s*/\*)/, 'public void onPermissionRequest(final PermissionRequest request) {\n        request.grant(request.getResources());\n    }');
+              fs.writeFileSync('$FILE', code);
+              console.log('Patched successfully');
+            "
           else
             echo "BridgeWebChromeClient.java not found"
           fi
