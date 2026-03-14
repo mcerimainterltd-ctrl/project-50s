@@ -17,6 +17,7 @@
     "@capacitor-community/camera-preview": "^7.0.5",
     "@capacitor/android": "^8.2.0",
     "@capacitor/camera": "^8.0.2",
+    "@capacitor/splash-screen": "^8.0.1",
     "axios": "^1.12.2",
     "bcryptjs": "^3.0.3",
     "cloudinary": "^2.9.0",

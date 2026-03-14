@@ -1,5 +1,13 @@
 {
   "appId": "com.xamepage.app",
   "appName": "XamePage",
-  "webDir": "www"
+  "webDir": "www",
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 3000,
+      "launchAutoHide": true,
+      "backgroundColor": "#000000",
+      "showSpinner": false
+    }
+  }
 }
