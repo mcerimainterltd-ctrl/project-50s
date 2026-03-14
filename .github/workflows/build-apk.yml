@@ -28,6 +28,20 @@ jobs:
       - name: Sync Capacitor
         run: npx @capacitor/cli sync android
 
+      - name: Restore XamePage Icons
+        run: |
+          cp www/media/icons/icon-192.png android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          cp www/media/icons/icon-192.png android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
+          cp www/media/icons/icon-192.png android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png
+          cp www/media/icons/icon-144.png android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+          cp www/media/icons/icon-144.png android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png
+          cp www/media/icons/icon-96.png android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+          cp www/media/icons/icon-96.png android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png
+          cp www/media/icons/icon-72.png android/app/src/main/res/mipmap-hdpi/ic_launcher.png
+          cp www/media/icons/icon-72.png android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png
+          cp www/media/icons/icon-48.png android/app/src/main/res/mipmap-mdpi/ic_launcher.png
+          cp www/media/icons/icon-48.png android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png
+
       - name: Patch Capacitor WebChromeClient
         run: cp BridgeWebChromeClient.java.patch node_modules/@capacitor/android/capacitor/src/main/java/com/getcapacitor/BridgeWebChromeClient.java
 
