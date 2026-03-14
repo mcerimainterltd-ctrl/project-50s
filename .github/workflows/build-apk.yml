@@ -41,8 +41,8 @@ jobs:
           cp www/media/icons/icon-72.png android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png
           cp www/media/icons/icon-48.png android/app/src/main/res/mipmap-mdpi/ic_launcher.png
           cp www/media/icons/icon-48.png android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png
-          echo '<?xml version="1.0" encoding="utf-8"?><adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"><background android:drawable="@android:color/white"/><foreground android:drawable="@mipmap/ic_launcher"/></adaptive-icon>' > android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
-          echo '<?xml version="1.0" encoding="utf-8"?><adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"><background android:drawable="@android:color/white"/><foreground android:drawable="@mipmap/ic_launcher"/></adaptive-icon>' > android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+          rm -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          rm -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
 
       - name: Patch Capacitor WebChromeClient
         run: cp BridgeWebChromeClient.java.patch node_modules/@capacitor/android/capacitor/src/main/java/com/getcapacitor/BridgeWebChromeClient.java
