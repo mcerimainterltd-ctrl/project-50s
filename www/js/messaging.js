@@ -882,7 +882,7 @@ function sendFile(file, caption, viewOnce) {
     showNotification('Upload cancelled'); currentUpload = null;
   });
 
-  xhr.open('POST', '/api/upload-file');
+  xhr.open('POST', serverURL+'/api/upload-file');
   xhr.send(formData);
 }
 
