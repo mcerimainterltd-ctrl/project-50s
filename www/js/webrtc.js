@@ -124,7 +124,7 @@ async function startCall(recipientId, callType) {
       const devList = devices.map(d => d.kind).join(',') || 'none';
       showNotification('Devices: ' + devList);
       await new Promise(r => setTimeout(r, 1000));
-      localStream = await navigator.mediaDevices.getUserMedia({ video: hasVideo, audio: true });
+      localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
       RESOURCES.localStreams.push(localStream);
     }
     playOutgoingRing();
