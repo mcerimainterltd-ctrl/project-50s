@@ -2,7 +2,8 @@
   "appId": "com.xamepage.app",
   "appName": "XamePage",
   "webDir": "www",
-  "android": {
-    "androidScheme": "https"
+  "server": {
+    "url": "https://project-50s.onrender.com",
+    "cleartext": false
   }
 }
