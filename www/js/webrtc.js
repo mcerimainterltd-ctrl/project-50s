@@ -120,10 +120,7 @@ async function startCall(recipientId, callType) {
   try {
     const hasVideo = callType === 'video';
     if (!localStream) {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const audioDevice = devices.find(d => d.kind === "audioinput");
-      const audioConstraint = audioDevice && audioDevice.deviceId ? { deviceId: { exact: audioDevice.deviceId } } : true;
-      localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: audioConstraint });
+      localStream = await navigator.mediaDevices.getUserMedia({ video: hasVideo, audio: true });
       RESOURCES.localStreams.push(localStream);
     }
     playOutgoingRing();
