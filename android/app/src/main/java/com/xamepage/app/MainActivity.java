@@ -6,6 +6,7 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
+import com.capacitorjs.plugins.splashscreen.SplashScreenPlugin;
 
 public class MainActivity extends BridgeActivity {
     @Override
