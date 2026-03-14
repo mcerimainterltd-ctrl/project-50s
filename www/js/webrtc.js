@@ -117,13 +117,13 @@ function removePeer(userId) {
 
 // ── Start outgoing call ───────────────────────────────────────────────────
 async function startCall(recipientId, callType) {
-  playOutgoingRing();
   try {
     const hasVideo = callType === 'video';
     if (!localStream) {
       localStream = await navigator.mediaDevices.getUserMedia({ video: hasVideo, audio: true });
       RESOURCES.localStreams.push(localStream);
     }
+    playOutgoingRing();
     videoCallOverlay.classList.remove('hidden');
     elChatHeader.classList.add('hidden'); composer.classList.add('hidden');
     localVideo.srcObject = localStream; localVideo.muted = true;
