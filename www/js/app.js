@@ -195,8 +195,10 @@ function bootstrapApp() {
 }
 
 //  DOMContentLoaded / Cordova device ready 
-document.addEventListener('DOMContentLoaded', bootstrapApp);
+let _bootstrapped = false;
+function _safeBootstrap() { if (_bootstrapped) return; _bootstrapped = true; bootstrapApp(); }
+document.addEventListener('DOMContentLoaded', _safeBootstrap);
 document.addEventListener('deviceready', () => {
   console.log(' Cordova device ready');
-  bootstrapApp();
+  _safeBootstrap();
 });
