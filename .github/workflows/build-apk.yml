@@ -33,7 +33,7 @@ jobs:
           find android/app/src/main/res -name 'ic_launcher.png' -o -name 'ic_launcher_round.png' -o -name 'ic_launcher_foreground.png' | while read f; do cp www/media/icons/icon-512.png "$f"; done
           rm -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
           rm -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
-          find android/app/src/main/res -name "splash.png" | while read f; do cp www/media/splash/xamepage_splash.png "$f"; done
+          find android/app/src/main/res -name "splash.png" | while read f; do cp www/media/splash/xamepage_splash.png "$f"; echo "Copied splash to $f"; done
 
       - name: Patch Capacitor WebChromeClient
         run: cp BridgeWebChromeClient.java.patch node_modules/@capacitor/android/capacitor/src/main/java/com/getcapacitor/BridgeWebChromeClient.java
