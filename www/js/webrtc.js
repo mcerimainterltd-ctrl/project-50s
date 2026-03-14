@@ -121,10 +121,9 @@ async function startCall(recipientId, callType) {
     const hasVideo = callType === 'video';
     if (!localStream) {
       const devices = await navigator.mediaDevices.enumerateDevices();
-      const devList = devices.map(d => d.kind).join(',') || 'none';
-      showNotification('Devices: ' + devList);
-      await new Promise(r => setTimeout(r, 1000));
-      localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+      const audioDevice = devices.find(d => d.kind === "audioinput");
+      const audioConstraint = audioDevice && audioDevice.deviceId ? { deviceId: { exact: audioDevice.deviceId } } : true;
+      localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: audioConstraint });
       RESOURCES.localStreams.push(localStream);
     }
     playOutgoingRing();
