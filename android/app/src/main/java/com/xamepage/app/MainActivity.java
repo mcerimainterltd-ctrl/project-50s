@@ -11,16 +11,19 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onStart() {
         super.onStart();
-        String[] permissions = {
-            Manifest.permission.CAMERA,
-            Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.MODIFY_AUDIO_SETTINGS,
-            Manifest.permission.READ_EXTERNAL_STORAGE,
-            Manifest.permission.WRITE_EXTERNAL_STORAGE,
-            "android.permission.READ_MEDIA_AUDIO",
-            "android.permission.READ_MEDIA_VIDEO",
-            "android.permission.READ_MEDIA_IMAGES"
-        };
+        java.util.List<String> permList = new java.util.ArrayList<>();
+        permList.add(Manifest.permission.CAMERA);
+        permList.add(Manifest.permission.RECORD_AUDIO);
+        permList.add(Manifest.permission.MODIFY_AUDIO_SETTINGS);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            permList.add("android.permission.READ_MEDIA_AUDIO");
+            permList.add("android.permission.READ_MEDIA_VIDEO");
+            permList.add("android.permission.READ_MEDIA_IMAGES");
+        } else {
+            permList.add(Manifest.permission.READ_EXTERNAL_STORAGE);
+            permList.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
+        }
+        String[] permissions = permList.toArray(new String[0]);
         for (String p : permissions) {
             if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) {
                 ActivityCompat.requestPermissions(this, permissions, 1);
