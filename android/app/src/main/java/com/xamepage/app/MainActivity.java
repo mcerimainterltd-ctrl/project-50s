@@ -7,7 +7,6 @@ import androidx.core.content.ContextCompat;
 import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
 import com.capacitorjs.plugins.splashscreen.SplashScreenPlugin;
-import io.capawesome.capacitorjs.plugins.firebase.messaging.FirebaseMessagingPlugin;
 
 public class MainActivity extends BridgeActivity {
     @Override
