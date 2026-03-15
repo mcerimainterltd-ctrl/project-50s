@@ -41,6 +41,11 @@ jobs:
       - name: Fix Capacitor Config
         run: cp capacitor.config.json android/app/src/main/assets/capacitor.config.json
 
+      - name: Final Icon and Splash Restore
+        run: |
+          find android/app/src/main/res -name "splash.png" | while read f; do cp www/media/splash/xamepage_splash.png "$f"; done
+          find android/app/src/main/res -name "ic_launcher.png" -o -name "ic_launcher_round.png" -o -name "ic_launcher_foreground.png" | while read f; do cp www/media/icons/icon-512.png "$f"; done
+
       - name: Build APK
         run: cd android && chmod +x gradlew && ./gradlew assembleDebug
 
