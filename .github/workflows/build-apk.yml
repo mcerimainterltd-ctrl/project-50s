@@ -23,7 +23,7 @@ jobs:
           node-version: '18'
 
       - name: Install dependencies
-        run: npm install && npm install @capacitor/android @capacitor/core @capacitor/cli @capacitor/splash-screen
+        run: npm install && npm install @capacitor/android @capacitor/core @capacitor/cli @capacitor/splash-screen @capacitor-firebase/messaging
 
       - name: Sync Capacitor
         run: npx @capacitor/cli sync android
@@ -34,6 +34,17 @@ jobs:
           rm -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
           rm -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
           find android/app/src/main/res -name "splash.png" | while read f; do cp www/media/splash/xamepage_splash.png "$f"; echo "Copied splash to $f"; done
+
+      - name: Configure Firebase Messaging
+        run: |
+          echo "include ':capacitor-firebase-messaging'" >> android/settings.gradle
+          echo "project(':capacitor-firebase-messaging').projectDir = new File('../node_modules/@capacitor-firebase/messaging/android')" >> android/settings.gradle
+          sed -i "s|implementation project(':capacitor-cordova-android-plugins')|implementation project(':capacitor-cordova-android-plugins')
+    implementation project(':capacitor-firebase-messaging')|" android/app/build.gradle
+          sed -i "s|import com.getcapacitor.BridgeActivity;|import com.getcapacitor.BridgeActivity;
+import io.capawesome.capacitorjs.plugins.firebase.messaging.FirebaseMessagingPlugin;|" android/app/src/main/java/com/xamepage/app/MainActivity.java
+          sed -i "s|registerPlugin(CameraPlugin.class);|registerPlugin(CameraPlugin.class);
+        registerPlugin(FirebaseMessagingPlugin.class);|" android/app/src/main/java/com/xamepage/app/MainActivity.java
 
       - name: Patch Capacitor WebChromeClient
         run: cp BridgeWebChromeClient.java.patch node_modules/@capacitor/android/capacitor/src/main/java/com/getcapacitor/BridgeWebChromeClient.java
