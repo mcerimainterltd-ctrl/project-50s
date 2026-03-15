@@ -25,6 +25,14 @@ const bcrypt     = require('bcryptjs');
 const cloudinary = require('cloudinary').v2;
 const webpush    = require('web-push');
 require('dotenv').config();
+const admin = require('firebase-admin');
+try {
+  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');
+  if (serviceAccount.project_id) {
+    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    console.log('Firebase Admin initialized');
+  }
+} catch(e) { console.warn('Firebase Admin init failed:', e.message); }
 
 // ============================================================
 // SERVER SETUP
@@ -197,6 +205,7 @@ const userSchema = new mongoose.Schema({
     contacts:           [contactSchema],
     // v2.1.1: per-user settings stored server-side for cross-device sync
     settings:           { type: Object, default: {} },
+    fcmToken:           { type: String, default: '' },
     createdAt:          { type: Date, default: Date.now }
 });
 
@@ -630,6 +639,47 @@ app.post('/api/logout', async (req, res) => {
 // ============================================================
 // API — PUSH NOTIFICATIONS
 // ============================================================
+
+// ── FCM Token ────────────────────────────────────────────────────────────────
+app.post('/api/save-fcm-token', async (req, res) => {
+    const { userId, fcmToken } = req.body;
+    if (!userId || !fcmToken) return res.status(400).json({ success: false });
+    try {
+        await User.updateOne({ xameId: userId }, { fcmToken });
+        res.json({ success: true });
+    } catch(e) { res.status(500).json({ success: false }); }
+});
+
+async function sendCallNotification(recipientId, callerName, callType) {
+    try {
+        const user = await User.findOne({ xameId: recipientId });
+        if (!user || !user.fcmToken) return;
+        if (!admin.apps.length) return;
+        await admin.messaging().send({
+            token: user.fcmToken,
+            notification: {
+                title: callType === 'video' ? '📹 Incoming Video Call' : '📞 Incoming Voice Call',
+                body: callerName + ' is calling you'
+            },
+            android: {
+                priority: 'high',
+                notification: {
+                    channelId: 'calls',
+                    priority: 'max',
+                    defaultVibrateTimings: true,
+                    defaultSound: true
+                }
+            },
+            data: {
+                type: 'incoming_call',
+                callerId: recipientId,
+                callerName,
+                callType
+            }
+        });
+        console.log('FCM call notification sent to:', recipientId);
+    } catch(e) { console.warn('FCM notification failed:', e.message); }
+}
 
 app.post('/api/save-push-subscription', async (req, res) => {
     const { userId, subscription } = req.body;
@@ -1449,6 +1499,9 @@ io.on('connection', (socket) => {
                         }));
                     }
                 } catch (_) { /* non-fatal */ }
+
+                // FCM notification for lock screen
+                await sendCallNotification(recipientId, incomingName, callType);
 
             } catch (err) {
                 console.error('call-user error:', err);

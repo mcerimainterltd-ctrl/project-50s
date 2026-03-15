@@ -37,3 +37,21 @@ async function subscribeToPushNotifications() {
     console.error('Push subscription error:', error);
   }
 }
+
+// ── FCM Token Registration ────────────────────────────────────────────────
+async function registerFCMToken() {
+  try {
+    if (!window.Capacitor?.isNativePlatform?.()) return;
+    const { FirebaseMessaging } = await import('@capacitor-firebase/messaging');
+    await FirebaseMessaging.requestPermissions();
+    const { token } = await FirebaseMessaging.getToken();
+    if (token && USER?.xameId) {
+      await fetch(serverURL + '/api/save-fcm-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: USER.xameId, fcmToken: token })
+      });
+      console.log('FCM token saved');
+    }
+  } catch(e) { console.warn('FCM token registration failed:', e.message); }
+}

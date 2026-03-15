@@ -29,6 +29,7 @@ function handleLoginSuccess(user) {
 
   show(elContacts);
   initCameraFunctionality();
+  if (typeof registerFCMToken === "function") registerFCMToken();
 
   try {
     connectSocket();
