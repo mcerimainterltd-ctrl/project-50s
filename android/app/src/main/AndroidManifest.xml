@@ -56,10 +56,15 @@
                 android:resource="@xml/file_paths"/>
         </provider>
 
-        <service android:name="io.capawesome.capacitorjs.plugins.firebase.messaging.MessagingService" android:exported="false">
+        <service android:name=".XameMessagingService" android:exported="false">
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT"/>
             </intent-filter>
         </service>
+            <receiver android:name=".CallNotificationReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="com.xamepage.app.INCOMING_CALL"/>
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

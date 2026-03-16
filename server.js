@@ -664,7 +664,7 @@ async function sendCallNotification(recipientId, callerName, callType) {
             android: {
                 priority: 'high',
                 notification: {
-                    channelId: 'calls',
+                    channelId: 'incoming_calls',
                     priority: 'max',
                     defaultVibrateTimings: true,
                     defaultSound: true

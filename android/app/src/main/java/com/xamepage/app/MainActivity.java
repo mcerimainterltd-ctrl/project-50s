@@ -6,9 +6,16 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
+import com.xamepage.app.CallNotificationReceiver;
 import com.capacitorjs.plugins.splashscreen.SplashScreenPlugin;
 
 public class MainActivity extends BridgeActivity {
+
+    @Override
+    protected void onCreate(android.os.Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        CallNotificationReceiver.createChannel(this);
+    }
     @Override
     public void onStart() {
         super.onStart();
