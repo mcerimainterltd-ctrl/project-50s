@@ -20,6 +20,7 @@ public class MainActivity extends BridgeActivity {
             permList.add("android.permission.READ_MEDIA_AUDIO");
             permList.add("android.permission.READ_MEDIA_VIDEO");
             permList.add("android.permission.READ_MEDIA_IMAGES");
+            permList.add("android.permission.POST_NOTIFICATIONS");
         } else {
             permList.add(Manifest.permission.READ_EXTERNAL_STORAGE);
             permList.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
