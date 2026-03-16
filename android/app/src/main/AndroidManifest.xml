@@ -38,7 +38,6 @@
             android:launchMode="singleTask"
             android:turnScreenOn="true"
             android:showWhenLocked="true"
-            android:dismissKeyguard="true"
             android:exported="true">
 
             <intent-filter>
