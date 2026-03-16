@@ -15,6 +15,12 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(android.os.Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         CallNotificationReceiver.createChannel(this);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
+            setTurnScreenOn(true);
+            setShowWhenLocked(true);
+            android.app.KeyguardManager km = (android.app.KeyguardManager) getSystemService(KEYGUARD_SERVICE);
+            if (km != null) km.requestDismissKeyguard(this, null);
+        }
     }
     @Override
     public void onStart() {

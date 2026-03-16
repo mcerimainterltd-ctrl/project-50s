@@ -36,6 +36,9 @@
             android:theme="@style/AppTheme.NoActionBarLaunch"
             android:configChanges="orientation|keyboard|keyboardHidden|screenSize|locale|layoutDirection"
             android:launchMode="singleTask"
+            android:turnScreenOn="true"
+            android:showWhenLocked="true"
+            android:dismissKeyguard="true"
             android:exported="true">
 
             <intent-filter>
