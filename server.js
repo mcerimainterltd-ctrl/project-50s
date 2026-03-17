@@ -671,6 +671,14 @@ async function sendCallNotification(recipientId, callerName, callType) {
     } catch(e) { console.warn('FCM notification failed:', e.message); }
 }
 
+app.post('/api/test-fcm', async (req, res) => {
+    const { userId } = req.body;
+    try {
+        await sendCallNotification(userId, 'Test Caller', 'voice');
+        res.json({ success: true, message: 'FCM test sent to ' + userId });
+    } catch(e) { res.status(500).json({ success: false, message: e.message }); }
+});
+
 app.post('/api/save-push-subscription', async (req, res) => {
     const { userId, subscription } = req.body;
     if (!userId || !subscription) return res.status(400).json({ success: false, message: 'Missing data.' });
