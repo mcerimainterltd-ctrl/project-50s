@@ -675,6 +675,8 @@ app.post('/api/test-fcm', async (req, res) => {
     const { userId } = req.body;
     try {
         const user = await User.findOne({ xameId: userId });
+        if (!user) return res.json({ success: false, reason: 'user not found' });
+        if (!user.fcmToken) return res.json({ success: false, reason: 'no fcm token', tokenValue: user.fcmToken });
         const result = await admin.messaging().send({
             token: user.fcmToken,
             android: { priority: 'high' },
