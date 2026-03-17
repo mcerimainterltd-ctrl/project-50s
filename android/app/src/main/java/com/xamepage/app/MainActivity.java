@@ -16,6 +16,7 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(android.os.Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         CallNotificationReceiver.createChannel(this);
+        XameTelecomHelper.registerPhoneAccount(this);
         registerPlugin(FirebaseMessagingPlugin.class);
         // Log permission states
         android.util.Log.d("XAMEPAGE_PERMS", "canDrawOverlays: " + android.provider.Settings.canDrawOverlays(this));

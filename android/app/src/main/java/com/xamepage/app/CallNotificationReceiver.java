@@ -78,13 +78,18 @@ public class CallNotificationReceiver extends BroadcastReceiver {
             .setOngoing(true)
             .setContentIntent(pendingIntent);
 
-        Intent serviceIntent = new Intent(context, CallForegroundService.class);
-        serviceIntent.putExtra("callerName", callerName);
-        serviceIntent.putExtra("callType", callType);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(serviceIntent);
+        // Use Telecom API for Android 10+ for proper lock screen behavior
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            XameTelecomHelper.addIncomingCall(context, callerName, callType);
         } else {
-            context.startService(serviceIntent);
+            Intent serviceIntent = new Intent(context, CallForegroundService.class);
+            serviceIntent.putExtra("callerName", callerName);
+            serviceIntent.putExtra("callType", callType);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent);
+            } else {
+                context.startService(serviceIntent);
+            }
         }
     }
 }
