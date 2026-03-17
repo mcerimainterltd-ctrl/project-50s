@@ -671,6 +671,14 @@ async function sendCallNotification(recipientId, callerName, callType) {
     } catch(e) { console.warn('FCM notification failed:', e.message); }
 }
 
+app.get('/api/check-fcm-token/:userId', async (req, res) => {
+    try {
+        const user = await User.findOne({ xameId: req.params.userId });
+        if (!user) return res.json({ found: false });
+        res.json({ found: true, hasToken: !!user.fcmToken, tokenLength: user.fcmToken?.length, tokenPreview: user.fcmToken?.substring(0, 20) });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/test-fcm', async (req, res) => {
     const { userId } = req.body;
     try {
