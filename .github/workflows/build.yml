@@ -28,6 +28,9 @@ jobs:
       - name: Sync Capacitor
         run: npx @capacitor/cli sync android
 
+      - name: Verify MainActivity after sync
+        run: grep -n "FirebaseMessagingPlugin|registerPlugin|createChannel" android/app/src/main/java/com/xamepage/app/MainActivity.java || echo "MISSING - MainActivity was overwritten by sync"
+
       - name: Configure Firebase Messaging
         run: |
           echo "include ':capacitor-firebase-messaging'" >> android/settings.gradle
