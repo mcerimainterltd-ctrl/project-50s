@@ -45,7 +45,11 @@ async function registerFCMToken() {
       console.warn('FCM: not native platform, skipping');
       return;
     }
-    const { FirebaseMessaging } = await import('@capacitor-firebase/messaging');
+    const FirebaseMessaging = window.Capacitor?.Plugins?.FirebaseMessaging;
+    if (!FirebaseMessaging) {
+      console.warn('FCM: FirebaseMessaging plugin not available in Capacitor.Plugins');
+      return;
+    }
     const perm = await FirebaseMessaging.requestPermissions();
     console.log('FCM permissions:', JSON.stringify(perm));
     const { token } = await FirebaseMessaging.getToken();
