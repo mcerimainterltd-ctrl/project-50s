@@ -657,18 +657,8 @@ async function sendCallNotification(recipientId, callerName, callType) {
         if (!admin.apps.length) return;
         await admin.messaging().send({
             token: user.fcmToken,
-            notification: {
-                title: callType === 'video' ? '📹 Incoming Video Call' : '📞 Incoming Voice Call',
-                body: callerName + ' is calling you'
-            },
             android: {
-                priority: 'high',
-                notification: {
-                    channelId: 'incoming_calls',
-                    priority: 'max',
-                    defaultVibrateTimings: true,
-                    defaultSound: true
-                }
+                priority: 'high'
             },
             data: {
                 type: 'incoming_call',
