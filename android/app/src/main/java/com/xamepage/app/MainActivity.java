@@ -15,6 +15,15 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(android.os.Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         CallNotificationReceiver.createChannel(this);
+        // Request full screen intent permission (Android 14+)
+        if (android.os.Build.VERSION.SDK_INT >= 34) {
+            android.app.NotificationManager nm = (android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            if (nm != null && !nm.canUseFullScreenIntent()) {
+                android.content.Intent fsiIntent = new android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT);
+                fsiIntent.setData(android.net.Uri.parse("package:" + getPackageName()));
+                startActivity(fsiIntent);
+            }
+        }
         // Request battery optimization exemption
         android.os.PowerManager pm2 = (android.os.PowerManager) getSystemService(POWER_SERVICE);
         if (pm2 != null && !pm2.isIgnoringBatteryOptimizations(getPackageName())) {
