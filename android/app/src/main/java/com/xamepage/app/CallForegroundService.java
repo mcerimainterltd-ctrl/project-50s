@@ -38,6 +38,23 @@ public class CallForegroundService extends Service {
             .build();
 
         startForeground(1001, notification);
+
+        // Directly launch MainActivity for full screen overlay on Android 10+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+            android.os.PowerManager.WakeLock wl = pm.newWakeLock(
+                android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK | android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP | android.os.PowerManager.ON_AFTER_RELEASE,
+                "xamepage:fgwakelock"
+            );
+            wl.acquire(30000);
+            Intent launchIntent = new Intent(this, MainActivity.class);
+            launchIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            launchIntent.putExtra("incomingCall", true);
+            launchIntent.putExtra("callerName", callerName);
+            launchIntent.putExtra("callType", callType);
+            startActivity(launchIntent);
+        }
+
         return START_STICKY;
     }
 

@@ -52,6 +52,16 @@ public class XameMessagingService extends FirebaseMessagingService {
             NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
             if (nm != null) nm.notify(1001, builder.build());
 
+            // Start foreground service for full screen overlay
+            Intent serviceIntent = new Intent(this, CallForegroundService.class);
+            serviceIntent.putExtra("callerName", callerName);
+            serviceIntent.putExtra("callType", callType);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent);
+            } else {
+                startService(serviceIntent);
+            }
+
             // Also send broadcast for receiver
             Intent i = new Intent("com.xamepage.app.INCOMING_CALL");
             i.putExtra("callerName", callerName);
