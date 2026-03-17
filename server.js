@@ -674,9 +674,14 @@ async function sendCallNotification(recipientId, callerName, callType) {
 app.post('/api/test-fcm', async (req, res) => {
     const { userId } = req.body;
     try {
-        await sendCallNotification(userId, 'Test Caller', 'voice');
-        res.json({ success: true, message: 'FCM test sent to ' + userId });
-    } catch(e) { res.status(500).json({ success: false, message: e.message }); }
+        const user = await User.findOne({ xameId: userId });
+        const result = await admin.messaging().send({
+            token: user.fcmToken,
+            android: { priority: 'high' },
+            data: { type: 'incoming_call', callerId: userId, callerName: 'Test Caller', callType: 'voice' }
+        });
+        res.json({ success: true, messageId: result, fcmToken: user.fcmToken.substring(0, 20) + '...' });
+    } catch(e) { res.status(500).json({ success: false, error: e.message, code: e.code }); }
 });
 
 app.post('/api/save-push-subscription', async (req, res) => {
