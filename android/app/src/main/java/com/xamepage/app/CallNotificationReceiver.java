@@ -38,14 +38,29 @@ public class CallNotificationReceiver extends BroadcastReceiver {
             PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP | PowerManager.ON_AFTER_RELEASE,
             "xamepage:callwakelock"
         );
-        wl.acquire(10000);
+        wl.acquire(30000);
 
-        // Open app intent
+        // Dismiss keyguard and launch activity directly
         Intent openIntent = new Intent(context, MainActivity.class);
-        openIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        openIntent.setFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK |
+            Intent.FLAG_ACTIVITY_CLEAR_TOP |
+            Intent.FLAG_ACTIVITY_SINGLE_TOP
+        );
         openIntent.putExtra("incomingCall", true);
         openIntent.putExtra("callerName", callerName);
         openIntent.putExtra("callType", callType);
+
+        // Directly start activity to break through lock screen
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            KeyguardManager km = (KeyguardManager) context.getSystemService(Context.KEYGUARD_SERVICE);
+            if (km != null && km.isKeyguardLocked()) {
+                context.startActivity(openIntent);
+            }
+        } else {
+            openIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(openIntent);
+        }
 
         PendingIntent pendingIntent = PendingIntent.getActivity(
             context, 0, openIntent,
