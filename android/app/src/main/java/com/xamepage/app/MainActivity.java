@@ -6,6 +6,7 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
+import io.capawesome.capacitorjs.plugins.firebase.messaging.FirebaseMessagingPlugin;
 import com.xamepage.app.CallNotificationReceiver;
 import com.capacitorjs.plugins.splashscreen.SplashScreenPlugin;
 
@@ -15,6 +16,13 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(android.os.Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         CallNotificationReceiver.createChannel(this);
+        registerPlugin(FirebaseMessagingPlugin.class);
+        // Log permission states
+        android.util.Log.d("XAMEPAGE_PERMS", "canDrawOverlays: " + android.provider.Settings.canDrawOverlays(this));
+        android.os.PowerManager pm3 = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+        android.util.Log.d("XAMEPAGE_PERMS", "ignoringBatteryOpt: " + (pm3 != null && pm3.isIgnoringBatteryOptimizations(getPackageName())));
+        android.app.NotificationManager nm2 = (android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        android.util.Log.d("XAMEPAGE_PERMS", "notificationsEnabled: " + (nm2 != null && nm2.areNotificationsEnabled()));
         // Request draw over other apps permission
         if (!android.provider.Settings.canDrawOverlays(this)) {
             android.content.Intent overlayIntent = new android.content.Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION);

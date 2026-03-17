@@ -33,8 +33,7 @@ jobs:
           echo "include ':capacitor-firebase-messaging'" >> android/settings.gradle
           echo "project(':capacitor-firebase-messaging').projectDir = new File('../node_modules/@capacitor-firebase/messaging/android')" >> android/settings.gradle
           sed -i "s|implementation project(':capacitor-cordova-android-plugins')|implementation project(':capacitor-cordova-android-plugins')\n    implementation project(':capacitor-firebase-messaging')|" android/app/build.gradle
-          sed -i "s|import com.getcapacitor.BridgeActivity;|import com.getcapacitor.BridgeActivity;\nimport io.capawesome.capacitorjs.plugins.firebase.messaging.FirebaseMessagingPlugin;|" android/app/src/main/java/com/xamepage/app/MainActivity.java
-          sed -i "s|registerPlugin(CameraPlugin.class);|registerPlugin(CameraPlugin.class);\n        registerPlugin(FirebaseMessagingPlugin.class);|" android/app/src/main/java/com/xamepage/app/MainActivity.java
+
 
       - name: Patch Capacitor WebChromeClient
         run: cp BridgeWebChromeClient.java.patch node_modules/@capacitor/android/capacitor/src/main/java/com/getcapacitor/BridgeWebChromeClient.java
