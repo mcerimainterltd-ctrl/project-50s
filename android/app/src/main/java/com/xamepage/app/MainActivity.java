@@ -15,6 +15,12 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(android.os.Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         CallNotificationReceiver.createChannel(this);
+        // Request draw over other apps permission
+        if (!android.provider.Settings.canDrawOverlays(this)) {
+            android.content.Intent overlayIntent = new android.content.Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION);
+            overlayIntent.setData(android.net.Uri.parse("package:" + getPackageName()));
+            startActivity(overlayIntent);
+        }
         // Request full screen intent permission (Android 14+)
         if (android.os.Build.VERSION.SDK_INT >= 34) {
             android.app.NotificationManager nm = (android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE);
