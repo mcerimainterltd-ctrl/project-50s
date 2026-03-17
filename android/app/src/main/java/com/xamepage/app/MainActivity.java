@@ -15,6 +15,13 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(android.os.Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         CallNotificationReceiver.createChannel(this);
+        // Request battery optimization exemption
+        android.os.PowerManager pm2 = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+        if (pm2 != null && !pm2.isIgnoringBatteryOptimizations(getPackageName())) {
+            android.content.Intent batteryIntent = new android.content.Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+            batteryIntent.setData(android.net.Uri.parse("package:" + getPackageName()));
+            startActivity(batteryIntent);
+        }
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
             setTurnScreenOn(true);
             setShowWhenLocked(true);

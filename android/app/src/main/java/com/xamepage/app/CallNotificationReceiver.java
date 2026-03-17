@@ -78,7 +78,13 @@ public class CallNotificationReceiver extends BroadcastReceiver {
             .setOngoing(true)
             .setContentIntent(pendingIntent);
 
-        NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-        if (nm != null) nm.notify(1001, builder.build());
+        Intent serviceIntent = new Intent(context, CallForegroundService.class);
+        serviceIntent.putExtra("callerName", callerName);
+        serviceIntent.putExtra("callType", callType);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(serviceIntent);
+        } else {
+            context.startService(serviceIntent);
+        }
     }
 }
