@@ -23,7 +23,7 @@ public class MainActivity extends BridgeActivity {
         XameTelecomHelper.registerPhoneAccount(this);
         registerPlugin(FirebaseMessagingPlugin.class);
         // Enable file downloads in WebView
-        getWebView().setDownloadListener(new DownloadListener() {
+        getBridge().getWebView().setDownloadListener(new DownloadListener() {
             @Override
             public void onDownloadStart(String url, String userAgent, String contentDisposition, String mimeType, long contentLength) {
                 DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
