@@ -854,7 +854,8 @@ async function sendFile(file, caption, viewOnce) {
       }
     } catch(e) {
       removeUploadProgress(msgId);
-      showNotification('Upload failed: ' + e.message);
+      console.error('Upload error:', e);
+      showNotification('Upload failed: ' + (e.message || JSON.stringify(e)));
     }
     return;
   }
