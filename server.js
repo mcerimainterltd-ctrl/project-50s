@@ -56,8 +56,8 @@ const io = new Server(server, {
     maxHttpBufferSize: 1e8
 });
 
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
+app.use(express.json({ limit: '500mb' }));
+app.use(express.urlencoded({ limit: '500mb', extended: true }));
 app.use(cors());
 
 // ============================================================
