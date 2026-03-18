@@ -361,7 +361,7 @@ const ScheduledCall = mongoose.model('ScheduledCall', scheduledCallSchema);
 // ============================================================
 
 const diskUpload   = multer({ dest: uploadDir });
-const memoryUpload = multer({ storage: multer.memoryStorage() });
+const memoryUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
 
 async function createDirectories() {
     for (const dir of [uploadDir, profilePicsDir]) {
