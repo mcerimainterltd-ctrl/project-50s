@@ -6,6 +6,10 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
+import android.app.DownloadManager;
+import android.net.Uri;
+import android.webkit.DownloadListener;
+import android.webkit.URLUtil;
 import io.capawesome.capacitorjs.plugins.firebase.messaging.FirebaseMessagingPlugin;
 import com.xamepage.app.CallNotificationReceiver;
 import com.capacitorjs.plugins.splashscreen.SplashScreenPlugin;
@@ -18,6 +22,24 @@ public class MainActivity extends BridgeActivity {
         CallNotificationReceiver.createChannel(this);
         XameTelecomHelper.registerPhoneAccount(this);
         registerPlugin(FirebaseMessagingPlugin.class);
+        // Enable file downloads in WebView
+        getWebView().setDownloadListener(new DownloadListener() {
+            @Override
+            public void onDownloadStart(String url, String userAgent, String contentDisposition, String mimeType, long contentLength) {
+                DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+                request.setMimeType(mimeType);
+                request.addRequestHeader("User-Agent", userAgent);
+                request.setDescription("Downloading file...");
+                String fileName = URLUtil.guessFileName(url, contentDisposition, mimeType);
+                request.setTitle(fileName);
+                request.allowScanningByMediaScanner();
+                request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                request.setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, fileName);
+                DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+                if (dm != null) dm.enqueue(request);
+                android.widget.Toast.makeText(getApplicationContext(), "Downloading " + fileName, android.widget.Toast.LENGTH_SHORT).show();
+            }
+        });
         // Log permission states
         android.util.Log.d("XAMEPAGE_PERMS", "canDrawOverlays: " + android.provider.Settings.canDrawOverlays(this));
         android.os.PowerManager pm3 = (android.os.PowerManager) getSystemService(POWER_SERVICE);
