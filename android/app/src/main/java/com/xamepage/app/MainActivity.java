@@ -57,12 +57,25 @@ public class MainActivity extends BridgeActivity {
                         else if (fn.endsWith(".txt")) resolvedMime = "text/plain";
                         else resolvedMime = "*/*";
                     }
-                    android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
-                    intent.setDataAndType(uri, resolvedMime);
-                    intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-                    try { startActivity(intent); } catch (Exception e) {
-                        android.widget.Toast.makeText(MainActivity.this, "No app found to open this file", android.widget.Toast.LENGTH_SHORT).show();
+                    // For APKs, save to Downloads folder
+                    if (resolvedMime.equals("application/vnd.android.package-archive")) {
+                        java.io.File downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS);
+                        java.io.File destFile = new java.io.File(downloadsDir, savedFileName);
+                        java.io.FileInputStream fis = new java.io.FileInputStream(file);
+                        java.io.FileOutputStream fos2 = new java.io.FileOutputStream(destFile);
+                        byte[] buf2 = new byte[4096];
+                        int len2;
+                        while ((len2 = fis.read(buf2)) != -1) fos2.write(buf2, 0, len2);
+                        fis.close(); fos2.close();
+                        android.widget.Toast.makeText(MainActivity.this, savedFileName + " saved to Downloads", android.widget.Toast.LENGTH_LONG).show();
+                    } else {
+                        android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
+                        intent.setDataAndType(uri, resolvedMime);
+                        intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                        try { startActivity(intent); } catch (Exception e) {
+                            android.widget.Toast.makeText(MainActivity.this, "No app found to open this file", android.widget.Toast.LENGTH_SHORT).show();
+                        }
                     }
                 } catch (Exception e) {
                     android.widget.Toast.makeText(MainActivity.this, "Failed to open: " + e.getMessage(), android.widget.Toast.LENGTH_SHORT).show();
