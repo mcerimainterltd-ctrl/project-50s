@@ -853,14 +853,24 @@ app.post('/api/upload-file', memoryUpload.single('file'), async (req, res) => {
                 res.json({ success: true, url });
             } else {
                 // Upload non-media files to Cloudinary as raw
-                const url = await new Promise((resolve, reject) => {
-                    const stream = cloudinary.uploader.upload_stream(
-                        { folder: 'xamepage_chat', resource_type: 'raw', use_filename: true, unique_filename: true, access_mode: 'public', type: 'upload' },
-                        (err, result) => err ? reject(err) : resolve(result.secure_url)
-                    );
-                    stream.end(req.file.buffer);
-                });
-                res.json({ success: true, url });
+                const tmpPath = path.join(uploadDir, `tmp_${uuidv4()}`);
+                await fsPromises.writeFile(tmpPath, req.file.buffer);
+                try {
+                    const result = await cloudinary.uploader.upload(tmpPath, {
+                        folder: 'xamepage_chat',
+                        resource_type: 'raw',
+                        use_filename: true,
+                        unique_filename: true,
+                        access_mode: 'public',
+                        type: 'upload',
+                        chunk_size: 6000000
+                    });
+                    await fsPromises.unlink(tmpPath).catch(() => {});
+                    res.json({ success: true, url: result.secure_url });
+                } catch(e) {
+                    await fsPromises.unlink(tmpPath).catch(() => {});
+                    throw e;
+                }
             }
         } else {
             const ext = path.extname(req.file.originalname);
