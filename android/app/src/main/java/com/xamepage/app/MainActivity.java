@@ -57,8 +57,22 @@ public class MainActivity extends BridgeActivity {
                         android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(
                             MainActivity.this, getPackageName() + ".fileprovider", file
                         );
+                        String mimeType = getContentResolver().getType(uri);
+                        if (mimeType == null) {
+                            String fn = params[1].toLowerCase();
+                            if (fn.endsWith(".pdf")) mimeType = "application/pdf";
+                            else if (fn.endsWith(".apk")) mimeType = "application/vnd.android.package-archive";
+                            else if (fn.endsWith(".doc")) mimeType = "application/msword";
+                            else if (fn.endsWith(".docx")) mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+                            else if (fn.endsWith(".xls")) mimeType = "application/vnd.ms-excel";
+                            else if (fn.endsWith(".xlsx")) mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+                            else if (fn.endsWith(".ppt")) mimeType = "application/vnd.ms-powerpoint";
+                            else if (fn.endsWith(".pptx")) mimeType = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+                            else if (fn.endsWith(".txt")) mimeType = "text/plain";
+                            else mimeType = "*/*";
+                        }
                         android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
-                        intent.setDataAndType(uri, getContentResolver().getType(uri));
+                        intent.setDataAndType(uri, mimeType);
                         intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
                         intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
                         try { startActivity(intent); } catch (Exception e) {
