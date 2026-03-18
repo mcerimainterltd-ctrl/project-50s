@@ -35,26 +35,34 @@ public class MainActivity extends BridgeActivity {
             public void openFileBase64(String base64Data, String fileName, String mimeType) {
                 try {
                     byte[] bytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT);
-                    // Determine XamePage subfolder based on file type
                     String fn = fileName.toLowerCase();
-                    String subFolder;
-                    if (fn.endsWith(".jpg") || fn.endsWith(".jpeg") || fn.endsWith(".png") || fn.endsWith(".gif") || fn.endsWith(".webp")) {
-                        subFolder = "Media/Images";
-                    } else if (fn.endsWith(".mp4") || fn.endsWith(".mkv") || fn.endsWith(".avi") || fn.endsWith(".webm")) {
-                        subFolder = "Media/Videos";
-                    } else if (fn.endsWith(".mp3") || fn.endsWith(".wav") || fn.endsWith(".ogg") || fn.endsWith(".m4a")) {
-                        subFolder = "Media/Audio";
-                    } else if (fn.endsWith(".apk")) {
-                        subFolder = "APKs";
-                    } else {
-                        subFolder = "Documents";
-                    }
-                    java.io.File xameDir = new java.io.File(android.os.Environment.getExternalStorageDirectory(), "XamePage/" + subFolder);
-                    if (!xameDir.exists()) xameDir.mkdirs();
-                    java.io.File file = new java.io.File(xameDir, fileName);
-                    java.io.FileOutputStream fos = new java.io.FileOutputStream(file);
+                    // Save to cache for opening
+                    java.io.File cacheFile = new java.io.File(getCacheDir(), fileName);
+                    java.io.FileOutputStream fos = new java.io.FileOutputStream(cacheFile);
                     fos.write(bytes);
                     fos.close();
+                    // Silently save to XamePage folder
+                    try {
+                        String subFolder;
+                        if (fn.endsWith(".jpg") || fn.endsWith(".jpeg") || fn.endsWith(".png") || fn.endsWith(".gif") || fn.endsWith(".webp")) {
+                            subFolder = "Media/Images";
+                        } else if (fn.endsWith(".mp4") || fn.endsWith(".mkv") || fn.endsWith(".avi") || fn.endsWith(".webm")) {
+                            subFolder = "Media/Videos";
+                        } else if (fn.endsWith(".mp3") || fn.endsWith(".wav") || fn.endsWith(".ogg") || fn.endsWith(".m4a")) {
+                            subFolder = "Media/Audio";
+                        } else if (fn.endsWith(".apk")) {
+                            subFolder = "APKs";
+                        } else {
+                            subFolder = "Documents";
+                        }
+                        java.io.File xameDir = new java.io.File(android.os.Environment.getExternalStorageDirectory(), "XamePage/" + subFolder);
+                        if (!xameDir.exists()) xameDir.mkdirs();
+                        java.io.File savedFile = new java.io.File(xameDir, fileName);
+                        java.io.FileOutputStream savedFos = new java.io.FileOutputStream(savedFile);
+                        savedFos.write(bytes);
+                        savedFos.close();
+                    } catch (Exception saveEx) { /* silent */ }
+                    java.io.File file = cacheFile;
                     String resolvedMime = mimeType;
                     if (resolvedMime == null || resolvedMime.isEmpty() || resolvedMime.equals("application/octet-stream")) {
                         if (fn.endsWith(".pdf")) resolvedMime = "application/pdf";
@@ -68,17 +76,11 @@ public class MainActivity extends BridgeActivity {
                         else if (fn.endsWith(".txt")) resolvedMime = "text/plain";
                         else resolvedMime = "*/*";
                     }
-                    // Use FileProvider URI for opening files
-                    android.net.Uri uri;
-                    try {
-                        uri = androidx.core.content.FileProvider.getUriForFile(
-                            MainActivity.this, getPackageName() + ".fileprovider", file
-                        );
-                    } catch (Exception uriEx) {
-                        uri = android.net.Uri.fromFile(file);
-                    }
+                    android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(
+                        MainActivity.this, getPackageName() + ".fileprovider", file
+                    );
                     if (resolvedMime.equals("application/vnd.android.package-archive")) {
-                        android.widget.Toast.makeText(MainActivity.this, fileName + " saved to XamePage/APKs folder", android.widget.Toast.LENGTH_LONG).show();
+                        android.widget.Toast.makeText(MainActivity.this, fileName + " saved to XamePage/APKs", android.widget.Toast.LENGTH_SHORT).show();
                     } else {
                         android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
                         intent.setDataAndType(uri, resolvedMime);
