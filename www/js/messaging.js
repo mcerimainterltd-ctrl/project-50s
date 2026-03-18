@@ -944,6 +944,11 @@ document.addEventListener('click', function(e) {
   if (!btn) return;
   e.preventDefault();
   e.stopPropagation();
-  const url = btn.href || btn.closest('[data-url]')?.dataset.url || btn.parentElement?.querySelector('a')?.href;
-  if (url) window.open(url, '_system');
+  let url = btn.href || btn.closest('[data-url]')?.dataset.url || btn.parentElement?.querySelector('a')?.href;
+  if (!url) return;
+  // Fix localhost URLs in Capacitor WebView
+  if (url.includes('localhost')) {
+    url = url.replace('https://localhost', serverURL).replace('http://localhost', serverURL);
+  }
+  window.open(url, '_system');
 }, true);
