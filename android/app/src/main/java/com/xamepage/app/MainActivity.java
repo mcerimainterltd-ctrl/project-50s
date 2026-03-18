@@ -68,6 +68,17 @@ public class MainActivity extends BridgeActivity {
                         while ((len2 = fis.read(buf2)) != -1) fos2.write(buf2, 0, len2);
                         fis.close(); fos2.close();
                         android.widget.Toast.makeText(MainActivity.this, savedFileName + " saved to Downloads", android.widget.Toast.LENGTH_LONG).show();
+                        // Open Downloads folder
+                        android.content.Intent downloadsIntent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
+                        downloadsIntent.setDataAndType(android.net.Uri.parse("content://com.android.externalstorage.documents/document/primary:Downloads"), "vnd.android.document/directory");
+                        downloadsIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                        try { startActivity(downloadsIntent); } catch(Exception ex) {
+                            // Fallback: open file manager
+                            android.content.Intent fm = new android.content.Intent(android.content.Intent.ACTION_GET_CONTENT);
+                            fm.setType("*/*");
+                            fm.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                            try { startActivity(fm); } catch(Exception ex2) {}
+                        }
                     } else {
                         android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
                         intent.setDataAndType(uri, resolvedMime);
