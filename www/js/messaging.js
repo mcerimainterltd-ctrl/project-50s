@@ -935,3 +935,15 @@ async function intelligentMerge(serverChatHistory) {
     console.log('Intelligent merge complete.');
   } catch (error) { console.error('Merge error:', error); } 
 }
+
+
+// ── APK file download/open interceptor ──────────────────────────────────
+document.addEventListener('click', function(e) {
+  if (!window.Capacitor?.isNativePlatform?.()) return;
+  const btn = e.target.closest('.download-btn, .doc-download-btn, .document-preview');
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const url = btn.href || btn.closest('[data-url]')?.dataset.url || btn.parentElement?.querySelector('a')?.href;
+  if (url) window.open(url, '_system');
+}, true);
