@@ -34,6 +34,7 @@ public class MainActivity extends BridgeActivity {
             @JavascriptInterface
             public void openFile(String fileUrl, String fileName) {
                 new android.os.AsyncTask<String, Void, java.io.File>() {
+                    private String savedFileName = fileName;
                     @Override
                     protected java.io.File doInBackground(String... params) {
                         try {
@@ -59,7 +60,7 @@ public class MainActivity extends BridgeActivity {
                         );
                         String mimeType = getContentResolver().getType(uri);
                         if (mimeType == null) {
-                            String fn = params[1].toLowerCase();
+                            String fn = savedFileName.toLowerCase();
                             if (fn.endsWith(".pdf")) mimeType = "application/pdf";
                             else if (fn.endsWith(".apk")) mimeType = "application/vnd.android.package-archive";
                             else if (fn.endsWith(".doc")) mimeType = "application/msword";
