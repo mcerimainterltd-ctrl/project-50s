@@ -54,7 +54,10 @@ public class MainActivity extends BridgeActivity {
                     }
                     @Override
                     protected void onPostExecute(java.io.File file) {
-                        if (file == null) return;
+                        if (file == null) {
+                            android.widget.Toast.makeText(MainActivity.this, "Download failed: " + savedFileName, android.widget.Toast.LENGTH_LONG).show();
+                            return;
+                        }
                         android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(
                             MainActivity.this, getPackageName() + ".fileprovider", file
                         );
