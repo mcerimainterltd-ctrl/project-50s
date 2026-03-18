@@ -803,7 +803,23 @@ function sendMessage(text) {
 }
 
 // Send file
-function sendFile(file, caption, viewOnce) {
+async function uploadLargeFileToCDN(file) {
+  const CLOUD_NAME = 'dveoa6j32';
+  const UPLOAD_PRESET = 'gx8rteqo';
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('upload_preset', UPLOAD_PRESET);
+  formData.append('folder', 'xamepage_chat');
+  const response = await fetch('https://api.cloudinary.com/v1_1/' + CLOUD_NAME + '/raw/upload', {
+    method: 'POST',
+    body: formData
+  });
+  if (!response.ok) throw new Error('Cloudinary upload failed: ' + response.status);
+  const data = await response.json();
+  return data.secure_url;
+}
+
+async function sendFile(file, caption, viewOnce) {
   const inGroup = typeof ACTIVE_GROUP !== 'undefined' && ACTIVE_GROUP;
 
   if ((!ACTIVE_ID && !inGroup) || !socket) {
@@ -820,6 +836,28 @@ function sendFile(file, caption, viewOnce) {
   }
 
   createUploadProgress(msgId, file.name);
+
+  // Use direct Cloudinary upload for all non-media files
+  const isMedia = file.type.startsWith('image/') || file.type.startsWith('video/') || file.type.startsWith('audio/');
+  if (!isMedia) {
+    try {
+      updateUploadProgress(msgId, 10);
+      const cdnUrl = await uploadLargeFileToCDN(file);
+      updateUploadProgress(msgId, 100);
+      removeUploadProgress(msgId);
+      const finalMessage = { id: msgId, file: { name: file.name, type: file.type, url: cdnUrl }, type: 'sent', ts, status: 'sending', text: caption || '', viewOnce: !!viewOnce };
+      if (!inGroup) {
+        const chatToUpdate = getChat(ACTIVE_ID);
+        const idx = chatToUpdate.findIndex(m => m.id === msgId);
+        if (idx !== -1) { chatToUpdate[idx] = finalMessage; setChat(ACTIVE_ID, chatToUpdate); renderMessages(); }
+        socket.emit('send-message', { recipientId: ACTIVE_ID, message: finalMessage }, () => {});
+      }
+    } catch(e) {
+      removeUploadProgress(msgId);
+      showNotification('Upload failed: ' + e.message);
+    }
+    return;
+  }
 
   const formData = new FormData();
   formData.append('file',        file);
