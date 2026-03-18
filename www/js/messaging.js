@@ -938,13 +938,27 @@ async function intelligentMerge(serverChatHistory) {
 
 
 // ── APK file download/open interceptor ──────────────────────────────────
-function openFileNatively(url, fileName) {
+async function openFileNatively(url, fileName) {
   if (url.includes('localhost')) {
     url = url.replace('https://localhost', serverURL).replace('http://localhost', serverURL);
   }
-  if (window.AndroidBridge && window.AndroidBridge.openFile) {
-    showNotification('Opening ' + fileName + '...');
-    window.AndroidBridge.openFile(url, fileName);
+  if (window.AndroidBridge && window.AndroidBridge.openFileBase64) {
+    try {
+      showNotification('Opening ' + fileName + '...');
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Fetch failed: ' + response.status);
+      const blob = await response.blob();
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      window.AndroidBridge.openFileBase64(base64, fileName, blob.type);
+    } catch(e) {
+      console.error('File open error:', e);
+      showNotification('Could not open file: ' + e.message);
+    }
   } else {
     window.open(url, '_blank');
   }

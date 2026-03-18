@@ -32,6 +32,44 @@ public class MainActivity extends BridgeActivity {
         // Add JavaScript interface for native file opening
         getBridge().getWebView().addJavascriptInterface(new Object() {
             @JavascriptInterface
+            public void openFileBase64(String base64Data, String fileName, String mimeType) {
+                try {
+                    byte[] bytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT);
+                    java.io.File cacheDir = getCacheDir();
+                    java.io.File file = new java.io.File(cacheDir, fileName);
+                    java.io.FileOutputStream fos = new java.io.FileOutputStream(file);
+                    fos.write(bytes);
+                    fos.close();
+                    android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(
+                        MainActivity.this, getPackageName() + ".fileprovider", file
+                    );
+                    String resolvedMime = mimeType;
+                    if (resolvedMime == null || resolvedMime.isEmpty() || resolvedMime.equals("application/octet-stream")) {
+                        String fn = fileName.toLowerCase();
+                        if (fn.endsWith(".pdf")) resolvedMime = "application/pdf";
+                        else if (fn.endsWith(".apk")) resolvedMime = "application/vnd.android.package-archive";
+                        else if (fn.endsWith(".doc")) resolvedMime = "application/msword";
+                        else if (fn.endsWith(".docx")) resolvedMime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+                        else if (fn.endsWith(".xls")) resolvedMime = "application/vnd.ms-excel";
+                        else if (fn.endsWith(".xlsx")) resolvedMime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+                        else if (fn.endsWith(".ppt")) resolvedMime = "application/vnd.ms-powerpoint";
+                        else if (fn.endsWith(".pptx")) resolvedMime = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+                        else if (fn.endsWith(".txt")) resolvedMime = "text/plain";
+                        else resolvedMime = "*/*";
+                    }
+                    android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
+                    intent.setDataAndType(uri, resolvedMime);
+                    intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                    try { startActivity(intent); } catch (Exception e) {
+                        android.widget.Toast.makeText(MainActivity.this, "No app found to open this file", android.widget.Toast.LENGTH_SHORT).show();
+                    }
+                } catch (Exception e) {
+                    android.widget.Toast.makeText(MainActivity.this, "Failed to open: " + e.getMessage(), android.widget.Toast.LENGTH_SHORT).show();
+                }
+            }
+
+            @JavascriptInterface
             public void openFile(String fileUrl, String fileName) {
                 new android.os.AsyncTask<String, Void, java.io.File>() {
                     private String savedFileName = fileName;
