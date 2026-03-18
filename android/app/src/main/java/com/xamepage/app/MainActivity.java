@@ -46,7 +46,15 @@ public class MainActivity extends BridgeActivity {
                         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
                             android.content.ContentValues values = new android.content.ContentValues();
                             values.put(android.provider.MediaStore.Downloads.DISPLAY_NAME, fileName);
-                            values.put(android.provider.MediaStore.Downloads.RELATIVE_PATH, "Download/XamePage");
+                            String subPath;
+                            if (fn.endsWith(".jpg")||fn.endsWith(".jpeg")||fn.endsWith(".png")||fn.endsWith(".gif")||fn.endsWith(".webp")||fn.endsWith(".mp4")||fn.endsWith(".mkv")||fn.endsWith(".avi")||fn.endsWith(".webm")||fn.endsWith(".mp3")||fn.endsWith(".wav")||fn.endsWith(".ogg")||fn.endsWith(".m4a")) {
+                                subPath = "Download/XamePage/Media";
+                            } else if (fn.endsWith(".apk")||fn.endsWith(".zip")||fn.endsWith(".rar")||fn.endsWith(".7z")||fn.endsWith(".exe")||fn.endsWith(".tar")||fn.endsWith(".gz")) {
+                                subPath = "Download/XamePage/Executables";
+                            } else {
+                                subPath = "Download/XamePage/Documents";
+                            }
+                            values.put(android.provider.MediaStore.Downloads.RELATIVE_PATH, subPath);
                             android.net.Uri extUri = getContentResolver().insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
                             if (extUri != null) {
                                 java.io.OutputStream os = getContentResolver().openOutputStream(extUri);
@@ -54,7 +62,15 @@ public class MainActivity extends BridgeActivity {
                             }
                         } else {
                             java.io.File dl = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS);
-                            java.io.File xameDir = new java.io.File(dl, "XamePage");
+                            String subDir;
+                            if (fn.endsWith(".jpg")||fn.endsWith(".jpeg")||fn.endsWith(".png")||fn.endsWith(".mp4")||fn.endsWith(".mp3")||fn.endsWith(".wav")||fn.endsWith(".ogg")||fn.endsWith(".m4a")) {
+                                subDir = "XamePage/Media";
+                            } else if (fn.endsWith(".apk")||fn.endsWith(".zip")||fn.endsWith(".rar")||fn.endsWith(".7z")||fn.endsWith(".exe")||fn.endsWith(".tar")||fn.endsWith(".gz")) {
+                                subDir = "XamePage/Executables";
+                            } else {
+                                subDir = "XamePage/Documents";
+                            }
+                            java.io.File xameDir = new java.io.File(dl, subDir);
                             if (!xameDir.exists()) xameDir.mkdirs();
                             java.io.File savedFile = new java.io.File(xameDir, fileName);
                             java.io.FileOutputStream savedFos = new java.io.FileOutputStream(savedFile);
@@ -79,16 +95,12 @@ public class MainActivity extends BridgeActivity {
                     android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(
                         MainActivity.this, getPackageName() + ".fileprovider", file
                     );
-                    if (resolvedMime.equals("application/vnd.android.package-archive")) {
-                        android.widget.Toast.makeText(MainActivity.this, fileName + " saved to XamePage/APKs", android.widget.Toast.LENGTH_SHORT).show();
-                    } else {
-                        android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
-                        intent.setDataAndType(uri, resolvedMime);
-                        intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-                        try { startActivity(intent); } catch (Exception e) {
-                            android.widget.Toast.makeText(MainActivity.this, "No app found to open this file", android.widget.Toast.LENGTH_SHORT).show();
-                        }
+                    android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
+                    intent.setDataAndType(uri, resolvedMime);
+                    intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                    try { startActivity(intent); } catch (Exception e) {
+                        android.widget.Toast.makeText(MainActivity.this, "No app found to open this file", android.widget.Toast.LENGTH_SHORT).show();
                     }
                 } catch (Exception e) {
                     android.widget.Toast.makeText(MainActivity.this, "Failed to open: " + e.getMessage(), android.widget.Toast.LENGTH_SHORT).show();
