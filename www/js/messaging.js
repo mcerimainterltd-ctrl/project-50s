@@ -938,34 +938,15 @@ async function intelligentMerge(serverChatHistory) {
 
 
 // ── APK file download/open interceptor ──────────────────────────────────
-async function openFileNatively(url, fileName) {
-  try {
-    const { Filesystem } = await import('@capacitor/filesystem');
-    const { Share } = await import('@capacitor/share');
-    if (url.includes('localhost')) {
-      url = url.replace('https://localhost', serverURL).replace('http://localhost', serverURL);
-    }
+function openFileNatively(url, fileName) {
+  if (url.includes('localhost')) {
+    url = url.replace('https://localhost', serverURL).replace('http://localhost', serverURL);
+  }
+  if (window.AndroidBridge && window.AndroidBridge.openFile) {
     showNotification('Opening ' + fileName + '...');
-    const response = await fetch(url);
-    const blob = await response.blob();
-    const base64 = await new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result.split(',')[1]);
-      reader.readAsDataURL(blob);
-    });
-    const savedFile = await Filesystem.writeFile({
-      path: fileName,
-      data: base64,
-      directory: 'CACHE',
-    });
-    await Share.share({
-      title: fileName,
-      url: savedFile.uri,
-      dialogTitle: 'Open with',
-    });
-  } catch(e) {
-    console.error('File open error:', e);
-    showNotification('Could not open file');
+    window.AndroidBridge.openFile(url, fileName);
+  } else {
+    window.open(url, '_blank');
   }
 }
 

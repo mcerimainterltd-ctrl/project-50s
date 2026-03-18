@@ -10,6 +10,12 @@ import android.app.DownloadManager;
 import android.net.Uri;
 import android.webkit.DownloadListener;
 import android.webkit.URLUtil;
+import android.webkit.JavascriptInterface;
+import android.os.AsyncTask;
+import java.io.InputStream;
+import java.io.FileOutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import io.capawesome.capacitorjs.plugins.firebase.messaging.FirebaseMessagingPlugin;
 import com.xamepage.app.CallNotificationReceiver;
 import com.capacitorjs.plugins.splashscreen.SplashScreenPlugin;
@@ -23,6 +29,46 @@ public class MainActivity extends BridgeActivity {
         XameTelecomHelper.registerPhoneAccount(this);
         registerPlugin(FirebaseMessagingPlugin.class);
         // Enable file downloads in WebView
+        // Add JavaScript interface for native file opening
+        getBridge().getWebView().addJavascriptInterface(new Object() {
+            @JavascriptInterface
+            public void openFile(String fileUrl, String fileName) {
+                new android.os.AsyncTask<String, Void, java.io.File>() {
+                    @Override
+                    protected java.io.File doInBackground(String... params) {
+                        try {
+                            URL url = new URL(params[0]);
+                            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                            conn.connect();
+                            java.io.File cacheDir = getCacheDir();
+                            java.io.File file = new java.io.File(cacheDir, params[1]);
+                            InputStream in = conn.getInputStream();
+                            FileOutputStream out = new FileOutputStream(file);
+                            byte[] buf = new byte[4096];
+                            int len;
+                            while ((len = in.read(buf)) != -1) out.write(buf, 0, len);
+                            in.close(); out.close();
+                            return file;
+                        } catch (Exception e) { return null; }
+                    }
+                    @Override
+                    protected void onPostExecute(java.io.File file) {
+                        if (file == null) return;
+                        android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(
+                            MainActivity.this, getPackageName() + ".fileprovider", file
+                        );
+                        android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
+                        intent.setDataAndType(uri, getContentResolver().getType(uri));
+                        intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                        try { startActivity(intent); } catch (Exception e) {
+                            android.widget.Toast.makeText(MainActivity.this, "No app found to open this file", android.widget.Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                }.execute(fileUrl, fileName);
+            }
+        }, "AndroidBridge");
+
         getBridge().getWebView().setDownloadListener(new DownloadListener() {
             @Override
             public void onDownloadStart(String url, String userAgent, String contentDisposition, String mimeType, long contentLength) {
