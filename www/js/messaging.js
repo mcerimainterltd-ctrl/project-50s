@@ -938,6 +938,37 @@ async function intelligentMerge(serverChatHistory) {
 
 
 // ── APK file download/open interceptor ──────────────────────────────────
+async function openFileNatively(url, fileName) {
+  try {
+    const { Filesystem } = await import('@capacitor/filesystem');
+    const { Share } = await import('@capacitor/share');
+    if (url.includes('localhost')) {
+      url = url.replace('https://localhost', serverURL).replace('http://localhost', serverURL);
+    }
+    showNotification('Opening ' + fileName + '...');
+    const response = await fetch(url);
+    const blob = await response.blob();
+    const base64 = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result.split(',')[1]);
+      reader.readAsDataURL(blob);
+    });
+    const savedFile = await Filesystem.writeFile({
+      path: fileName,
+      data: base64,
+      directory: 'CACHE',
+    });
+    await Share.share({
+      title: fileName,
+      url: savedFile.uri,
+      dialogTitle: 'Open with',
+    });
+  } catch(e) {
+    console.error('File open error:', e);
+    showNotification('Could not open file');
+  }
+}
+
 document.addEventListener('click', function(e) {
   if (!window.Capacitor?.isNativePlatform?.()) return;
   const btn = e.target.closest('.download-btn, .doc-download-btn, .document-preview');
@@ -946,9 +977,6 @@ document.addEventListener('click', function(e) {
   e.stopPropagation();
   let url = btn.href || btn.closest('[data-url]')?.dataset.url || btn.parentElement?.querySelector('a')?.href;
   if (!url) return;
-  // Fix localhost URLs in Capacitor WebView
-  if (url.includes('localhost')) {
-    url = url.replace('https://localhost', serverURL).replace('http://localhost', serverURL);
-  }
-  window.open(url, '_system');
+  const fileName = btn.getAttribute('download') || url.split('/').pop().split('?')[0] || 'file';
+  openFileNatively(url, fileName);
 }, true);
