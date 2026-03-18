@@ -67,7 +67,8 @@ app.use(cors());
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key:    process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+    timeout:    120000
 });
 
 if (!process.env.CLOUDINARY_CLOUD_NAME ||
@@ -845,7 +846,7 @@ app.post('/api/upload-file', memoryUpload.single('file'), async (req, res) => {
                 const url = await new Promise((resolve, reject) => {
                     const stream = cloudinary.uploader.upload_stream(
                         { folder: 'xamepage_chat', resource_type: resourceType },
-                        (err, result) => err ? reject(err) : resolve(result.secure_url)
+                        (err, result) => { if (err) { console.error("Cloudinary upload error:", JSON.stringify(err)); reject(err); } else resolve(result.secure_url); }
                     );
                     stream.end(req.file.buffer);
                 });
