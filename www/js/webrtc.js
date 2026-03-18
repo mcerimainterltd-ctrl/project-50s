@@ -119,6 +119,11 @@ function removePeer(userId) {
 async function startCall(recipientId, callType) {
   try {
     const hasVideo = callType === 'video';
+    // Clean up any stale peer connection for this recipient
+    if (peers.has(recipientId)) {
+      try { peers.get(recipientId).pc.close(); } catch(_) {}
+      peers.delete(recipientId);
+    }
     if (!localStream) {
       localStream = await navigator.mediaDevices.getUserMedia({ video: hasVideo, audio: true });
       RESOURCES.localStreams.push(localStream);
