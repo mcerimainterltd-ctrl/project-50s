@@ -41,26 +41,26 @@ public class MainActivity extends BridgeActivity {
                     java.io.FileOutputStream fos = new java.io.FileOutputStream(cacheFile);
                     fos.write(bytes);
                     fos.close();
-                    // Silently save to XamePage folder
+                    // Silently save to Downloads/XamePage folder
                     try {
-                        String subFolder;
-                        if (fn.endsWith(".jpg") || fn.endsWith(".jpeg") || fn.endsWith(".png") || fn.endsWith(".gif") || fn.endsWith(".webp")) {
-                            subFolder = "Media/Images";
-                        } else if (fn.endsWith(".mp4") || fn.endsWith(".mkv") || fn.endsWith(".avi") || fn.endsWith(".webm")) {
-                            subFolder = "Media/Videos";
-                        } else if (fn.endsWith(".mp3") || fn.endsWith(".wav") || fn.endsWith(".ogg") || fn.endsWith(".m4a")) {
-                            subFolder = "Media/Audio";
-                        } else if (fn.endsWith(".apk")) {
-                            subFolder = "APKs";
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                            android.content.ContentValues values = new android.content.ContentValues();
+                            values.put(android.provider.MediaStore.Downloads.DISPLAY_NAME, fileName);
+                            values.put(android.provider.MediaStore.Downloads.RELATIVE_PATH, "Download/XamePage");
+                            android.net.Uri extUri = getContentResolver().insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+                            if (extUri != null) {
+                                java.io.OutputStream os = getContentResolver().openOutputStream(extUri);
+                                if (os != null) { os.write(bytes); os.close(); }
+                            }
                         } else {
-                            subFolder = "Documents";
+                            java.io.File dl = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS);
+                            java.io.File xameDir = new java.io.File(dl, "XamePage");
+                            if (!xameDir.exists()) xameDir.mkdirs();
+                            java.io.File savedFile = new java.io.File(xameDir, fileName);
+                            java.io.FileOutputStream savedFos = new java.io.FileOutputStream(savedFile);
+                            savedFos.write(bytes);
+                            savedFos.close();
                         }
-                        java.io.File xameDir = new java.io.File(getExternalFilesDir(null), "XamePage/" + subFolder);
-                        if (!xameDir.exists()) xameDir.mkdirs();
-                        java.io.File savedFile = new java.io.File(xameDir, fileName);
-                        java.io.FileOutputStream savedFos = new java.io.FileOutputStream(savedFile);
-                        savedFos.write(bytes);
-                        savedFos.close();
                     } catch (Exception saveEx) { /* silent */ }
                     java.io.File file = cacheFile;
                     String resolvedMime = mimeType;
