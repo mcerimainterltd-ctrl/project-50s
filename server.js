@@ -851,11 +851,15 @@ app.post('/api/upload-file', memoryUpload.single('file'), async (req, res) => {
                 });
                 res.json({ success: true, url });
             } else {
-                const ext = path.extname(req.file.originalname);
-                const newName = `${uuidv4()}${ext}`;
-                const newPath = path.join(uploadDir, newName);
-                await fsPromises.writeFile(newPath, req.file.buffer);
-                res.json({ success: true, url: `/uploads/${newName}` });
+                // Upload non-media files to Cloudinary as raw
+                const url = await new Promise((resolve, reject) => {
+                    const stream = cloudinary.uploader.upload_stream(
+                        { folder: 'xamepage_chat', resource_type: 'raw', public_id: uuidv4() + path.extname(req.file.originalname) },
+                        (err, result) => err ? reject(err) : resolve(result.secure_url)
+                    );
+                    stream.end(req.file.buffer);
+                });
+                res.json({ success: true, url });
             }
         } else {
             const ext = path.extname(req.file.originalname);
