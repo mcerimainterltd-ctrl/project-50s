@@ -55,7 +55,7 @@ public class MainActivity extends BridgeActivity {
                         } else {
                             subFolder = "Documents";
                         }
-                        java.io.File xameDir = new java.io.File(android.os.Environment.getExternalStorageDirectory(), "XamePage/" + subFolder);
+                        java.io.File xameDir = new java.io.File(getExternalFilesDir(null), "XamePage/" + subFolder);
                         if (!xameDir.exists()) xameDir.mkdirs();
                         java.io.File savedFile = new java.io.File(xameDir, fileName);
                         java.io.FileOutputStream savedFos = new java.io.FileOutputStream(savedFile);
