@@ -957,7 +957,7 @@ async function openFileNatively(url, fileName) {
       window.AndroidBridge.openFileBase64(base64, fileName, blob.type);
     } catch(e) {
       console.error('File open error:', e);
-      showNotification('Could not open file: ' + e.message);
+      showNotification('Could not open file: ' + (e.message || 'Unknown error') + ' | ' + fileName);
     }
   } else {
     window.open(url, '_blank');
