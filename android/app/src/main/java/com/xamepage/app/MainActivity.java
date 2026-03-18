@@ -73,18 +73,7 @@ public class MainActivity extends BridgeActivity {
                         MainActivity.this, getPackageName() + ".fileprovider", file
                     );
                     if (resolvedMime.equals("application/vnd.android.package-archive")) {
-                        android.widget.Toast.makeText(MainActivity.this, fileName + " saved to XamePage/APKs", android.widget.Toast.LENGTH_LONG).show();
-                        // Open XamePage/APKs folder
-                        android.content.Intent folderIntent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
-                        folderIntent.setDataAndType(androidx.core.content.FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".fileprovider", xameDir), "resource/folder");
-                        folderIntent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                        folderIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-                        try { startActivity(folderIntent); } catch(Exception ex) {
-                            android.content.Intent fm = new android.content.Intent(android.content.Intent.ACTION_GET_CONTENT);
-                            fm.setType("*/*");
-                            fm.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-                            try { startActivity(fm); } catch(Exception ex2) {}
-                        }
+                        android.widget.Toast.makeText(MainActivity.this, fileName + " saved to XamePage/APKs folder", android.widget.Toast.LENGTH_LONG).show();
                     } else {
                         android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
                         intent.setDataAndType(uri, resolvedMime);
