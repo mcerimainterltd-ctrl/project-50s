@@ -57,7 +57,6 @@ public class MainActivity extends BridgeActivity {
                     fos.close();
                     String resolvedMime = mimeType;
                     if (resolvedMime == null || resolvedMime.isEmpty() || resolvedMime.equals("application/octet-stream")) {
-                        String fn = fileName.toLowerCase();
                         if (fn.endsWith(".pdf")) resolvedMime = "application/pdf";
                         else if (fn.endsWith(".apk")) resolvedMime = "application/vnd.android.package-archive";
                         else if (fn.endsWith(".doc")) resolvedMime = "application/msword";
@@ -74,15 +73,7 @@ public class MainActivity extends BridgeActivity {
                         MainActivity.this, getPackageName() + ".fileprovider", file
                     );
                     if (resolvedMime.equals("application/vnd.android.package-archive")) {
-                        java.io.File downloadsDir = xameDir;
-                        java.io.File destFile = new java.io.File(downloadsDir, savedFileName);
-                        java.io.FileInputStream fis = new java.io.FileInputStream(file);
-                        java.io.FileOutputStream fos2 = new java.io.FileOutputStream(destFile);
-                        byte[] buf2 = new byte[4096];
-                        int len2;
-                        while ((len2 = fis.read(buf2)) != -1) fos2.write(buf2, 0, len2);
-                        fis.close(); fos2.close();
-                        android.widget.Toast.makeText(MainActivity.this, savedFileName + " saved to XamePage/APKs", android.widget.Toast.LENGTH_LONG).show();
+                        android.widget.Toast.makeText(MainActivity.this, fileName + " saved to XamePage/APKs", android.widget.Toast.LENGTH_LONG).show();
                         // Open XamePage/APKs folder
                         android.content.Intent folderIntent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
                         folderIntent.setDataAndType(androidx.core.content.FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".fileprovider", xameDir), "resource/folder");
