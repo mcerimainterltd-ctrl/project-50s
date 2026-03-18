@@ -865,8 +865,13 @@ app.post('/api/upload-file', memoryUpload.single('file'), async (req, res) => {
                 res.json({ success: true, url });
             } else {
                 // Upload non-media files to Supabase
-                const url = await uploadToSupabase(req.file.buffer, req.file.originalname);
-                res.json({ success: true, url });
+                try {
+                    const url = await uploadToSupabase(req.file.buffer, req.file.originalname);
+                    res.json({ success: true, url });
+                } catch(supaErr) {
+                    console.error('Supabase upload error:', supaErr.message);
+                    res.status(500).json({ success: false, message: supaErr.message });
+                }
             }
         } else {
             const ext = path.extname(req.file.originalname);
