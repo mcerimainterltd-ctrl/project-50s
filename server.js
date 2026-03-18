@@ -854,7 +854,7 @@ app.post('/api/upload-file', memoryUpload.single('file'), async (req, res) => {
                 // Upload non-media files to Cloudinary as raw
                 const url = await new Promise((resolve, reject) => {
                     const stream = cloudinary.uploader.upload_stream(
-                        { folder: 'xamepage_chat', resource_type: 'raw', public_id: uuidv4() + path.extname(req.file.originalname) },
+                        { folder: 'xamepage_chat', resource_type: 'auto', use_filename: true, unique_filename: true },
                         (err, result) => err ? reject(err) : resolve(result.secure_url)
                     );
                     stream.end(req.file.buffer);
