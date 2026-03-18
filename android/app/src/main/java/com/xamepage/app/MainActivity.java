@@ -68,10 +68,15 @@ public class MainActivity extends BridgeActivity {
                         else if (fn.endsWith(".txt")) resolvedMime = "text/plain";
                         else resolvedMime = "*/*";
                     }
-                    // For APKs, save to Downloads folder
-                    android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(
-                        MainActivity.this, getPackageName() + ".fileprovider", file
-                    );
+                    // Use FileProvider URI for opening files
+                    android.net.Uri uri;
+                    try {
+                        uri = androidx.core.content.FileProvider.getUriForFile(
+                            MainActivity.this, getPackageName() + ".fileprovider", file
+                        );
+                    } catch (Exception uriEx) {
+                        uri = android.net.Uri.fromFile(file);
+                    }
                     if (resolvedMime.equals("application/vnd.android.package-archive")) {
                         android.widget.Toast.makeText(MainActivity.this, fileName + " saved to XamePage/APKs folder", android.widget.Toast.LENGTH_LONG).show();
                     } else {
