@@ -23,6 +23,8 @@ const cors       = require('cors');
 const { body, validationResult } = require('express-validator');
 const bcrypt     = require('bcryptjs');
 const cloudinary = require('cloudinary').v2;
+const { createClient } = require('@supabase/supabase-js');
+const supabase = createClient(process.env.SUPABASE_URL || '', process.env.SUPABASE_SERVICE_KEY || '');
 const webpush    = require('web-push');
 require('dotenv').config();
 const admin = require('firebase-admin');
@@ -833,6 +835,16 @@ app.post('/api/delete-chat-and-contact',
 // API — FILES & PROFILE
 // ============================================================
 
+async function uploadToSupabase(buffer, fileName) {
+    const safeName = Date.now() + '_' + fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const { data, error } = await supabase.storage
+        .from('xamepage-files')
+        .upload(safeName, buffer, { upsert: true, contentType: 'application/octet-stream' });
+    if (error) throw new Error('Supabase upload failed: ' + error.message);
+    const { data: urlData } = supabase.storage.from('xamepage-files').getPublicUrl(safeName);
+    return urlData.publicUrl;
+}
+
 app.post('/api/upload-file', memoryUpload.single('file'), async (req, res) => {
     if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded.' });
     try {
@@ -852,25 +864,9 @@ app.post('/api/upload-file', memoryUpload.single('file'), async (req, res) => {
                 });
                 res.json({ success: true, url });
             } else {
-                // Upload non-media files to Cloudinary as raw
-                const tmpPath = path.join(uploadDir, `tmp_${uuidv4()}`);
-                await fsPromises.writeFile(tmpPath, req.file.buffer);
-                try {
-                    const result = await cloudinary.uploader.upload(tmpPath, {
-                        folder: 'xamepage_chat',
-                        resource_type: 'raw',
-                        use_filename: true,
-                        unique_filename: true,
-                        access_mode: 'public',
-                        type: 'upload',
-                        chunk_size: 6000000
-                    });
-                    await fsPromises.unlink(tmpPath).catch(() => {});
-                    res.json({ success: true, url: result.secure_url });
-                } catch(e) {
-                    await fsPromises.unlink(tmpPath).catch(() => {});
-                    throw e;
-                }
+                // Upload non-media files to Supabase
+                const url = await uploadToSupabase(req.file.buffer, req.file.originalname);
+                res.json({ success: true, url });
             }
         } else {
             const ext = path.extname(req.file.originalname);

@@ -810,11 +810,23 @@ async function uploadLargeFileToCDN(file) {
   formData.append('file', file);
   formData.append('upload_preset', UPLOAD_PRESET);
   formData.append('folder', 'xamepage_chat');
-  const response = await fetch('https://api.cloudinary.com/v1_1/' + CLOUD_NAME + '/auto/upload', {
+  formData.append('resource_type', 'raw');
+  // Try raw first, fall back to auto
+  let response = await fetch('https://api.cloudinary.com/v1_1/' + CLOUD_NAME + '/raw/upload', {
     method: 'POST',
     body: formData
   });
-  if (!response.ok) throw new Error('Cloudinary upload failed: ' + response.status);
+  if (!response.ok) {
+    formData.delete('resource_type');
+    response = await fetch('https://api.cloudinary.com/v1_1/' + CLOUD_NAME + '/auto/upload', {
+      method: 'POST',
+      body: formData
+    });
+  }
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error('Upload failed: ' + (errData.error?.message || response.status));
+  }
   const data = await response.json();
   return data.secure_url;
 }
@@ -837,9 +849,8 @@ async function sendFile(file, caption, viewOnce) {
 
   createUploadProgress(msgId, file.name);
 
-  // Use direct Cloudinary upload for all non-media files
-  const isMedia = file.type.startsWith('image/') || file.type.startsWith('video/') || file.type.startsWith('audio/');
-  if (!isMedia) {
+  // All files go through server
+  if (false) {
     try {
       updateUploadProgress(msgId, 10);
       const cdnUrl = await uploadLargeFileToCDN(file);
