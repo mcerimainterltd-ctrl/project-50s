@@ -35,14 +35,26 @@ public class MainActivity extends BridgeActivity {
             public void openFileBase64(String base64Data, String fileName, String mimeType) {
                 try {
                     byte[] bytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT);
-                    java.io.File cacheDir = getCacheDir();
-                    java.io.File file = new java.io.File(cacheDir, fileName);
+                    // Determine XamePage subfolder based on file type
+                    String fn = fileName.toLowerCase();
+                    String subFolder;
+                    if (fn.endsWith(".jpg") || fn.endsWith(".jpeg") || fn.endsWith(".png") || fn.endsWith(".gif") || fn.endsWith(".webp")) {
+                        subFolder = "Media/Images";
+                    } else if (fn.endsWith(".mp4") || fn.endsWith(".mkv") || fn.endsWith(".avi") || fn.endsWith(".webm")) {
+                        subFolder = "Media/Videos";
+                    } else if (fn.endsWith(".mp3") || fn.endsWith(".wav") || fn.endsWith(".ogg") || fn.endsWith(".m4a")) {
+                        subFolder = "Media/Audio";
+                    } else if (fn.endsWith(".apk")) {
+                        subFolder = "APKs";
+                    } else {
+                        subFolder = "Documents";
+                    }
+                    java.io.File xameDir = new java.io.File(android.os.Environment.getExternalStorageDirectory(), "XamePage/" + subFolder);
+                    if (!xameDir.exists()) xameDir.mkdirs();
+                    java.io.File file = new java.io.File(xameDir, fileName);
                     java.io.FileOutputStream fos = new java.io.FileOutputStream(file);
                     fos.write(bytes);
                     fos.close();
-                    android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(
-                        MainActivity.this, getPackageName() + ".fileprovider", file
-                    );
                     String resolvedMime = mimeType;
                     if (resolvedMime == null || resolvedMime.isEmpty() || resolvedMime.equals("application/octet-stream")) {
                         String fn = fileName.toLowerCase();
@@ -58,8 +70,11 @@ public class MainActivity extends BridgeActivity {
                         else resolvedMime = "*/*";
                     }
                     // For APKs, save to Downloads folder
+                    android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(
+                        MainActivity.this, getPackageName() + ".fileprovider", file
+                    );
                     if (resolvedMime.equals("application/vnd.android.package-archive")) {
-                        java.io.File downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS);
+                        java.io.File downloadsDir = xameDir;
                         java.io.File destFile = new java.io.File(downloadsDir, savedFileName);
                         java.io.FileInputStream fis = new java.io.FileInputStream(file);
                         java.io.FileOutputStream fos2 = new java.io.FileOutputStream(destFile);
