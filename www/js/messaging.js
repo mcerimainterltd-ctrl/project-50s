@@ -810,7 +810,7 @@ async function uploadLargeFileToCDN(file) {
   formData.append('file', file);
   formData.append('upload_preset', UPLOAD_PRESET);
   formData.append('folder', 'xamepage_chat');
-  const response = await fetch('https://api.cloudinary.com/v1_1/' + CLOUD_NAME + '/raw/upload', {
+  const response = await fetch('https://api.cloudinary.com/v1_1/' + CLOUD_NAME + '/auto/upload', {
     method: 'POST',
     body: formData
   });
