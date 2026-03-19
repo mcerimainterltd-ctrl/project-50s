@@ -42,7 +42,7 @@ function connectSocket() {
       reconnection:           true,
       reconnectionDelay:      1000,
       reconnectionDelayMax:   5000,
-      reconnectionAttempts:   10,
+      reconnectionAttempts:   Infinity,
       timeout:                20000,
     });
 
@@ -224,6 +224,8 @@ function registerSocketHandlers(socket) {
   socket.on('reconnect_attempt', (attemptNumber) => { console.log(`Reconnection attempt ${attemptNumber}`); showNotification(`Reconnecting... (attempt ${attemptNumber})`); });
 
   socket.on('reconnect', (attemptNumber) => {
+    reconnectAttempts = 0; // Reset counter on successful reconnect
+    if (window._offlineTimer) { clearTimeout(window._offlineTimer); window._offlineTimer = null; }
     console.log(`Reconnected after ${attemptNumber} attempts`);
     showNotification('Reconnected successfully!');
     if (USER?.xameId) {
@@ -301,8 +303,14 @@ function registerSocketHandlers(socket) {
   });
 
   socket.on('disconnect', () => {
-    const contacts = storage.get(KEYS.contacts);
-    if (contacts) { contacts.forEach(c => c.online = false); storage.set(KEYS.contacts, contacts); scheduleRender(() => renderContacts(), 'contacts'); }
+    // Don't immediately mark contacts offline - wait to see if we reconnect quickly
+    if (window._offlineTimer) clearTimeout(window._offlineTimer);
+    window._offlineTimer = setTimeout(() => {
+      if (!socket?.connected) {
+        const contacts = storage.get(KEYS.contacts);
+        if (contacts) { contacts.forEach(c => c.online = false); storage.set(KEYS.contacts, contacts); scheduleRender(() => renderContacts(), 'contacts'); }
+      }
+    }, 10000); // Wait 10 seconds before marking offline
   });
 
   socket.on('online_users', (ids) => {
@@ -411,8 +419,8 @@ function startHeartbeat() {
     if (socket?.connected && USER?.xameId) {
       if (localStorage.getItem('xame:stealth') !== 'true') socket.emit('heartbeat', { userId: USER.xameId, timestamp: Date.now() });
     } else if (!socket?.connected) {
-      console.log('💔 Heartbeat: socket disconnected, attempting reconnect');
-      connectSocket();
+      console.log('💔 Heartbeat: socket disconnected, letting socket.io handle reconnect');
+      // Don't manually reconnect - socket.io handles this automatically
     }
   }, HEARTBEAT_INTERVAL);
   if (socket?.connected && localStorage.getItem('xame:stealth') !== 'true') socket.emit('heartbeat', { userId: USER.xameId, timestamp: Date.now() });
