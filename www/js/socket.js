@@ -170,12 +170,7 @@ function connectSocket() {
         document.getElementById('quickReplyPanel')?.classList.add('hidden');
         showNotification('📵 Missed call from ' + (senderId || 'unknown'));
         if (senderId) {
-          // Log missed call in chat
-          const chat = getChat(senderId);
-          chat.push({ id: Date.now().toString(36), text: '📵 Missed call', type: 'received', ts: Date.now(), status: 'seen', system: true });
-          setChat(senderId, chat);
-          if (ACTIVE_ID === senderId && typeof renderMessages === 'function') renderMessages();
-          // Update call history badge
+          // Only update call history badge, not chat
           if (typeof callHistoryModule !== 'undefined') callHistoryModule.addMissedCall(senderId);
         }
       }
