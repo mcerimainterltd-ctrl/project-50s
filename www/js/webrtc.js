@@ -249,6 +249,7 @@ async function handleAnswer(answer, fromUserId) {
   const userId = fromUserId || (peers.size === 1 ? [...peers.keys()][0] : null);
   const peer   = userId ? peers.get(userId) : null;
   const pc     = peer?.pc || peerConnection;
+  if (!pc) { console.warn('handleAnswer: no peer connection found'); return; }
   try {
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
     for (const candidate of pendingIceCandidates) {
