@@ -131,6 +131,9 @@ async function startCall(recipientId, callType) {
       try { peers.get(recipientId).pc.close(); } catch(_) {}
       peers.delete(recipientId);
     }
+    // Clear stale ICE candidates from previous call
+    pendingIceCandidates = [];
+    peerConnection = null;
     if (!localStream) {
       localStream = await navigator.mediaDevices.getUserMedia({ video: hasVideo, audio: true });
       RESOURCES.localStreams.push(localStream);
