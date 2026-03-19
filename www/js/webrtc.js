@@ -110,7 +110,15 @@ function createPeerConnection(userId) {
 
 function removePeer(userId) {
   const peer = peers.get(userId); if (!peer) return;
-  peer.pc.close(); peer.stream?.getTracks().forEach(t => t.stop());
+  const pc = peer.pc;
+  pc.oniceconnectionstatechange = null;
+  pc.ontrack = null;
+  pc.onicecandidate = null;
+  pc.close();
+  peer.stream?.getTracks().forEach(t => t.stop());
+  // Remove from RESOURCES
+  const idx = RESOURCES.peerConnections.indexOf(pc);
+  if (idx !== -1) RESOURCES.peerConnections.splice(idx, 1);
   peers.delete(userId); updateCallParticipantsUI();
   if (peers.size === 0) exitVideoCall();
 }
@@ -259,7 +267,14 @@ function handleNewIceCandidate(candidate, fromUserId) {
 
 // ── End call ──────────────────────────────────────────────────────────────
 function endCall() {
-  peers.forEach((peer) => { try { peer.pc.close(); } catch(_) {} });
+  peers.forEach((peer) => {
+    try {
+      peer.pc.oniceconnectionstatechange = null;
+      peer.pc.ontrack = null;
+      peer.pc.onicecandidate = null;
+      peer.pc.close();
+    } catch(_) {}
+  });
   peers.clear(); peerConnection = null;
   localStream?.getTracks().forEach(t => t.stop()); localStream = null;
   remoteStream?.getTracks().forEach(t => t.stop()); remoteStream = null;
