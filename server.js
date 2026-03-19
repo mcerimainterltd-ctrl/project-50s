@@ -1045,7 +1045,7 @@ io.on('connection', (socket) => {
                         broadcastOnlineUsers();
                     }
                     disconnectTimeouts.delete(uid);
-                }, 60000);
+                }, 180000); // 3 minute grace period before marking offline
                 disconnectTimeouts.set(uid, t);
             }
         }
