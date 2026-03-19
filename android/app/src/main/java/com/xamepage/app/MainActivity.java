@@ -10,6 +10,9 @@ import android.app.DownloadManager;
 import android.net.Uri;
 import android.webkit.DownloadListener;
 import android.webkit.URLUtil;
+import android.net.ConnectivityManager;
+import android.net.NetworkRequest;
+import android.net.Network;
 import android.webkit.JavascriptInterface;
 import android.os.AsyncTask;
 import java.io.InputStream;
@@ -26,6 +29,25 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(android.os.Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         CallNotificationReceiver.createChannel(this);
+        // Keep app alive with WakeLock
+        android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+        android.os.PowerManager.WakeLock wakeLock = pm.newWakeLock(
+            android.os.PowerManager.PARTIAL_WAKE_LOCK, "xamepage:appwakelock"
+        );
+        wakeLock.acquire();
+        // Monitor network and reconnect WebView when internet restored
+        ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+        cm.registerDefaultNetworkCallback(new ConnectivityManager.NetworkCallback() {
+            @Override
+            public void onAvailable(Network network) {
+                runOnUiThread(() -> {
+                    getBridge().getWebView().evaluateJavascript(
+                        "if(typeof connectSocket==='function' && (!window.socket || !window.socket.connected)) { connectSocket(); }",
+                        null
+                    );
+                });
+            }
+        });
         XameTelecomHelper.registerPhoneAccount(this);
         registerPlugin(FirebaseMessagingPlugin.class);
         // Enable file downloads in WebView
