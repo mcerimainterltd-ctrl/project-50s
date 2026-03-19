@@ -97,9 +97,16 @@ function createPeerConnection(userId) {
   };
   pc.oniceconnectionstatechange = () => {
     console.log('ICE [' + userId + ']: ' + pc.iceConnectionState);
-    if (['failed','disconnected'].includes(pc.iceConnectionState)) {
+    if (pc.iceConnectionState === 'failed') {
       showNotification('Connection lost with ' + (CONTACTS.find(c => c.id === userId)?.name || userId));
       removePeer(userId);
+    } else if (pc.iceConnectionState === 'disconnected') {
+      // Brief disconnection - wait to see if it recovers
+      setTimeout(() => {
+        if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+          removePeer(userId);
+        }
+      }, 3000);
     }
   };
   pc.onicecandidate = (event) => {
