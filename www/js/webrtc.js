@@ -97,16 +97,9 @@ function createPeerConnection(userId) {
   };
   pc.oniceconnectionstatechange = () => {
     console.log('ICE [' + userId + ']: ' + pc.iceConnectionState);
-    if (pc.iceConnectionState === 'failed') {
+    if (['failed','disconnected'].includes(pc.iceConnectionState)) {
       showNotification('Connection lost with ' + (CONTACTS.find(c => c.id === userId)?.name || userId));
       removePeer(userId);
-    } else if (pc.iceConnectionState === 'disconnected') {
-      // Brief disconnection - wait to see if it recovers
-      setTimeout(() => {
-        if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
-          removePeer(userId);
-        }
-      }, 3000);
     }
   };
   pc.onicecandidate = (event) => {
@@ -126,14 +119,6 @@ function removePeer(userId) {
 async function startCall(recipientId, callType) {
   try {
     const hasVideo = callType === 'video';
-    // Clean up any stale peer connection for this recipient
-    if (peers.has(recipientId)) {
-      try { peers.get(recipientId).pc.close(); } catch(_) {}
-      peers.delete(recipientId);
-    }
-    // Clear stale ICE candidates from previous call
-    pendingIceCandidates = [];
-    peerConnection = null;
     if (!localStream) {
       localStream = await navigator.mediaDevices.getUserMedia({ video: hasVideo, audio: true });
       RESOURCES.localStreams.push(localStream);
@@ -249,7 +234,6 @@ async function handleAnswer(answer, fromUserId) {
   const userId = fromUserId || (peers.size === 1 ? [...peers.keys()][0] : null);
   const peer   = userId ? peers.get(userId) : null;
   const pc     = peer?.pc || peerConnection;
-  if (!pc) { console.warn('handleAnswer: no peer connection found'); return; }
   try {
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
     for (const candidate of pendingIceCandidates) {
