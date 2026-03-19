@@ -66,7 +66,7 @@ const callHistoryModule = (() => {
       const contact    = CONTACTS?.find(c => c.id === contactId);
       const name       = call.callerName || contact?.name || contactId;
       const initials   = name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2);
-      const icon       = call.status === 'missed' ? '📵' : isIncoming ? '📲' : '📤';
+      const icon = isMissed ? '📵' : isDeclined ? '❌' : isDeclinedByMe ? '🚫' : isIncoming ? '📲' : '📤';
       const callIcon   = call.callType === 'video' ? '📹' : '🎙️';
       const timeStr    = _formatCallTime(call.startTime);
       const isMissed   = call.status === 'missed';
@@ -75,7 +75,7 @@ const callHistoryModule = (() => {
           <div class="call-history-avatar">${initials}</div>
           <div class="call-history-info">
             <div class="call-history-name">${escapeHtml(name)}</div>
-            <div class="call-history-meta">${icon} ${isMissed ? 'Missed' : isIncoming ? 'Incoming' : 'Outgoing'} ${callIcon} · ${timeStr}</div>
+            <div class="call-history-meta">${icon} ${isMissed ? 'Missed' : isDeclined ? 'Declined' : isDeclinedByMe ? 'Declined by me' : isIncoming ? 'Incoming' : 'Outgoing'} ${callIcon} · ${timeStr}</div>
           </div>
           <div class="call-history-action" data-call-contact="${contactId}" data-call-type="${call.callType || 'voice'}" title="Call back">📞</div>
         </div>`;
