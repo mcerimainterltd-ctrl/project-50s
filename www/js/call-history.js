@@ -75,7 +75,7 @@ const callHistoryModule = (() => {
           <div class="call-history-avatar">${initials}</div>
           <div class="call-history-info">
             <div class="call-history-name">${escapeHtml(name)}</div>
-            <div class="call-history-meta">${icon} ${isMissed ? 'Missed' : isDeclined ? 'Declined' : isDeclinedByMe ? 'Declined by me' : isIncoming ? 'Incoming' : 'Outgoing'} ${callIcon} · ${timeStr}</div>
+            <div class="call-history-meta">${icon} ${isMissed ? 'Missed' : isDeclined ? 'Declined' : isDeclinedByMe ? 'Declined by me' : isOffline ? 'Offline' : isIncoming ? 'Incoming' : 'Outgoing'} ${callIcon} · ${timeStr}</div>
           </div>
           <div class="call-history-action" data-call-contact="${contactId}" data-call-type="${call.callType || 'voice'}" title="Call back">📞</div>
         </div>`;

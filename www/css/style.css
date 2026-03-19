@@ -3735,6 +3735,7 @@ body.input-focused #chat { height: 100vh; height: 100dvh; }
 .call-history-action { font-size: 20px; cursor: pointer; padding: 4px; }
 .call-missed .call-history-name { color: #e53935; }
 .call-declined .call-history-name { color: #ff9800; }
+.call-offline .call-history-name { color: #9e9e9e; }
 
 .forwarded-label {
   font-size: 11px;

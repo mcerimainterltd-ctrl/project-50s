@@ -256,7 +256,7 @@ const callHistorySchema = new mongoose.Schema({
     endTime:     { type: Date },
     status: {
         type: String, required: true,
-        enum: ['pending', 'accepted', 'rejected', 'ended', 'missed']
+        enum: ['pending', 'accepted', 'rejected', 'ended', 'missed', 'offline']
     }
 }, { timestamps: true });
 
@@ -1538,7 +1538,7 @@ io.on('connection', (socket) => {
             }
         } else {
             try {
-                await new CallHistory({ callId: uuidv4(), callerId, recipientId, callType, status: 'missed' }).save();
+                await new CallHistory({ callId: uuidv4(), callerId, recipientId, callType, status: 'offline' }).save();
                 socket.emit('call-rejected', { senderId: recipientId, reason: 'offline' });
             } catch (err) {
                 console.error('Missed call record error:', err);
