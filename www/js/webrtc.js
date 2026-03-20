@@ -132,6 +132,7 @@ async function startCall(recipientId, callType) {
       RESOURCES.localStreams.push(localStream);
     }
     // Set earpiece BEFORE any audio plays
+    isLoudspeakerOn = false;
     if (window.AndroidBridge?.setCallAudioMode) window.AndroidBridge.setCallAudioMode(true);
     playOutgoingRing();
     videoCallOverlay.classList.remove('hidden');
@@ -147,6 +148,10 @@ async function startCall(recipientId, callType) {
     await pc.setLocalDescription(offer);
     socket?.emit('call-user', { recipientId, offer, callType });
     callActive = true; showCallControls();
+    // Update speaker button to show earpiece state
+    if (typeof loudSpeakerBtn !== 'undefined' && loudSpeakerBtn) loudSpeakerBtn.textContent = '🔈';
+    // Update speaker button to show earpiece state
+    if (typeof loudSpeakerBtn !== 'undefined' && loudSpeakerBtn) loudSpeakerBtn.textContent = '🔈';
   // Auto-timeout if unanswered after 60 seconds
   if (window._callTimeouts) window._callTimeouts.forEach(t => clearTimeout(t));
   window._callTimeouts = [];
@@ -208,6 +213,7 @@ async function handleIncomingCall(offer, callerId) {
       RESOURCES.localStreams.push(localStream);
     }
     // Set earpiece BEFORE audio plays on incoming call answer
+    isLoudspeakerOn = false;
     if (window.AndroidBridge?.setCallAudioMode) window.AndroidBridge.setCallAudioMode(true);
     videoCallOverlay.classList.remove('hidden');
     elChatHeader.classList.add('hidden'); composer.classList.add('hidden');
