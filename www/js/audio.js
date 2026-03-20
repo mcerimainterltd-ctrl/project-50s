@@ -39,7 +39,7 @@ function playSound(type, loop = false) {
     audio.loop        = loop;
     // Set reasonable volume for ringtones
     const savedVol = persistentStorage.get('xame:tone:' + type + ':volume');
-    audio.volume = savedVol !== null ? savedVol : (type === 'incomingCall' || type === 'outgoingCall') ? 0.5 : 0.7;
+    audio.volume = (savedVol !== null && savedVol !== undefined) ? Number(savedVol) : (type === 'incomingCall' || type === 'outgoingCall') ? 0.5 : 0.7;
     const p = audio.play();
     if (p !== undefined) p.catch(err => console.warn('Audio blocked (user interaction required):', err));
   } catch (e) {
