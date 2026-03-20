@@ -59,8 +59,28 @@ public class MainActivity extends BridgeActivity {
             public void setSpeaker(boolean on) {
                 runOnUiThread(() -> {
                     AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
-                    if (am != null) {
-                        am.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                    if (am == null) return;
+                    am.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                        // Android 12+ - use setCommunicationDevice
+                        if (on) {
+                            android.media.AudioDeviceInfo[] devices = am.getAvailableCommunicationDevices().toArray(new android.media.AudioDeviceInfo[0]);
+                            for (android.media.AudioDeviceInfo device : devices) {
+                                if (device.getType() == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) {
+                                    am.setCommunicationDevice(device);
+                                    break;
+                                }
+                            }
+                        } else {
+                            android.media.AudioDeviceInfo[] devices = am.getAvailableCommunicationDevices().toArray(new android.media.AudioDeviceInfo[0]);
+                            for (android.media.AudioDeviceInfo device : devices) {
+                                if (device.getType() == android.media.AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) {
+                                    am.setCommunicationDevice(device);
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
                         am.setSpeakerphoneOn(on);
                     }
                 });
@@ -72,7 +92,17 @@ public class MainActivity extends BridgeActivity {
                     AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
                     if (am != null) {
                         if (inCall) {
-                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                                // Android 12+ - route to earpiece
+                                android.media.AudioDeviceInfo[] devices = am.getAvailableCommunicationDevices().toArray(new android.media.AudioDeviceInfo[0]);
+                                for (android.media.AudioDeviceInfo device : devices) {
+                                    if (device.getType() == android.media.AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) {
+                                        am.setCommunicationDevice(device);
+                                        break;
+                                    }
+                                }
+                            }
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O && android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) {
                                 android.media.AudioFocusRequest focusRequest = new android.media.AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                                     .setAudioAttributes(new android.media.AudioAttributes.Builder()
                                         .setUsage(android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION)
