@@ -83,6 +83,11 @@ function cleanUrl(url) {
 
 function addCacheBuster(url) {
   if (!url) return url;
+  // Don't add cache busters to Cloudinary or Supabase URLs - they are already versioned
+  // and cache busters prevent service worker from serving cached images offline
+  if (url.includes('cloudinary.com') || url.includes('supabase.co') || url.includes('res.cloudinary')) {
+    return url;
+  }
   try {
     const clean = cleanUrl(url);
     return `${clean}${clean.includes('?') ? '&' : '?'}ts=${Date.now()}`;
