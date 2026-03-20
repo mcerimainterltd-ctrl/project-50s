@@ -145,6 +145,8 @@ async function startCall(recipientId, callType) {
     await pc.setLocalDescription(offer);
     socket?.emit('call-user', { recipientId, offer, callType });
     callActive = true; showCallControls();
+    // Switch to call audio mode (earpiece)
+    if (window.AndroidBridge?.setCallAudioMode) window.AndroidBridge.setCallAudioMode(true);
   // Auto-timeout if unanswered after 60 seconds
   if (window._callTimeouts) window._callTimeouts.forEach(t => clearTimeout(t));
   window._callTimeouts = [];
@@ -287,6 +289,8 @@ function endCall() {
   if (audioCtx) { try { audioCtx.close(); } catch(_) {} audioCtx = null; mergedDest = null; }
   isAudioMuted = false; isVideoMuted = false; isLoudspeakerOn = false;
   callActive = false; holdUserId = null;
+  // Reset to normal audio mode
+  if (window.AndroidBridge?.setCallAudioMode) window.AndroidBridge.setCallAudioMode(false);
 }
 
 function exitVideoCall() {
@@ -451,7 +455,10 @@ cameraMuteBtn?.addEventListener('click', () => {
 });
 loudSpeakerBtn?.addEventListener('click', () => {
   isLoudspeakerOn = !isLoudspeakerOn;
-  if (remoteVideo) remoteVideo.muted = !isLoudspeakerOn;
+  // Use native bridge to switch between earpiece and speaker
+  if (window.AndroidBridge && window.AndroidBridge.setSpeaker) {
+    window.AndroidBridge.setSpeaker(isLoudspeakerOn);
+  }
   loudSpeakerBtn.textContent = isLoudspeakerOn ? '🔊' : '🔈';
 });
 

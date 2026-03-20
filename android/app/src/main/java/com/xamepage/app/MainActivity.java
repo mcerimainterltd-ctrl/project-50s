@@ -11,6 +11,7 @@ import android.net.Uri;
 import android.webkit.DownloadListener;
 import android.webkit.URLUtil;
 import android.net.ConnectivityManager;
+import android.media.AudioManager;
 import android.net.NetworkRequest;
 import android.net.Network;
 import android.webkit.JavascriptInterface;
@@ -29,6 +30,12 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(android.os.Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         CallNotificationReceiver.createChannel(this);
+        // Set audio to earpiece by default (not speaker)
+        AudioManager audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
+        if (audioManager != null) {
+            audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+            audioManager.setSpeakerphoneOn(false);
+        }
         // Keep app alive with WakeLock
         android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
         android.os.PowerManager.WakeLock wakeLock = pm.newWakeLock(
@@ -53,6 +60,28 @@ public class MainActivity extends BridgeActivity {
         // Enable file downloads in WebView
         // Add JavaScript interface for native file opening
         getBridge().getWebView().addJavascriptInterface(new Object() {
+            @JavascriptInterface
+            public void setSpeaker(boolean on) {
+                AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
+                if (am != null) {
+                    am.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                    am.setSpeakerphoneOn(on);
+                }
+            }
+
+            @JavascriptInterface
+            public void setCallAudioMode(boolean inCall) {
+                AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
+                if (am != null) {
+                    if (inCall) {
+                        am.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                        am.setSpeakerphoneOn(false);
+                    } else {
+                        am.setMode(AudioManager.MODE_NORMAL);
+                        am.setSpeakerphoneOn(false);
+                    }
+                }
+            }
             @JavascriptInterface
             public void openFileBase64(String base64Data, String fileName, String mimeType) {
                 try {

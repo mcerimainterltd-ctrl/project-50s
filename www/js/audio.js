@@ -37,6 +37,8 @@ function playSound(type, loop = false) {
     if (!audio) { console.warn(`Audio element not found: ${type}`); return; }
     audio.currentTime = 0;
     audio.loop        = loop;
+    // Set reasonable volume for ringtones
+    audio.volume = (type === 'incomingCall' || type === 'outgoingCall') ? 0.5 : 0.7;
     const p = audio.play();
     if (p !== undefined) p.catch(err => console.warn('Audio blocked (user interaction required):', err));
   } catch (e) {
