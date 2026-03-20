@@ -911,7 +911,7 @@ app.post('/api/update-profile', memoryUpload.single('profilePic'), async (req, r
             io.emit('profile-updated', {
                 userId,
                 profilePic:         user.hideProfilePicture ? '' : user.profilePic,
-                preferredName:      user.hidePreferredName  ? '' : user.preferredName,
+                preferredName:      user.hidePreferredName  ? userId : user.preferredName,
                 hideProfilePicture: user.hideProfilePicture,
                 hidePreferredName:  user.hidePreferredName
             });

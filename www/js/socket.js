@@ -185,7 +185,8 @@ function connectSocket() {
       const idx = contacts.findIndex(c => c.id === userId);
       if (idx !== -1) {
         if (profilePic !== undefined) contacts[idx].profilePic = profilePic;
-        if (preferredName !== undefined) contacts[idx].name = preferredName;
+        if (preferredName !== undefined && preferredName !== '') contacts[idx].name = preferredName;
+        else if (preferredName === '') contacts[idx].name = userId;
         if (hideProfilePicture !== undefined) contacts[idx].isProfilePicHidden = hideProfilePicture;
         if (hidePreferredName !== undefined) contacts[idx].isNameHidden = hidePreferredName;
         storage.set(KEYS.contacts, contacts);
