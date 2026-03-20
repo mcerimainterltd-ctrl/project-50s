@@ -260,10 +260,21 @@ const RINGTONE_TEMPLATES = [
   { id: 'custom',  label: '+ Upload', custom: true },
 ];
 
-function playRingtoneTemplate(toneId, direction) {
+function playRingtoneTemplate(toneId, direction, type) {
   try {
     const tmpl = RINGTONE_TEMPLATES.find(t => t.id === toneId);
-    if (tmpl && tmpl.gen) { const ctx = new (window.AudioContext || window.webkitAudioContext)(); tmpl.gen(ctx, direction === 'outgoing'); }
+    if (tmpl && tmpl.gen) {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const masterGain = ctx.createGain();
+      const savedVol = persistentStorage.get('xame:tone:' + (type || (direction === 'outgoing' ? 'outgoingCall' : 'incomingCall')) + ':volume');
+      masterGain.gain.value = (savedVol !== null && savedVol !== undefined) ? Number(savedVol) * 2 : 1.0;
+      masterGain.connect(ctx.destination);
+      // Temporarily override destination so all template nodes connect through master gain
+      const origDest = ctx.destination;
+      Object.defineProperty(ctx, 'destination', { get: () => masterGain, configurable: true });
+      tmpl.gen(ctx, direction === 'outgoing');
+      Object.defineProperty(ctx, 'destination', { get: () => origDest, configurable: true });
+    }
   } catch(e) { console.warn('Ringtone play error:', e); }
 }
 
