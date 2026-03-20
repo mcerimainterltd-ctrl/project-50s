@@ -78,7 +78,7 @@ function contactRow(c) {
   const unreadClass = unreadCount > 0 ? '' : 'hidden';
 
   let avatarContent = c.profilePic && !c.isProfilePicHidden
-? `<img class="profile-pic clickable-profile-pic" src="${escapeHtml(profilePicUrl)}" alt="${escapeHtml(c.name || 'User')} profile picture" loading="lazy"  style="cursor:pointer"/>`
+? `<img class="profile-pic" src="${escapeHtml(profilePicUrl)}" alt="${escapeHtml(c.name || 'User')} profile picture" loading="lazy" onclick="openImageFullscreen('${escapeHtml(profilePicUrl)}', '${escapeHtml(c.name || 'User')}')" style="cursor:pointer"/>`
     : `<div class="profile-placeholder"><span>${escapeHtml(initialsOf(c))}</span></div>`;
 
   div.innerHTML = `
@@ -106,17 +106,7 @@ function contactRow(c) {
 function renderContacts(filter = '') {
   if (elContacts) elContacts.classList.remove('hidden');
   if (elChat)     elChat.classList.add('hidden');
-  if (contactList) {
-    contactList.style.display = 'block';
-    // Profile pic click handler - opens fullscreen, stops row click
-    contactList.addEventListener('click', (e) => {
-      if (e.target.classList.contains('clickable-profile-pic') && e.target.src) {
-        e.stopPropagation();
-        const name = e.target.alt.replace(' profile picture', '');
-        openImageFullscreen(e.target.src, name);
-      }
-    }, true);
-  }
+  if (contactList) contactList.style.display = 'block';
 
   let list = CONTACTS;
   if (filter) {
@@ -147,7 +137,7 @@ function renderContacts(filter = '') {
     const isSelfOnline     = selfContact.online || false;
 
     let selfAvatarContent = selfContact.profilePic
-      ? `<img class="profile-pic clickable-profile-pic" src="${escapeHtml(addCacheBuster(selfContact.profilePic))}" alt="Your profile picture" loading="lazy"  style="cursor:pointer"/>`
+      ? `<img class="profile-pic" src="${escapeHtml(addCacheBuster(selfContact.profilePic))}" alt="Your profile picture" loading="lazy" onclick="openImageFullscreen('${escapeHtml(addCacheBuster(selfContact.profilePic))}', '${escapeHtml(selfContact.name)}')" style="cursor:pointer"/>`
       : `<div class="profile-placeholder"><span>${escapeHtml(initialsOf(selfContact))}</span></div>`;
 
     selfRow.innerHTML = `
@@ -232,7 +222,7 @@ function openChat(id) {
     : addCacheBuster(c.profilePic);
 
   const chatAvatarContent = (c.profilePic && !c.isProfilePicHidden)
-    ? `<img class="profile-pic clickable-profile-pic" src="${escapeHtml(profilePicUrl)}" alt="${escapeHtml(c.name)} profile picture" loading="lazy"  style="cursor:pointer"/>`
+    ? `<img class="profile-pic" src="${escapeHtml(profilePicUrl)}" alt="${escapeHtml(c.name)} profile picture" loading="lazy" onclick="openImageFullscreen('${escapeHtml(profilePicUrl)}', '${escapeHtml(c.name)}')" style="cursor:pointer"/>`
     : `<div class="profile-placeholder"><span>${escapeHtml(initialsOf(c))}</span></div>`;
 
   elChatHeader.innerHTML = `
