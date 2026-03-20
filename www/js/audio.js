@@ -94,6 +94,8 @@ function playCallRing() {
 }
 function playOutgoingRing() {
   if (!FEEDBACK.soundEnabled) return;
+  // Route outgoing ring through earpiece
+  if (window.AndroidBridge?.setCallAudioMode) window.AndroidBridge.setCallAudioMode(true);
   const toneId = getActiveTone('outgoingCall');
   const customUrl = persistentStorage.get('xame:tone:outgoingCall:custom');
   if (toneId === 'default') { playSound('outgoingCall', true); return; }
@@ -109,6 +111,7 @@ function stopCallRing() {
 function stopOutgoingRing() {
   stopSound('outgoingCall');
   if (window._outgoingRingInterval) { clearInterval(window._outgoingRingInterval); window._outgoingRingInterval = null; }
+  if (!window.callActive && window.AndroidBridge?.setCallAudioMode) window.AndroidBridge.setCallAudioMode(false);
 }
 
 // ── Unified notification with sound + vibration ───────────────────────────
