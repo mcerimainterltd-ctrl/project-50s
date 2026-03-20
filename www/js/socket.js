@@ -179,6 +179,25 @@ function connectSocket() {
       }
     });
 
+    socket.on('profile-updated', ({ userId, profilePic, preferredName }) => {
+      // Update contact in memory and storage
+      const contacts = storage.get(KEYS.contacts) || [];
+      const idx = contacts.findIndex(c => c.id === userId);
+      if (idx !== -1) {
+        if (profilePic !== undefined) contacts[idx].profilePic = profilePic;
+        if (preferredName !== undefined && preferredName) contacts[idx].name = preferredName;
+        storage.set(KEYS.contacts, contacts);
+        CONTACTS = contacts;
+        scheduleRender(() => renderContacts(), 'contacts');
+      }
+      // Update USER if it's the current user
+      if (userId === USER?.xameId) {
+        if (profilePic !== undefined) USER.profilePic = profilePic;
+        if (preferredName !== undefined && preferredName) USER.preferredName = preferredName;
+        storage.set(KEYS.user, USER);
+      }
+    });
+
     console.log('✅ Socket event handlers registered for:', USER.xameId);
     document.dispatchEvent(new CustomEvent('xame:socket-ready'));
 
