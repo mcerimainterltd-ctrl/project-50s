@@ -1,4 +1,4 @@
-const CACHE_NAME = "xamepage-v2.1-v21"; // Renamed cache for a new version
+const CACHE_NAME = "xamepage-v2.1-v1773970835921"; // Renamed cache for a new version
 const urlsToCache = [
   "./",
   "index.html",
@@ -30,7 +30,7 @@ self.addEventListener("activate", event => {
   );
 });
 
-const IMAGE_CACHE = 'xamepage-images-v1';
+const IMAGE_CACHE = 'xamepage-images-v1773970835921';
 
 // Serve from cache, fallback to network, then to offline page
 self.addEventListener("fetch", event => {
