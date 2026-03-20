@@ -30,12 +30,7 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(android.os.Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         CallNotificationReceiver.createChannel(this);
-        // Set audio to earpiece by default (not speaker)
-        AudioManager audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
-        if (audioManager != null) {
-            audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
-            audioManager.setSpeakerphoneOn(false);
-        }
+
         // Keep app alive with WakeLock
         android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
         android.os.PowerManager.WakeLock wakeLock = pm.newWakeLock(
