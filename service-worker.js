@@ -25,14 +25,32 @@ self.addEventListener("install", event => {
 self.addEventListener("activate", event => {
   event.waitUntil(
     caches.keys().then(names =>
-      Promise.all(names.map(name => name !== CACHE_NAME && caches.delete(name)))
+      Promise.all(names.map(name => name !== CACHE_NAME && name !== IMAGE_CACHE && caches.delete(name)))
     )
   );
 });
 
+const IMAGE_CACHE = 'xamepage-images-v1';
+
 // Serve from cache, fallback to network, then to offline page
 self.addEventListener("fetch", event => {
   const url = event.request.url;
+
+  // Cache profile pictures and media from Cloudinary and Supabase
+  if (url.includes('cloudinary.com') || url.includes('supabase.co') || url.includes('res.cloudinary')) {
+    event.respondWith(
+      caches.open(IMAGE_CACHE).then(cache =>
+        cache.match(event.request).then(cached => {
+          if (cached) return cached;
+          return fetch(event.request).then(response => {
+            if (response.ok) cache.put(event.request, response.clone());
+            return response;
+          }).catch(() => cached || new Response('', { status: 503 }));
+        })
+      )
+    );
+    return;
+  }
 
   // Never intercept API calls - always go to network
   if (url.includes('/api/')) {
