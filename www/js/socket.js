@@ -179,13 +179,15 @@ function connectSocket() {
       }
     });
 
-    socket.on('profile-updated', ({ userId, profilePic, preferredName }) => {
+    socket.on('profile-updated', ({ userId, profilePic, preferredName, hideProfilePicture, hidePreferredName }) => {
       // Update contact in memory and storage
       const contacts = storage.get(KEYS.contacts) || [];
       const idx = contacts.findIndex(c => c.id === userId);
       if (idx !== -1) {
         if (profilePic !== undefined) contacts[idx].profilePic = profilePic;
-        if (preferredName !== undefined && preferredName) contacts[idx].name = preferredName;
+        if (preferredName !== undefined) contacts[idx].name = preferredName;
+        if (hideProfilePicture !== undefined) contacts[idx].isProfilePicHidden = hideProfilePicture;
+        if (hidePreferredName !== undefined) contacts[idx].isNameHidden = hidePreferredName;
         storage.set(KEYS.contacts, contacts);
         CONTACTS = contacts;
         scheduleRender(() => renderContacts(), 'contacts');
@@ -193,7 +195,9 @@ function connectSocket() {
       // Update USER if it's the current user
       if (userId === USER?.xameId) {
         if (profilePic !== undefined) USER.profilePic = profilePic;
-        if (preferredName !== undefined && preferredName) USER.preferredName = preferredName;
+        if (preferredName !== undefined) USER.preferredName = preferredName;
+        if (hideProfilePicture !== undefined) USER.hideProfilePicture = hideProfilePicture;
+        if (hidePreferredName !== undefined) USER.hidePreferredName = hidePreferredName;
         storage.set(KEYS.user, USER);
       }
     });

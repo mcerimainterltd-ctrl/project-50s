@@ -105,8 +105,8 @@ function uploadToCloudinary(buffer, userId) {
         const stream = cloudinary.uploader.upload_stream(
             {
                 folder:    'xamepage/profile_pics',
-                public_id: `user_${userId}`,
-                overwrite: true,
+                public_id: `user_${userId}_${Date.now()}`,
+                overwrite: false,
                 transformation: [{ width: 256, height: 256, crop: 'fill', gravity: 'face' }],
                 format: 'jpg'
             },
@@ -910,8 +910,10 @@ app.post('/api/update-profile', memoryUpload.single('profilePic'), async (req, r
         if (socketId) {
             io.emit('profile-updated', {
                 userId,
-                profilePic:    user.profilePic,
-                preferredName: user.hidePreferredName ? '' : user.preferredName
+                profilePic:         user.hideProfilePicture ? '' : user.profilePic,
+                preferredName:      user.hidePreferredName  ? '' : user.preferredName,
+                hideProfilePicture: user.hideProfilePicture,
+                hidePreferredName:  user.hidePreferredName
             });
         }
 
