@@ -156,7 +156,8 @@ async function startCall(recipientId, callType) {
   // Auto-timeout if unanswered after 60 seconds
   } catch (err) {
     console.error('Call error:', err.name, err.message);
-    showNotification('Call failed: ' + (err.name || err.message || String(err))); exitVideoCall();
+    alert('Call error: ' + (err.name || err.message || String(err)));
+    exitVideoCall();
   }
 }
 
