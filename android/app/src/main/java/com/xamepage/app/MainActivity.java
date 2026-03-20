@@ -57,25 +57,41 @@ public class MainActivity extends BridgeActivity {
         getBridge().getWebView().addJavascriptInterface(new Object() {
             @JavascriptInterface
             public void setSpeaker(boolean on) {
-                AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
-                if (am != null) {
-                    am.setMode(AudioManager.MODE_IN_COMMUNICATION);
-                    am.setSpeakerphoneOn(on);
-                }
+                runOnUiThread(() -> {
+                    AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
+                    if (am != null) {
+                        am.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                        am.setSpeakerphoneOn(on);
+                    }
+                });
             }
 
             @JavascriptInterface
             public void setCallAudioMode(boolean inCall) {
-                AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
-                if (am != null) {
-                    if (inCall) {
-                        am.setMode(AudioManager.MODE_IN_COMMUNICATION);
-                        am.setSpeakerphoneOn(false);
-                    } else {
-                        am.setMode(AudioManager.MODE_NORMAL);
-                        am.setSpeakerphoneOn(false);
+                runOnUiThread(() -> {
+                    AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
+                    if (am != null) {
+                        if (inCall) {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                                android.media.AudioFocusRequest focusRequest = new android.media.AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                                    .setAudioAttributes(new android.media.AudioAttributes.Builder()
+                                        .setUsage(android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                                        .build())
+                                    .build();
+                                am.requestAudioFocus(focusRequest);
+                            }
+                            am.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                            am.setSpeakerphoneOn(false);
+                        } else {
+                            am.setMode(AudioManager.MODE_NORMAL);
+                            am.setSpeakerphoneOn(false);
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                                am.abandonAudioFocusRequest(new android.media.AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN).build());
+                            }
+                        }
                     }
-                }
+                });
             }
             @JavascriptInterface
             public void openFileBase64(String base64Data, String fileName, String mimeType) {
