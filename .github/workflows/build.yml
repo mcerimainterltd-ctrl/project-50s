@@ -25,6 +25,9 @@ jobs:
       - name: Install dependencies
         run: npm install && npm install @capacitor/android @capacitor/core @capacitor/cli @capacitor/splash-screen @capacitor-firebase/messaging @capacitor/filesystem @capacitor/share
 
+      - name: Update service worker cache version
+        run: node -e "const fs=require('fs');let c=fs.readFileSync('service-worker.js','utf8');const v=Date.now();c=c.replace(/xamepage-v2\.1-v\d+/g,'xamepage-v2.1-v'+v).replace(/xamepage-images-v\d+/g,'xamepage-images-v'+v);fs.writeFileSync('service-worker.js',c);"
+
       - name: Sync Capacitor
         run: npx @capacitor/cli sync android
 
