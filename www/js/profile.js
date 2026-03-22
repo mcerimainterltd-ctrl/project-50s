@@ -295,8 +295,12 @@ async function showActiveSessions() {
     const res = await fetch(`/api/sessions/${USER.xameId}`);
     const data = await res.json();
     const list = dlg.querySelector('#sessionsList');
-    if (!data.success || !data.sessions.length) {
-      list.innerHTML = '<p style="color:#aaa;text-align:center;">No active sessions found.</p>';
+    if (!data.success) {
+      list.innerHTML = '<p style="color:#e53935;text-align:center;">Failed to load sessions.</p>';
+      return;
+    }
+    if (!data.sessions.length) {
+      list.innerHTML = '<p style="color:#aaa;text-align:center;">No active sessions yet.<br><small style="color:#666;margin-top:6px;display:block;">Log out and log back in to register this device.</small></p>';
       return;
     }
     list.innerHTML = data.sessions.map(s => {
