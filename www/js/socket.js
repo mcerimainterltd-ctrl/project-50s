@@ -203,6 +203,16 @@ function connectSocket() {
       }
     });
 
+    socket.on('force-logout', ({ reason }) => {
+      // Clear all local data and force back to login
+      persistentStorage.set('xame:sessionToken', null);
+      persistentStorage.set(KEYS.user, null);
+      persistentStorage.set(KEYS.contacts, null);
+      storage.clear();
+      alert('Security alert: ' + (reason || 'You have been logged out remotely.'));
+      window.location.reload();
+    });
+
     console.log('✅ Socket event handlers registered for:', USER.xameId);
     document.dispatchEvent(new CustomEvent('xame:socket-ready'));
 

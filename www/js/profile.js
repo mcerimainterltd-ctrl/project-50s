@@ -261,3 +261,92 @@ function _applyStatusUI(type, emoji, message) {
 
 // Init when profile section is shown
 document.addEventListener('xame:profile-opened', initPersonalStatus);
+
+
+// ── Active Sessions Management ────────────────────────────────────────────
+async function showActiveSessions() {
+  const existing = document.getElementById('sessionsDialog');
+  if (existing) existing.remove();
+
+  const dlg = document.createElement('div');
+  dlg.id = 'sessionsDialog';
+  dlg.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  dlg.innerHTML = `
+    <div style="background:var(--bg-secondary,#1a2332);border-radius:20px 20px 0 0;width:100%;max-width:500px;padding:24px;max-height:80vh;overflow-y:auto;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+        <h3 style="font-size:17px;font-weight:700;color:var(--text-primary,#fff)">🔐 Active Sessions</h3>
+        <button id="closeSessionsDlg" style="background:none;border:none;color:#aaa;font-size:22px;cursor:pointer;">✕</button>
+      </div>
+      <div id="sessionsList" style="display:flex;flex-direction:column;gap:12px;">
+        <p style="color:#aaa;text-align:center;">Loading sessions...</p>
+      </div>
+      <button id="killAllSessions" style="margin-top:20px;width:100%;padding:14px;background:#e53935;border:none;border-radius:12px;color:#fff;font-size:15px;font-weight:700;cursor:pointer;">
+        🚨 Log Out All Other Devices
+      </button>
+    </div>
+  `;
+  document.body.appendChild(dlg);
+
+  dlg.querySelector('#closeSessionsDlg').onclick = () => dlg.remove();
+  dlg.addEventListener('click', e => { if (e.target === dlg) dlg.remove(); });
+
+  // Load sessions
+  try {
+    const res = await fetch(`/api/sessions/${USER.xameId}`);
+    const data = await res.json();
+    const list = dlg.querySelector('#sessionsList');
+    if (!data.success || !data.sessions.length) {
+      list.innerHTML = '<p style="color:#aaa;text-align:center;">No active sessions found.</p>';
+      return;
+    }
+    list.innerHTML = data.sessions.map(s => {
+      const date = new Date(s.createdAt).toLocaleDateString();
+      const device = s.deviceInfo.length > 60 ? s.deviceInfo.substring(0, 60) + '...' : s.deviceInfo;
+      return `
+        <div style="background:rgba(255,255,255,0.05);border-radius:12px;padding:16px;border:1px solid rgba(255,255,255,0.08);">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+            <div>
+              <div style="font-size:13px;color:#fff;font-weight:600;margin-bottom:4px;">📱 ${device}</div>
+              <div style="font-size:11px;color:#aaa;">Logged in: ${date}</div>
+            </div>
+            <button class="kill-session-btn" data-id="${s.id}"
+              style="background:rgba(229,57,53,0.15);border:1px solid rgba(229,57,53,0.4);color:#e53935;padding:6px 12px;border-radius:8px;font-size:12px;cursor:pointer;white-space:nowrap;">
+              Log Out
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // Kill individual session
+    list.querySelectorAll('.kill-session-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        btn.textContent = '...';
+        const r = await fetch('/api/sessions/kill', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: USER.xameId, sessionId: btn.dataset.id })
+        });
+        const d = await r.json();
+        if (d.success) { showNotification('Device logged out.'); showActiveSessions(); }
+        else showNotification('Failed to log out device.');
+      });
+    });
+  } catch(e) {
+    dlg.querySelector('#sessionsList').innerHTML = '<p style="color:#e53935;text-align:center;">Failed to load sessions.</p>';
+  }
+
+  // Kill all other sessions
+  dlg.querySelector('#killAllSessions').addEventListener('click', async () => {
+    if (!confirm('This will log out ALL other devices immediately. Continue?')) return;
+    const token = persistentStorage.get('xame:sessionToken');
+    const r = await fetch('/api/sessions/kill-all', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: USER.xameId, keepToken: token })
+    });
+    const d = await r.json();
+    if (d.success) { showNotification('All other devices logged out.'); dlg.remove(); }
+    else showNotification('Failed. Please try again.');
+  });
+}

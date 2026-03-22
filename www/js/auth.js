@@ -193,6 +193,7 @@ function renderPasswordSetupDialog(userData) {
       });
       const data = await response.json();
       if (data.success) {
+          if (data.sessionToken) persistentStorage.set('xame:sessionToken', data.sessionToken);
         feedbackEl.textContent = '✅ Password set successfully!'; feedbackEl.style.color = '#28a745';
         setTimeout(() => {
           closeDialog(); show(elLogin);

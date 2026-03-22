@@ -209,6 +209,12 @@ const userSchema = new mongoose.Schema({
     // v2.1.1: per-user settings stored server-side for cross-device sync
     settings:           { type: Object, default: {} },
     fcmToken:           { type: String, default: '' },
+    sessions:           [{
+        token:     { type: String, required: true },
+        deviceInfo:{ type: String, default: 'Unknown device' },
+        createdAt: { type: Date, default: Date.now },
+        lastSeen:  { type: Date, default: Date.now }
+    }],
     createdAt:          { type: Date, default: Date.now }
 });
 
@@ -618,16 +624,76 @@ app.post('/api/login', async (req, res) => {
             return res.status(401).json({ success: false, message: 'Invalid password.' });
 
         console.log(`✅ Login: ${xameId}`);
+        // Generate session token
+        const sessionToken = crypto.randomBytes(32).toString('hex');
+        const deviceInfo = req.headers['user-agent'] || 'Unknown device';
+        user.sessions = user.sessions || [];
+        // Keep max 5 sessions
+        if (user.sessions.length >= 5) user.sessions.shift();
+        user.sessions.push({ token: sessionToken, deviceInfo, createdAt: new Date(), lastSeen: new Date() });
+        await user.save();
         const resp = { ...user.toObject(), privacySettings: {
             hidePreferredName:  user.hidePreferredName,
             hideProfilePicture: user.hideProfilePicture
         }};
         delete resp.password;
-        res.json({ success: true, user: resp });
+        delete resp.sessions;
+        res.json({ success: true, user: resp, sessionToken });
     } catch (err) {
         console.error('Login error:', err);
         res.status(500).json({ success: false, message: 'Server error.' });
     }
+});
+
+// Get all active sessions
+app.get('/api/sessions/:userId', async (req, res) => {
+    const { userId } = req.params;
+    try {
+        const user = await User.findOne({ xameId: userId });
+        if (!user) return res.status(404).json({ success: false });
+        const sessions = (user.sessions || []).map((s, i) => ({
+            id: s._id,
+            deviceInfo: s.deviceInfo,
+            createdAt: s.createdAt,
+            lastSeen: s.lastSeen,
+            index: i
+        }));
+        res.json({ success: true, sessions });
+    } catch (err) { res.status(500).json({ success: false }); }
+});
+
+// Kill a specific session (remote logout)
+app.post('/api/sessions/kill', async (req, res) => {
+    const { userId, sessionId } = req.body;
+    try {
+        const user = await User.findOne({ xameId: userId });
+        if (!user) return res.status(404).json({ success: false });
+        user.sessions = (user.sessions || []).filter(s => s._id.toString() !== sessionId);
+        await user.save();
+        // Force logout the target socket
+        const targetSocketId = findSocketId(userId);
+        if (targetSocketId) {
+            io.to(targetSocketId).emit('force-logout', { reason: 'Session terminated remotely' });
+        }
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false }); }
+});
+
+// Kill ALL other sessions (stolen device)
+app.post('/api/sessions/kill-all', async (req, res) => {
+    const { userId, keepToken } = req.body;
+    try {
+        const user = await User.findOne({ xameId: userId });
+        if (!user) return res.status(404).json({ success: false });
+        user.sessions = (user.sessions || []).filter(s => s.token === keepToken);
+        await user.save();
+        // Force logout all sockets for this user
+        const targetSocketId = findSocketId(userId);
+        if (targetSocketId) {
+            io.to(targetSocketId).emit('force-logout', { reason: 'All sessions terminated. Please log in again.' });
+        }
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false }); }
 });
 
 app.post('/api/logout', async (req, res) => {
