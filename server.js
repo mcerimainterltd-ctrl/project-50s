@@ -11,6 +11,7 @@
 //
 
 const express    = require('express');
+const crypto     = require('crypto');
 const http       = require('http');
 const { Server } = require('socket.io');
 const fs         = require('fs');
@@ -2230,7 +2231,6 @@ app.post('/api/wallet/psk/virtual-account', async (req, res) => {
 
 // Paystack webhook
 app.post('/api/wallet/psk/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
-  const crypto = require('crypto');
   const pskSecret = process.env.PAYSTACK_SECRET_KEY || '';
   const hash = crypto.createHmac('sha512', pskSecret).update(req.body).digest('hex');
   if (hash !== req.headers['x-paystack-signature']) return res.status(401).send('Unauthorized');
