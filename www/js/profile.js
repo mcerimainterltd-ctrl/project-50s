@@ -304,7 +304,7 @@ async function showActiveSessions() {
       return;
     }
     list.innerHTML = data.sessions.map(s => {
-      const date = new Date(s.createdAt).toLocaleDateString();
+      const date = new Date(s.createdAt).toLocaleString();
       // Parse user agent into readable format
       const ua = s.deviceInfo;
       let device = 'Unknown device';
