@@ -305,12 +305,38 @@ async function showActiveSessions() {
     }
     list.innerHTML = data.sessions.map(s => {
       const date = new Date(s.createdAt).toLocaleDateString();
-      const device = s.deviceInfo.length > 60 ? s.deviceInfo.substring(0, 60) + '...' : s.deviceInfo;
+      // Parse user agent into readable format
+      const ua = s.deviceInfo;
+      let device = 'Unknown device';
+      const androidMatch = ua.match(/Android ([\d.]+)/);
+      const iosMatch = ua.match(/iPhone OS ([\d_]+)/);
+      const brandMatch = ua.match(/Build\/([A-Z0-9]+)/i);
+      const huaweiMatch = ua.match(/HUAWEI([^;)]+)/i);
+      const samsungMatch = ua.match(/SM-([^;)\s]+)/i);
+      if (androidMatch) {
+        let brand = 'Android';
+        if (huaweiMatch) brand = 'Huawei';
+        else if (samsungMatch) brand = 'Samsung';
+        else if (ua.includes('Pixel')) brand = 'Google Pixel';
+        else if (ua.includes('Xiaomi')) brand = 'Xiaomi';
+        else if (ua.includes('OnePlus')) brand = 'OnePlus';
+        device = brand + ' · Android ' + androidMatch[1];
+      } else if (iosMatch) {
+        device = 'iPhone · iOS ' + iosMatch[1].replace(/_/g, '.');
+      } else if (ua.includes('Windows')) {
+        device = 'Windows PC';
+      } else if (ua.includes('Mac')) {
+        device = 'Mac';
+      } else if (ua.includes('Linux')) {
+        device = 'Linux';
+      }
+      const currentToken = persistentStorage.get('xame:sessionToken');
+      const isCurrent = s.id === currentToken || false;
       return `
         <div style="background:rgba(255,255,255,0.05);border-radius:12px;padding:16px;border:1px solid rgba(255,255,255,0.08);">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
             <div>
-              <div style="font-size:13px;color:#fff;font-weight:600;margin-bottom:4px;">📱 ${device}</div>
+              <div style="font-size:13px;color:#fff;font-weight:600;margin-bottom:4px;">📱 ${device} ${isCurrent ? '<span style="background:#00B0A0;color:#000;font-size:9px;padding:2px 7px;border-radius:10px;margin-left:6px;">This device</span>' : ''}</div>
               <div style="font-size:11px;color:#aaa;">Logged in: ${date}</div>
             </div>
             <button class="kill-session-btn" data-id="${s.id}"
