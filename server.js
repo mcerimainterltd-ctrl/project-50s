@@ -686,7 +686,7 @@ app.post('/api/sessions/kill-all', async (req, res) => {
     try {
         const user = await User.findOne({ xameId: userId });
         if (!user) return res.status(404).json({ success: false });
-        user.sessions = (user.sessions || []).filter(s => s.token === keepToken);
+        user.sessions = (user.sessions || []).filter(s => s.token === keepToken || s._id.toString() === keepToken);
         await user.save();
         // Force logout all sockets for this user
         const targetSocketId = findSocketId(userId);

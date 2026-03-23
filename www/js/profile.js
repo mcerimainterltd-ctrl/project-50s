@@ -368,8 +368,17 @@ async function showActiveSessions() {
 
   // Kill all other sessions
   dlg.querySelector('#killAllSessions').addEventListener('click', async () => {
-    if (!confirm('This will log out ALL other devices immediately. Continue?')) return;
     const token = persistentStorage.get('xame:sessionToken');
+    // Check if there are other sessions to kill
+    const sessRes = await fetch(`${serverURL}/api/sessions/${USER.xameId}`);
+    const sessData = await sessRes.json();
+    const otherSessions = (sessData.sessions || []).filter(s => s.id !== token);
+    if (otherSessions.length === 0) {
+      showNotification('No other devices connected at the moment.');
+      return;
+    }
+    if (!confirm('This will log out ALL other devices immediately. Continue?')) return;
+    if (!token) { showNotification('Session not found. Please log out and log back in.'); return; }
     const r = await fetch(`${serverURL}/api/sessions/kill-all`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
