@@ -389,3 +389,73 @@ async function showActiveSessions() {
     else showNotification('Failed. Please try again.');
   });
 }
+
+
+// ── Extra Security Setup ──────────────────────────────────────────────────
+async function showExtraSecurityDialog() {
+  const existing = document.getElementById('extraSecurityDialog');
+  if (existing) existing.remove();
+
+  // Load current settings
+  const res = await fetch(`${serverURL}/api/extra-security/${USER.xameId}`);
+  const data = await res.json();
+  const es = data.extraSecurity || { enabled: false, email: '', phone: '' };
+
+  const dlg = document.createElement('div');
+  dlg.id = 'extraSecurityDialog';
+  dlg.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+  dlg.innerHTML = `
+    <div style="background:var(--bg-secondary,#1a2332);border-radius:20px 20px 0 0;width:100%;max-width:500px;padding:24px;max-height:80vh;overflow-y:auto;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+        <h3 style="font-size:17px;font-weight:700;color:var(--text-primary,#fff)">🛡️ Extra Security</h3>
+        <button id="closeExtraSecDlg" style="background:none;border:none;color:#aaa;font-size:22px;cursor:pointer;">✕</button>
+      </div>
+      <p style="font-size:13px;color:#aaa;margin-bottom:20px;line-height:1.6;">When enabled, a one-time code will be sent to your email every time you log in from an unrecognised device.</p>
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px;background:rgba(255,255,255,0.05);border-radius:12px;">
+          <span style="font-size:14px;color:#fff;font-weight:600;">Enable Extra Security</span>
+          <label style="position:relative;display:inline-block;width:48px;height:26px;">
+            <input type="checkbox" id="extraSecEnabled" ${es.enabled ? 'checked' : ''} style="opacity:0;width:0;height:0;">
+            <span id="extraSecToggle" style="position:absolute;cursor:pointer;inset:0;background:${es.enabled ? '#00B0A0' : '#444'};border-radius:26px;transition:0.3s;"></span>
+            <span style="position:absolute;content:'';height:20px;width:20px;left:${es.enabled ? '24px' : '4px'};bottom:3px;background:#fff;border-radius:50%;transition:0.3s;pointer-events:none;"></span>
+          </label>
+        </div>
+        <div>
+          <label style="font-size:12px;color:#aaa;display:block;margin-bottom:6px;">Email Address for OTP</label>
+          <input id="extraSecEmail" type="email" value="${es.email || ''}" placeholder="your@email.com"
+            style="width:100%;padding:12px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:10px;color:#fff;font-size:14px;outline:none;"/>
+        </div>
+        <button id="saveExtraSec" style="width:100%;padding:14px;background:#00B0A0;border:none;border-radius:12px;color:#000;font-size:15px;font-weight:700;cursor:pointer;">
+          Save Extra Security Settings
+        </button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(dlg);
+
+  dlg.querySelector('#closeExtraSecDlg').onclick = () => dlg.remove();
+  dlg.addEventListener('click', e => { if (e.target === dlg) dlg.remove(); });
+
+  // Toggle switch visual
+  const checkbox = dlg.querySelector('#extraSecEnabled');
+  const toggle = dlg.querySelector('#extraSecToggle');
+  const thumb = dlg.querySelector('span[style*="bottom:3px"]');
+  checkbox.addEventListener('change', () => {
+    toggle.style.background = checkbox.checked ? '#00B0A0' : '#444';
+    thumb.style.left = checkbox.checked ? '24px' : '4px';
+  });
+
+  dlg.querySelector('#saveExtraSec').addEventListener('click', async () => {
+    const email = dlg.querySelector('#extraSecEmail').value.trim();
+    const enabled = dlg.querySelector('#extraSecEnabled').checked;
+    if (enabled && !email) { showNotification('Please enter an email address.'); return; }
+    const r = await fetch(`${serverURL}/api/extra-security/setup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: USER.xameId, email, enabled })
+    });
+    const d = await r.json();
+    if (d.success) { showNotification('Extra security settings saved.'); dlg.remove(); }
+    else showNotification('Failed to save. Please try again.');
+  });
+}

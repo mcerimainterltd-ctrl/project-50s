@@ -11,6 +11,8 @@
 //
 
 const express    = require('express');
+const { Resend }  = require('resend');
+const resend      = new Resend(process.env.RESEND_API_KEY);
 const crypto     = require('crypto');
 const http       = require('http');
 const { Server } = require('socket.io');
@@ -210,6 +212,13 @@ const userSchema = new mongoose.Schema({
     // v2.1.1: per-user settings stored server-side for cross-device sync
     settings:           { type: Object, default: {} },
     fcmToken:           { type: String, default: '' },
+    extraSecurity: {
+        enabled:   { type: Boolean, default: false },
+        email:     { type: String, default: '' },
+        phone:     { type: String, default: '' },
+    },
+    otpCode:            { type: String, default: null },
+    otpExpires:         { type: Date,   default: null },
     sessions:           [{
         token:     { type: String, required: true },
         deviceInfo:{ type: String, default: 'Unknown device' },
@@ -625,6 +634,44 @@ app.post('/api/login', async (req, res) => {
             return res.status(401).json({ success: false, message: 'Invalid password.' });
 
         console.log(`✅ Login: ${xameId}`);
+
+        // Extra Security OTP check
+        if (user.extraSecurity?.enabled && (user.extraSecurity.email || user.extraSecurity.phone)) {
+            const { otp } = req.body;
+            if (!otp) {
+                // First login attempt — generate and send OTP
+                const code = Math.floor(100000 + Math.random() * 900000).toString();
+                user.otpCode    = code;
+                user.otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+                await user.save();
+                // Send OTP via email
+                if (user.extraSecurity.email) {
+                    await resend.emails.send({
+                        from: 'XamePage Security <onboarding@resend.dev>',
+                        to:   user.extraSecurity.email,
+                        subject: 'Your XamePage Login Code',
+                        html: `<div style="font-family:sans-serif;max-width:400px;margin:0 auto;padding:24px;background:#1a2332;color:#fff;border-radius:12px;">
+                            <h2 style="color:#00B0A0;">XamePage Security Code</h2>
+                            <p>Your one-time login code is:</p>
+                            <h1 style="font-size:42px;letter-spacing:8px;color:#00B0A0;text-align:center;">${code}</h1>
+                            <p style="color:#aaa;font-size:13px;">This code expires in 10 minutes. Do not share it with anyone.</p>
+                        </div>`
+                    });
+                }
+                return res.json({ success: false, requiresOTP: true, message: 'OTP sent to your registered email.' });
+            }
+            // Verify OTP
+            if (!user.otpCode || user.otpCode !== otp) {
+                return res.status(401).json({ success: false, message: 'Invalid OTP code.' });
+            }
+            if (user.otpExpires < new Date()) {
+                return res.status(401).json({ success: false, message: 'OTP has expired. Please try again.' });
+            }
+            // Clear OTP after successful verification
+            user.otpCode    = null;
+            user.otpExpires = null;
+        }
+
         // Generate session token
         const sessionToken = crypto.randomBytes(32).toString('hex');
         const deviceInfo = req.headers['user-agent'] || 'Unknown device';
@@ -644,6 +691,28 @@ app.post('/api/login', async (req, res) => {
         console.error('Login error:', err);
         res.status(500).json({ success: false, message: 'Server error.' });
     }
+});
+
+// Setup extra security
+app.post('/api/extra-security/setup', async (req, res) => {
+    const { userId, email, phone, enabled } = req.body;
+    try {
+        const user = await User.findOne({ xameId: userId });
+        if (!user) return res.status(404).json({ success: false });
+        user.extraSecurity = { enabled: enabled !== false, email: email || '', phone: phone || '' };
+        await user.save();
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false }); }
+});
+
+// Get extra security status
+app.get('/api/extra-security/:userId', async (req, res) => {
+    const { userId } = req.params;
+    try {
+        const user = await User.findOne({ xameId: userId });
+        if (!user) return res.status(404).json({ success: false });
+        res.json({ success: true, extraSecurity: user.extraSecurity || { enabled: false, email: '', phone: '' } });
+    } catch (err) { res.status(500).json({ success: false }); }
 });
 
 // Get all active sessions

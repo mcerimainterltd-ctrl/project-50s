@@ -192,7 +192,14 @@ function renderPasswordSetupDialog(userData) {
         body: JSON.stringify({ xameId: userData.xameId, newPassword: password }),
       });
       const data = await response.json();
-      if (data.success) {
+      if (data.requiresOTP) {
+          // Show OTP field
+          document.getElementById('otpSection').classList.remove('hidden');
+          document.getElementById('otpMessage').textContent = data.message || 'Enter the OTP sent to your email.';
+          showNotification(data.message || 'OTP sent to your email.');
+          return;
+        }
+        if (data.success) {
           if (data.sessionToken) persistentStorage.set('xame:sessionToken', data.sessionToken);
         feedbackEl.textContent = '✅ Password set successfully!'; feedbackEl.style.color = '#28a745';
         setTimeout(() => {

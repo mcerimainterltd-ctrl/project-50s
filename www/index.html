@@ -141,6 +141,12 @@
                placeholder="Enter your password"
                autocomplete="current-password" required />
 
+        <div id="otpSection" class="hidden" style="margin-bottom:12px;">
+          <p id="otpMessage" style="font-size:13px;color:#00B0A0;margin-bottom:8px;text-align:center;"></p>
+          <input id="otpInput" class="input" type="text" inputmode="numeric" maxlength="6"
+                 placeholder="Enter 6-digit OTP" autocomplete="one-time-code"
+                 style="text-align:center;letter-spacing:8px;font-size:20px;"/>
+        </div>
         <button class="btn primary" type="submit">Log in</button>
       </form>
     </div>
