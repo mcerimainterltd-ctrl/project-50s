@@ -420,9 +420,15 @@ async function showExtraSecurityDialog() {
             <span style="position:absolute;content:'';height:20px;width:20px;left:${es.enabled ? '24px' : '4px'};bottom:3px;background:#fff;border-radius:50%;transition:0.3s;pointer-events:none;"></span>
           </label>
         </div>
+        <p style="font-size:12px;color:#aaa;margin-top:-8px;">Provide at least one — email or phone number.</p>
         <div>
-          <label style="font-size:12px;color:#aaa;display:block;margin-bottom:6px;">Email Address for OTP</label>
+          <label style="font-size:12px;color:#aaa;display:block;margin-bottom:6px;">📧 Email Address for OTP</label>
           <input id="extraSecEmail" type="email" value="${es.email || ''}" placeholder="your@email.com"
+            style="width:100%;padding:12px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:10px;color:#fff;font-size:14px;outline:none;"/>
+        </div>
+        <div>
+          <label style="font-size:12px;color:#aaa;display:block;margin-bottom:6px;">📱 Phone Number for OTP (with country code)</label>
+          <input id="extraSecPhone" type="tel" value="${es.phone || ''}" placeholder="+2348012345678"
             style="width:100%;padding:12px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:10px;color:#fff;font-size:14px;outline:none;"/>
         </div>
         <button id="saveExtraSec" style="width:100%;padding:14px;background:#00B0A0;border:none;border-radius:12px;color:#000;font-size:15px;font-weight:700;cursor:pointer;">
@@ -447,12 +453,13 @@ async function showExtraSecurityDialog() {
 
   dlg.querySelector('#saveExtraSec').addEventListener('click', async () => {
     const email = dlg.querySelector('#extraSecEmail').value.trim();
+    const phone = dlg.querySelector('#extraSecPhone').value.trim();
     const enabled = dlg.querySelector('#extraSecEnabled').checked;
-    if (enabled && !email) { showNotification('Please enter an email address.'); return; }
+    if (enabled && !email && !phone) { showNotification('Please enter an email or phone number.'); return; }
     const r = await fetch(`${serverURL}/api/extra-security/setup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: USER.xameId, email, enabled })
+      body: JSON.stringify({ userId: USER.xameId, email, phone, enabled })
     });
     const d = await r.json();
     if (d.success) { showNotification('Extra security settings saved.'); dlg.remove(); }
