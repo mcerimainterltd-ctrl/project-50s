@@ -292,7 +292,7 @@ async function showActiveSessions() {
 
   // Load sessions
   try {
-    const res = await fetch(`/api/sessions/${USER.xameId}`);
+    const res = await fetch(`${serverURL}/api/sessions/${USER.xameId}`);
     const data = await res.json();
     const list = dlg.querySelector('#sessionsList');
     if (!data.success) {
@@ -326,7 +326,7 @@ async function showActiveSessions() {
     list.querySelectorAll('.kill-session-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         btn.textContent = '...';
-        const r = await fetch('/api/sessions/kill', {
+        const r = await fetch(`${serverURL}/api/sessions/kill`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ userId: USER.xameId, sessionId: btn.dataset.id })
@@ -344,7 +344,7 @@ async function showActiveSessions() {
   dlg.querySelector('#killAllSessions').addEventListener('click', async () => {
     if (!confirm('This will log out ALL other devices immediately. Continue?')) return;
     const token = persistentStorage.get('xame:sessionToken');
-    const r = await fetch('/api/sessions/kill-all', {
+    const r = await fetch(`${serverURL}/api/sessions/kill-all`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId: USER.xameId, keepToken: token })
