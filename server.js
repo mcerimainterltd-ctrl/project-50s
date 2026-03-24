@@ -651,7 +651,7 @@ app.post('/api/login', async (req, res) => {
                 // Send OTP via email
                 if (user.extraSecurity.email) {
                     await resend.emails.send({
-                        from: 'XamePage Security <onboarding@resend.dev>',
+                        from: process.env.RESEND_FROM_EMAIL || 'XamePage Security <onboarding@resend.dev>',
                         to:   user.extraSecurity.email,
                         subject: 'Your XamePage Login Code',
                         html: `<div style="font-family:sans-serif;max-width:400px;margin:0 auto;padding:24px;background:#1a2332;color:#fff;border-radius:12px;">
