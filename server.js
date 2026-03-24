@@ -13,6 +13,10 @@
 const express    = require('express');
 const { Resend }  = require('resend');
 const resend      = new Resend(process.env.RESEND_API_KEY);
+const twilio      = require('twilio');
+const twilioClient = process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
+    ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+    : null;
 const crypto     = require('crypto');
 const http       = require('http');
 const { Server } = require('socket.io');
