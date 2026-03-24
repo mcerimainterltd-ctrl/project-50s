@@ -648,9 +648,10 @@ app.post('/api/login', async (req, res) => {
                 user.otpCode    = code;
                 user.otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
                 await user.save();
-                // Send OTP via email
+                // Send OTP via email and/or SMS simultaneously
+                const sendPromises = [];
                 if (user.extraSecurity.email) {
-                    await resend.emails.send({
+                    sendPromises.push(resend.emails.send({
                         from: process.env.RESEND_FROM_EMAIL || 'XamePage Security <onboarding@resend.dev>',
                         to:   user.extraSecurity.email,
                         subject: 'Your XamePage Login Code',
@@ -660,9 +661,18 @@ app.post('/api/login', async (req, res) => {
                             <h1 style="font-size:42px;letter-spacing:8px;color:#00B0A0;text-align:center;">${code}</h1>
                             <p style="color:#aaa;font-size:13px;">This code expires in 10 minutes. Do not share it with anyone.</p>
                         </div>`
-                    });
+                    }));
                 }
-                return res.json({ success: false, requiresOTP: true, message: 'OTP sent to your registered email.' });
+                if (user.extraSecurity.phone && twilioClient) {
+                    sendPromises.push(twilioClient.messages.create({
+                        body: `Your XamePage login code is: ${code}. Expires in 10 minutes. Do not share.`,
+                        from: process.env.TWILIO_PHONE_NUMBER,
+                        to:   user.extraSecurity.phone
+                    }));
+                }
+                await Promise.allSettled(sendPromises);
+                const channels = [user.extraSecurity.email ? 'email' : '', user.extraSecurity.phone && twilioClient ? 'SMS' : ''].filter(Boolean).join(' and ');
+                return res.json({ success: false, requiresOTP: true, message: `OTP sent via ${channels}.` });
             }
             // Verify OTP
             if (!user.otpCode || user.otpCode !== otp) {
