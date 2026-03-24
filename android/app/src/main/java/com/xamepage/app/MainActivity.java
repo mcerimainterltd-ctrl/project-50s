@@ -12,6 +12,10 @@ import android.webkit.DownloadListener;
 import android.webkit.URLUtil;
 import android.net.ConnectivityManager;
 import android.media.AudioManager;
+import androidx.biometric.BiometricPrompt;
+import androidx.biometric.BiometricManager;
+import androidx.core.content.ContextCompat;
+import java.util.concurrent.Executor;
 import android.net.NetworkRequest;
 import android.net.Network;
 import android.webkit.JavascriptInterface;
@@ -55,6 +59,47 @@ public class MainActivity extends BridgeActivity {
         // Enable file downloads in WebView
         // Add JavaScript interface for native file opening
         getBridge().getWebView().addJavascriptInterface(new Object() {
+            @JavascriptInterface
+            public void authenticateBiometric(String reason) {
+                Executor executor = ContextCompat.getMainExecutor(MainActivity.this);
+                BiometricPrompt biometricPrompt = new BiometricPrompt(MainActivity.this, executor,
+                    new BiometricPrompt.AuthenticationCallback() {
+                        @Override
+                        public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
+                            getBridge().getWebView().post(() ->
+                                getBridge().getWebView().evaluateJavascript("window.onBiometricSuccess && window.onBiometricSuccess()", null)
+                            );
+                        }
+                        @Override
+                        public void onAuthenticationFailed() {
+                            getBridge().getWebView().post(() ->
+                                getBridge().getWebView().evaluateJavascript("window.onBiometricFailed && window.onBiometricFailed()", null)
+                            );
+                        }
+                        @Override
+                        public void onAuthenticationError(int errorCode, CharSequence errString) {
+                            getBridge().getWebView().post(() ->
+                                getBridge().getWebView().evaluateJavascript("window.onBiometricError && window.onBiometricError('" + errString + "')", null)
+                            );
+                        }
+                    });
+                BiometricPrompt.PromptInfo promptInfo = new BiometricPrompt.PromptInfo.Builder()
+                    .setTitle("XamePage")
+                    .setSubtitle(reason != null ? reason : "Verify your identity")
+                    .setNegativeButtonText("Use PIN")
+                    .build();
+                runOnUiThread(() -> biometricPrompt.authenticate(promptInfo));
+            }
+
+            @JavascriptInterface
+            public void checkBiometricAvailable() {
+                BiometricManager bm = BiometricManager.from(MainActivity.this);
+                boolean available = bm.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK) == BiometricManager.BIOMETRIC_SUCCESS;
+                getBridge().getWebView().post(() ->
+                    getBridge().getWebView().evaluateJavascript("window.onBiometricAvailable && window.onBiometricAvailable(" + available + ")", null)
+                );
+            }
+
             @JavascriptInterface
             public void setSpeaker(boolean on) {
                 runOnUiThread(() -> {
