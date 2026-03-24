@@ -129,7 +129,14 @@ const callHistoryModule = (() => {
     document.getElementById('tabWallet')?.addEventListener('click', () => {
       document.querySelectorAll('.contacts-tab').forEach(t => t.classList.remove('active'));
       document.getElementById('tabWallet')?.classList.add('active');
-      if (typeof walletModule !== 'undefined') walletModule.show();
+      // Check wallet PIN before showing
+      if (typeof walletLock !== 'undefined' && walletLock.isEnabled()) {
+        walletLock.verify(() => {
+          if (typeof walletModule !== 'undefined') walletModule.show();
+        });
+      } else {
+        if (typeof walletModule !== 'undefined') walletModule.show();
+      }
     });
 
     document.getElementById('tabChats')?.addEventListener('click', () => {

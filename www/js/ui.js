@@ -497,6 +497,7 @@ function openAccountMenu() {
     <div class="menu-item" id="accountSessions">🔐 Active Sessions</div>
     <div class="menu-item" id="accountExtraSecurity">🛡️ Extra Security</div>
     <div class="menu-item" id="accountAppLock">🔐 App Lock PIN</div>
+    <div class="menu-item" id="accountWalletPin">💰 Wallet PIN</div>
     <div class="menu-item" id="accountCallSchedule">📅 Call Schedule</div>
     <div class="menu-item" id="accountStealth" style="display:flex;align-items:center;justify-content:space-between">🕵️ Stealth Mode <span id="stealthBadge" style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(255,255,255,0.1);color:#aaa">OFF</span></div>
   `;
@@ -515,6 +516,7 @@ function openAccountMenu() {
   panel.querySelector('#accountSessions')?.addEventListener('click', () => { closeAccountMenu(); showActiveSessions(); });
   panel.querySelector('#accountExtraSecurity')?.addEventListener('click', () => { closeAccountMenu(); showExtraSecurityDialog(); });
   panel.querySelector('#accountAppLock')?.addEventListener('click', () => { closeAccountMenu(); appLock.showSetupDialog(); });
+  panel.querySelector('#accountWalletPin')?.addEventListener('click', () => { closeAccountMenu(); walletLock.showSetupDialog(); });
   // Stealth mode init
   const stealthBadge = panel.querySelector('#stealthBadge');
   const stealthOn = localStorage.getItem('xame:stealth') === 'true';
