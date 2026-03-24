@@ -140,6 +140,8 @@ function setupEventListeners() {
         document.getElementById('otpSection')?.classList.remove('hidden');
         document.getElementById('otpMessage').textContent = loginResult.message || 'Enter the OTP sent to your email/phone.';
         showNotification(loginResult.message || 'OTP sent.');
+        loginForm.dataset.pendingXameId = xameId;
+        loginForm.dataset.pendingPassword = password;
         return;
       } else
       if (loginResult.success) {
