@@ -28,13 +28,14 @@ const appLock = (() => {
     showLockScreen();
   }
 
-  function unlock() {
+  function unlock(onSuccess) {
     _locked = false;
     persistentStorage.set(ATTEMPTS_KEY, 0);
     if (_overlay) { _overlay.remove(); _overlay = null; }
+    if (typeof onSuccess === 'function') onSuccess();
   }
 
-  function showLockScreen() {
+  function showLockScreen(onSuccess) {
     if (_overlay) return;
     const lockout = persistentStorage.get(LOCKOUT_KEY);
     const isLockedOut = lockout && Date.now() < lockout;
@@ -78,7 +79,7 @@ const appLock = (() => {
       const stored = getPin();
       const attempts = (persistentStorage.get(ATTEMPTS_KEY) || 0) + 1;
       if (enteredPin === stored) {
-        unlock();
+        unlock(onSuccess);
       } else {
         persistentStorage.set(ATTEMPTS_KEY, attempts);
         enteredPin = '';
@@ -124,7 +125,7 @@ const appLock = (() => {
 
     // Biometric
     _overlay.querySelector('#biometricBtn')?.addEventListener('click', () => {
-      window.onBiometricSuccess = () => unlock();
+      window.onBiometricSuccess = () => unlock(onSuccess);
       window.onBiometricFailed = () => { errorEl.textContent = 'Biometric failed. Use PIN.'; };
       window.onBiometricError = (msg) => { if (!msg.includes('cancel')) errorEl.textContent = 'Biometric error. Use PIN.'; };
       window.AndroidBridge?.authenticateBiometric('Unlock XamePage');
@@ -133,7 +134,7 @@ const appLock = (() => {
     // Auto-trigger biometric on lock screen open
     if (_biometricAvailable) {
       setTimeout(() => {
-        window.onBiometricSuccess = () => unlock();
+        window.onBiometricSuccess = () => unlock(onSuccess);
         window.onBiometricFailed = () => {};
         window.onBiometricError = () => {};
         window.AndroidBridge?.authenticateBiometric('Unlock XamePage');
@@ -206,17 +207,22 @@ const appLock = (() => {
     });
 
     dlg.querySelector('#disablePin')?.addEventListener('click', () => {
-      if (!confirm('Disable App Lock?')) return;
-      persistentStorage.set(ENABLED_KEY, false);
-      persistentStorage.set(LOCK_KEY, null);
-      showNotification('App Lock disabled.');
       dlg.remove();
+      // Require current PIN before disabling
+      showLockScreen(() => {
+        persistentStorage.set(ENABLED_KEY, false);
+        persistentStorage.set(LOCK_KEY, null);
+        showNotification('App Lock disabled.');
+      });
     });
 
     dlg.querySelector('#changePin')?.addEventListener('click', () => {
-      persistentStorage.set(ENABLED_KEY, false);
       dlg.remove();
-      showSetupDialog();
+      // Require current PIN before changing
+      showLockScreen(() => {
+        persistentStorage.set(ENABLED_KEY, false);
+        showSetupDialog();
+      });
     });
   }
 
