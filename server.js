@@ -1760,8 +1760,8 @@ io.on('connection', (socket) => {
             const endTime = new Date();
             const callRecord = await CallHistory.findOne({
                 $or: [
-                    { callerId: uid, recipientId, status: 'accepted' },
-                    { callerId: recipientId, recipientId: uid, status: 'accepted' }
+                    { callerId: uid, recipientId, status: { $in: ['accepted', 'pending'] } },
+                    { callerId: recipientId, recipientId: uid, status: { $in: ['accepted', 'pending'] } }
                 ]
             });
             if (callRecord) {
