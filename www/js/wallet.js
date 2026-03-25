@@ -633,10 +633,18 @@ const walletModule = (() => {
       
       
       
+      +'<div style="border-top:1px solid rgba(255,255,255,0.08);margin:20px 0;padding-top:20px;">'
+      +'<div style="font-size:11px;font-weight:700;color:#7a9bb5;letter-spacing:1px;text-transform:uppercase;margin-bottom:12px;">SECURITY</div>'
+      +'<button id="wPinSetup" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:14px;color:#fff;font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:space-between;">'
+      +'<span>💰 Wallet PIN</span><span id="wPinStatus" style="color:#00B0A0;font-size:13px;">OFF ›</span></button>'
+      +'</div>'
       +'<button id="wSS" style="width:100%;background:linear-gradient(135deg,#00B0A0,#008A7D);border:none;border-radius:14px;padding:16px;color:#fff;font-size:16px;font-weight:700;cursor:pointer;">Save Settings</button>'
       +'</div>';
     document.body.appendChild(dlg);
     dlg.querySelector('#wSC').addEventListener('click',()=>dlg.remove());
+    const pinStatusEl = dlg.querySelector('#wPinStatus');
+    if (pinStatusEl && typeof walletLock !== 'undefined') pinStatusEl.textContent = walletLock.isEnabled() ? 'ON ›' : 'OFF ›';
+    dlg.querySelector('#wPinSetup')?.addEventListener('click',()=>{ dlg.remove(); if(typeof walletLock!=='undefined') walletLock.showSetupDialog(); });
     dlg.addEventListener('click',e=>{if(e.target===dlg)dlg.remove();});
     
     dlg.querySelector('#wSS').addEventListener('click',()=>{
