@@ -183,17 +183,22 @@ const walletLock = (() => {
     });
 
     dlg.querySelector('#disableWalletPin')?.addEventListener('click', () => {
-      if (!confirm('Disable Wallet PIN?')) return;
-      persistentStorage.set(ENABLED_KEY, false);
-      persistentStorage.set(LOCK_KEY, null);
-      showNotification('Wallet PIN disabled.');
       dlg.remove();
+      // Require current PIN before disabling
+      showPinPrompt(() => {
+        persistentStorage.set(ENABLED_KEY, false);
+        persistentStorage.set(LOCK_KEY, null);
+        showNotification('Wallet PIN disabled.');
+      });
     });
 
     dlg.querySelector('#changeWalletPin')?.addEventListener('click', () => {
-      persistentStorage.set(ENABLED_KEY, false);
       dlg.remove();
-      showSetupDialog();
+      // Require current PIN before changing
+      showPinPrompt(() => {
+        persistentStorage.set(ENABLED_KEY, false);
+        showSetupDialog();
+      });
     });
   }
 
