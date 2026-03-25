@@ -277,6 +277,7 @@ const callHistorySchema = new mongoose.Schema({
     duration:    { type: Number, default: 0 }, // seconds
     type:        { type: String, default: "xamepage", enum: ["xamepage", "pstn"] },
     cost:        { type: Number, default: 0 },
+    seen:        { type: Boolean, default: false },
     status: {
         type: String, required: true,
         enum: ['pending', 'accepted', 'rejected', 'ended', 'missed', 'offline']

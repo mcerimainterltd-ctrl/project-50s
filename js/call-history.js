@@ -66,16 +66,19 @@ const callHistoryModule = (() => {
       const contact    = CONTACTS?.find(c => c.id === contactId);
       const name       = call.callerName || contact?.name || contactId;
       const initials   = name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2);
-      const icon       = call.status === 'missed' ? '📵' : isIncoming ? '📲' : '📤';
+      const isMissed    = call.status === 'missed' || (call.status === 'pending' && isIncoming);
+      const isDeclined  = call.status === 'rejected' && isIncoming;
+      const isDeclinedByMe = call.status === 'rejected' && !isIncoming;
+      const isOffline   = call.status === 'offline';
+      const icon = isMissed ? '📵' : isDeclined ? '❌' : isDeclinedByMe ? '🚫' : isOffline ? '📴' : isIncoming ? '📲' : '📤';
       const callIcon   = call.callType === 'video' ? '📹' : '🎙️';
       const timeStr    = _formatCallTime(call.startTime);
-      const isMissed   = call.status === 'missed';
       return `
-        <div class="call-history-item ${isMissed ? 'call-missed' : ''}" data-contact="${contactId}">
+        <div class="call-history-item ${isMissed ? 'call-missed' : isDeclined || isDeclinedByMe ? 'call-declined' : isOffline ? 'call-offline' : ''}" data-contact="${contactId}">
           <div class="call-history-avatar">${initials}</div>
           <div class="call-history-info">
             <div class="call-history-name">${escapeHtml(name)}</div>
-            <div class="call-history-meta">${icon} ${isMissed ? 'Missed' : isIncoming ? 'Incoming' : 'Outgoing'} ${callIcon} · ${timeStr}</div>
+            <div class="call-history-meta">${icon} ${isMissed ? 'Missed' : isDeclined ? 'Declined' : isDeclinedByMe ? 'Declined by me' : isOffline ? 'Offline' : isIncoming ? 'Incoming' : 'Outgoing'} ${callIcon} · ${timeStr}${call.duration ? ' · ' + _formatDuration(call.duration) : ''}</div>
           </div>
           <div class="call-history-action" data-call-contact="${contactId}" data-call-type="${call.callType || 'voice'}" title="Call back">📞</div>
         </div>`;
@@ -114,6 +117,14 @@ const callHistoryModule = (() => {
     return d.toLocaleDateString();
   }
 
+  function _formatDuration(seconds) {
+    if (!seconds || seconds < 1) return '';
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    if (m === 0) return `${s}s`;
+    return `${m}m ${s}s`;
+  }
+
   async function clearHistory() {
     try {
       await fetch(serverURL+'/api/call-history/' + USER.xameId, { method: 'DELETE' });
@@ -126,7 +137,14 @@ const callHistoryModule = (() => {
     document.getElementById('tabWallet')?.addEventListener('click', () => {
       document.querySelectorAll('.contacts-tab').forEach(t => t.classList.remove('active'));
       document.getElementById('tabWallet')?.classList.add('active');
-      if (typeof walletModule !== 'undefined') walletModule.show();
+      // Check wallet PIN before showing
+      if (typeof walletLock !== 'undefined' && walletLock.isEnabled()) {
+        walletLock.verify(() => {
+          if (typeof walletModule !== 'undefined') walletModule.show();
+        });
+      } else {
+        if (typeof walletModule !== 'undefined') walletModule.show();
+      }
     });
 
     document.getElementById('tabChats')?.addEventListener('click', () => {
