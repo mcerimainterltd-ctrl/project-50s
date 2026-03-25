@@ -274,6 +274,9 @@ const callHistorySchema = new mongoose.Schema({
     callType:    { type: String, required: true, enum: ['voice', 'video'] },
     startTime:   { type: Date,   default: Date.now },
     endTime:     { type: Date },
+    duration:    { type: Number, default: 0 }, // seconds
+    type:        { type: String, default: "xamepage", enum: ["xamepage", "pstn"] },
+    cost:        { type: Number, default: 0 },
     status: {
         type: String, required: true,
         enum: ['pending', 'accepted', 'rejected', 'ended', 'missed', 'offline']
@@ -1753,13 +1756,17 @@ io.on('connection', (socket) => {
     socket.on('call-ended', async ({ recipientId }) => {
         const uid = socketToUserMap.get(socket.id);
         try {
-            await CallHistory.findOneAndUpdate(
-                { $or: [
+            const endTime = new Date();
+            const callRecord = await CallHistory.findOne({
+                $or: [
                     { callerId: uid, recipientId, status: 'accepted' },
                     { callerId: recipientId, recipientId: uid, status: 'accepted' }
-                ]},
-                { status: 'ended', endTime: new Date() }
-            );
+                ]
+            });
+            if (callRecord) {
+                const duration = Math.round((endTime - callRecord.startTime) / 1000);
+                await callRecord.updateOne({ status: 'ended', endTime, duration });
+            }
             const recipSid = findSocketId(recipientId);
             if (recipSid) io.to(recipSid).emit('call-ended', { senderId: uid });
         } catch (err) { console.error('call-ended error:', err); }
