@@ -10,6 +10,29 @@ let audioCtx   = null;
 let mergedDest = null;
 let callActive = false;
 let holdUserId = null;
+let _callTimerInterval = null;
+let _callTimerSeconds = 0;
+
+function _startCallTimer() {
+  const display = document.getElementById('callTimerDisplay');
+  if (!display) return;
+  _callTimerSeconds = 0;
+  display.textContent = '00:00';
+  clearInterval(_callTimerInterval);
+  _callTimerInterval = setInterval(() => {
+    _callTimerSeconds++;
+    const m = String(Math.floor(_callTimerSeconds / 60)).padStart(2, '0');
+    const s = String(_callTimerSeconds % 60).padStart(2, '0');
+    display.textContent = m + ':' + s;
+  }, 1000);
+}
+
+function _stopCallTimer() {
+  clearInterval(_callTimerInterval);
+  _callTimerInterval = null;
+  const display = document.getElementById('callTimerDisplay');
+  if (display) display.textContent = '';
+}
 
 // ── Draggable local video ─────────────────────────────────────────────────
 const makeDraggable = (el) => {
@@ -94,6 +117,7 @@ function createPeerConnection(userId) {
       if (mergedDest) { remoteVideo.srcObject = mergedDest.stream; remoteVideo.muted = false; remoteVideo.play().catch(() => {}); }
     }
     updateCallParticipantsUI();
+    _startCallTimer();
   };
   pc.oniceconnectionstatechange = () => {
     console.log('ICE [' + userId + ']: ' + pc.iceConnectionState);
@@ -110,31 +134,20 @@ function createPeerConnection(userId) {
 
 function removePeer(userId) {
   const peer = peers.get(userId); if (!peer) return;
-  const pc = peer.pc;
-  pc.oniceconnectionstatechange = null;
-  pc.ontrack = null;
-  pc.onicecandidate = null;
-  pc.close();
-  peer.stream?.getTracks().forEach(t => t.stop());
-  // Remove from RESOURCES
-  const idx = RESOURCES.peerConnections.indexOf(pc);
-  if (idx !== -1) RESOURCES.peerConnections.splice(idx, 1);
+  peer.pc.close(); peer.stream?.getTracks().forEach(t => t.stop());
   peers.delete(userId); updateCallParticipantsUI();
   if (peers.size === 0) exitVideoCall();
 }
 
 // ── Start outgoing call ───────────────────────────────────────────────────
 async function startCall(recipientId, callType) {
+  playOutgoingRing();
   try {
     const hasVideo = callType === 'video';
     if (!localStream) {
       localStream = await navigator.mediaDevices.getUserMedia({ video: hasVideo, audio: true });
       RESOURCES.localStreams.push(localStream);
     }
-    // Set earpiece BEFORE any audio plays
-    isLoudspeakerOn = false;
-    if (window.AndroidBridge?.setCallAudioMode) window.AndroidBridge.setCallAudioMode(true);
-    playOutgoingRing();
     videoCallOverlay.classList.remove('hidden');
     elChatHeader.classList.add('hidden'); composer.classList.add('hidden');
     localVideo.srcObject = localStream; localVideo.muted = true;
@@ -148,10 +161,6 @@ async function startCall(recipientId, callType) {
     await pc.setLocalDescription(offer);
     socket?.emit('call-user', { recipientId, offer, callType });
     callActive = true; showCallControls();
-    // Update speaker button to show earpiece state
-    if (typeof loudSpeakerBtn !== 'undefined' && loudSpeakerBtn) loudSpeakerBtn.textContent = '🔈';
-    // Update speaker button to show earpiece state
-    if (typeof loudSpeakerBtn !== 'undefined' && loudSpeakerBtn) loudSpeakerBtn.textContent = '🔈';
   // Auto-timeout if unanswered after 60 seconds
   if (window._callTimeouts) window._callTimeouts.forEach(t => clearTimeout(t));
   window._callTimeouts = [];
@@ -162,9 +171,8 @@ async function startCall(recipientId, callType) {
   }, 60000));
   // Auto-timeout if unanswered after 60 seconds
   } catch (err) {
-    console.error('Call error:', err.name, err.message);
-    alert('Call error: ' + (err.name || err.message || String(err)));
-    exitVideoCall();
+    console.error('Failed to start call:', err);
+    showNotification('Failed to start call. Check permissions.'); exitVideoCall();
   }
 }
 
@@ -212,9 +220,6 @@ async function handleIncomingCall(offer, callerId) {
       localStream = await navigator.mediaDevices.getUserMedia({ video: hasVideo, audio: true });
       RESOURCES.localStreams.push(localStream);
     }
-    // Set earpiece BEFORE audio plays on incoming call answer
-    isLoudspeakerOn = false;
-    if (window.AndroidBridge?.setCallAudioMode) window.AndroidBridge.setCallAudioMode(true);
     videoCallOverlay.classList.remove('hidden');
     elChatHeader.classList.add('hidden'); composer.classList.add('hidden');
     localVideo.srcObject = localStream; localVideo.muted = true;
@@ -278,14 +283,7 @@ function handleNewIceCandidate(candidate, fromUserId) {
 
 // ── End call ──────────────────────────────────────────────────────────────
 function endCall() {
-  peers.forEach((peer) => {
-    try {
-      peer.pc.oniceconnectionstatechange = null;
-      peer.pc.ontrack = null;
-      peer.pc.onicecandidate = null;
-      peer.pc.close();
-    } catch(_) {}
-  });
+  peers.forEach((peer) => { try { peer.pc.close(); } catch(_) {} });
   peers.clear(); peerConnection = null;
   localStream?.getTracks().forEach(t => t.stop()); localStream = null;
   remoteStream?.getTracks().forEach(t => t.stop()); remoteStream = null;
@@ -296,25 +294,15 @@ function endCall() {
   pendingIceCandidates = [];
   if (audioCtx) { try { audioCtx.close(); } catch(_) {} audioCtx = null; mergedDest = null; }
   isAudioMuted = false; isVideoMuted = false; isLoudspeakerOn = false;
-  callActive = false; holdUserId = null;
-  // Reset to normal audio mode
-  if (window.AndroidBridge?.setCallAudioMode) window.AndroidBridge.setCallAudioMode(false);
+  callActive = false; holdUserId = null; _stopCallTimer();
 }
 
 function exitVideoCall() {
   stopOutgoingRing(); stopCallRing();
   if (window._callTimeouts) { window._callTimeouts.forEach(t => clearTimeout(t)); window._callTimeouts = []; }
-  if (window._callTimerInterval) { clearInterval(window._callTimerInterval); window._callTimerInterval = null; }
-  const timerEl = document.getElementById('callTimer');
-  if (timerEl) timerEl.remove();
-  peers.forEach((peer, uid) => {
-    socket?.emit('call-rejected', { recipientId: uid, reason: 'ended' });
-    socket?.emit('call-ended', { recipientId: uid });
-  });
-  if (peers.size === 0) {
-    socket?.emit('call-rejected', { recipientId: ACTIVE_ID, reason: 'ended' });
-    socket?.emit('call-ended', { recipientId: ACTIVE_ID });
-  }
+  window._lastCallEndedAt = Date.now();
+  const _notifyIds = peers.size > 0 ? [...peers.keys()] : (ACTIVE_ID ? [ACTIVE_ID] : []);
+  _notifyIds.forEach(uid => socket?.emit('call-ended', { recipientId: uid }));
   endCall();
   videoCallOverlay?.classList.add('hidden');
   elChatHeader?.classList.remove('hidden'); composer?.classList.remove('hidden');
@@ -326,21 +314,6 @@ function exitVideoCall() {
 // ── Call UI controls ──────────────────────────────────────────────────────
 function showCallControls() {
   if (document.getElementById('addCallBtn')) return;
-
-  // Live call timer
-  const timerEl = document.createElement('div');
-  timerEl.id = 'callTimer';
-  timerEl.style.cssText = 'position:absolute;top:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.6);color:#fff;font-size:16px;font-weight:700;padding:6px 20px;border-radius:20px;letter-spacing:2px;z-index:100;font-family:monospace;';
-  timerEl.textContent = '00:00';
-  videoCallOverlay?.appendChild(timerEl);
-
-  let _callSeconds = 0;
-  window._callTimerInterval = setInterval(() => {
-    _callSeconds++;
-    const m = Math.floor(_callSeconds / 60).toString().padStart(2, '0');
-    const s = (_callSeconds % 60).toString().padStart(2, '0');
-    timerEl.textContent = m + ':' + s;
-  }, 1000);
   const addBtn = document.createElement('button');
   addBtn.id = 'addCallBtn';
   addBtn.innerHTML = '➕📞';
@@ -481,10 +454,7 @@ cameraMuteBtn?.addEventListener('click', () => {
 });
 loudSpeakerBtn?.addEventListener('click', () => {
   isLoudspeakerOn = !isLoudspeakerOn;
-  // Use native bridge to switch between earpiece and speaker
-  if (window.AndroidBridge && window.AndroidBridge.setSpeaker) {
-    window.AndroidBridge.setSpeaker(isLoudspeakerOn);
-  }
+  if (remoteVideo) remoteVideo.muted = !isLoudspeakerOn;
   loudSpeakerBtn.textContent = isLoudspeakerOn ? '🔊' : '🔈';
 });
 

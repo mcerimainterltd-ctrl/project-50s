@@ -161,6 +161,7 @@ function connectSocket() {
     socket.on('call-acknowledged', ({ senderId }) => { console.log('📞 Call acknowledged by:', senderId); });
 
     socket.on('call-ended', ({ senderId }) => {
+      if (Date.now() - (window._lastCallEndedAt || 0) < 2000) return;
       stopCallRing();
       stopOutgoingRing();
       const incomingOverlay = document.getElementById('incomingCallOverlay');
