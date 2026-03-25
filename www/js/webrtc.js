@@ -304,6 +304,9 @@ function endCall() {
 function exitVideoCall() {
   stopOutgoingRing(); stopCallRing();
   if (window._callTimeouts) { window._callTimeouts.forEach(t => clearTimeout(t)); window._callTimeouts = []; }
+  if (window._callTimerInterval) { clearInterval(window._callTimerInterval); window._callTimerInterval = null; }
+  const timerEl = document.getElementById('callTimer');
+  if (timerEl) timerEl.remove();
   peers.forEach((peer, uid) => {
     socket?.emit('call-rejected', { recipientId: uid, reason: 'ended' });
     socket?.emit('call-ended', { recipientId: uid });
@@ -323,6 +326,21 @@ function exitVideoCall() {
 // ── Call UI controls ──────────────────────────────────────────────────────
 function showCallControls() {
   if (document.getElementById('addCallBtn')) return;
+
+  // Live call timer
+  const timerEl = document.createElement('div');
+  timerEl.id = 'callTimer';
+  timerEl.style.cssText = 'position:absolute;top:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.6);color:#fff;font-size:16px;font-weight:700;padding:6px 20px;border-radius:20px;letter-spacing:2px;z-index:100;font-family:monospace;';
+  timerEl.textContent = '00:00';
+  videoCallOverlay?.appendChild(timerEl);
+
+  let _callSeconds = 0;
+  window._callTimerInterval = setInterval(() => {
+    _callSeconds++;
+    const m = Math.floor(_callSeconds / 60).toString().padStart(2, '0');
+    const s = (_callSeconds % 60).toString().padStart(2, '0');
+    timerEl.textContent = m + ':' + s;
+  }, 1000);
   const addBtn = document.createElement('button');
   addBtn.id = 'addCallBtn';
   addBtn.innerHTML = '➕📞';
