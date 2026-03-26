@@ -341,14 +341,14 @@ function openImageFullscreen(imageUrl, imageName) {
   const closeBtn = document.createElement('button');
   closeBtn.textContent = '✕';
   closeBtn.style.cssText = [
-    'position:absolute;top:16px;right:18px;background:rgba(255,255,255,0.15)',
-    'border:none;color:#fff;font-size:20px;width:38px;height:38px',
+    'position:absolute;top:14px;right:14px;background:rgba(255,255,255,0.12)',
+    'border:none;color:#fff;font-size:14px;width:28px;height:28px',
     'border-radius:50%;cursor:pointer;display:flex;align-items:center',
-    'justify-content:center;z-index:1;backdrop-filter:blur(4px)',
-    'transition:background 0.15s'
+    'justify-content:center;z-index:10;backdrop-filter:blur(4px)',
+    'transition:background 0.15s;line-height:1;pointer-events:auto'
   ].join(';');
-  closeBtn.onmouseenter = () => closeBtn.style.background = 'rgba(255,255,255,0.28)';
-  closeBtn.onmouseleave = () => closeBtn.style.background = 'rgba(255,255,255,0.15)';
+  closeBtn.onmouseenter = () => closeBtn.style.background = 'rgba(255,255,255,0.25)';
+  closeBtn.onmouseleave = () => closeBtn.style.background = 'rgba(255,255,255,0.12)';
 
   // Download btn
   const dlBtn = document.createElement('a');
@@ -474,7 +474,7 @@ function openImageFullscreen(imageUrl, imageName) {
   // ── Tap to close (when not zoomed) ────────────────────────────────────
   let tapTime = 0;
   overlay.addEventListener('click', (e) => {
-    if (e.target === closeBtn || e.target === dlBtn) return;
+    if (closeBtn.contains(e.target) || dlBtn.contains(e.target)) return;
     const now = Date.now();
     if (now - tapTime < 300) { // double tap — reset zoom
       scale = 1; originX = 0; originY = 0; applyTransform(true); tapTime = 0; return;
