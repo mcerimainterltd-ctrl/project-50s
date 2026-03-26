@@ -117,10 +117,11 @@ function createPeerConnection(userId) {
       if (mergedDest) { remoteVideo.srcObject = mergedDest.stream; remoteVideo.muted = false; remoteVideo.play().catch(() => {}); }
     }
     updateCallParticipantsUI();
+    if (!_callTimerInterval) { _startCallTimer(); }
   };
   pc.oniceconnectionstatechange = () => {
     console.log('ICE [' + userId + ']: ' + pc.iceConnectionState);
-    if (pc.iceConnectionState === 'connected' && !_callTimerInterval) { _startCallTimer(); }
+    if (pc.iceConnectionState === 'connected' && !_callTimerInterval && remoteVideo.srcObject) { _startCallTimer(); }
     if (['failed','disconnected'].includes(pc.iceConnectionState)) {
       showNotification('Connection lost with ' + (CONTACTS.find(c => c.id === userId)?.name || userId));
       removePeer(userId);
