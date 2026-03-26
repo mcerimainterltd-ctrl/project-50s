@@ -129,14 +129,23 @@ function setupEventListeners() {
       // Step 3: Login with password
       const loginResponse = await fetch(serverURL+'/api/login', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ xameId, password }),
+        body: JSON.stringify({ xameId, password, otp: document.getElementById('otpInput')?.value?.trim() || undefined }),
       });
       if (!loginResponse.ok) throw new Error(`Server error: ${loginResponse.status}`);
       const ct2 = loginResponse.headers.get('content-type') || '';
       if (!ct2.includes('application/json')) throw new Error('No internet connection');
       const loginResult = await loginResponse.json();
 
+      if (loginResult.requiresOTP) {
+        document.getElementById('otpSection')?.classList.remove('hidden');
+        document.getElementById('otpMessage').textContent = loginResult.message || 'Enter the OTP sent to your email/phone.';
+        showNotification(loginResult.message || 'OTP sent.');
+        loginForm.dataset.pendingXameId = xameId;
+        loginForm.dataset.pendingPassword = password;
+        return;
+      } else
       if (loginResult.success) {
+        if (loginResult.sessionToken) persistentStorage.set('xame:sessionToken', loginResult.sessionToken);
         console.log(' Login successful for:', xameId);
         showNotification(`Welcome back, ${loginResult.user.firstName}!`);
         loginPasswordInput.value = '';
@@ -195,8 +204,10 @@ function bootstrapApp() {
 }
 
 //  DOMContentLoaded / Cordova device ready 
-document.addEventListener('DOMContentLoaded', bootstrapApp);
+let _bootstrapped = false;
+function _safeBootstrap() { if (_bootstrapped) return; _bootstrapped = true; bootstrapApp(); }
+document.addEventListener('DOMContentLoaded', _safeBootstrap);
 document.addEventListener('deviceready', () => {
   console.log(' Cordova device ready');
-  bootstrapApp();
+  _safeBootstrap();
 });
