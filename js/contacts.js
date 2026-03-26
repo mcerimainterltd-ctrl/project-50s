@@ -253,13 +253,23 @@ function openChat(id) {
   $('#chatSub').textContent = (c.online ? 'Online' : 'Offline') + statusText;
   $('#contactIdDisplay').textContent = c.id;
 
-  $('#backBtn')?.addEventListener('click', () => {
-    closeChat();
-    elChat?.classList.add('hidden');
-    elContacts?.classList.remove('hidden');
-    debouncedRenderContacts();
-  });
-  $('#chatMoreBtn')?.addEventListener('click', renderChatMoreMenu);
+  const backBtn = $('#backBtn');
+  if (backBtn) {
+    const freshBackBtn = backBtn.cloneNode(true);
+    backBtn.parentNode.replaceChild(freshBackBtn, backBtn);
+    freshBackBtn.addEventListener('click', () => {
+      closeChat();
+      elChat?.classList.add('hidden');
+      elContacts?.classList.remove('hidden');
+      debouncedRenderContacts();
+    });
+  }
+  const chatMoreBtn = $('#chatMoreBtn');
+  if (chatMoreBtn) {
+    const freshMoreBtn = chatMoreBtn.cloneNode(true);
+    chatMoreBtn.parentNode.replaceChild(freshMoreBtn, chatMoreBtn);
+    freshMoreBtn.addEventListener('click', renderChatMoreMenu);
+  }
 
   renderMessages();
   setTimeout(() => scrollToBottom(), 200);

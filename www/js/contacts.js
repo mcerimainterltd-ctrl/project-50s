@@ -78,7 +78,7 @@ function contactRow(c) {
   const unreadClass = unreadCount > 0 ? '' : 'hidden';
 
   let avatarContent = c.profilePic && !c.isProfilePicHidden
-? `<img class="profile-pic" src="${escapeHtml(profilePicUrl)}" alt="${escapeHtml(c.name || 'User')} profile picture" loading="lazy" onclick="openImageFullscreen('${escapeHtml(profilePicUrl)}', '${escapeHtml(c.name || 'User')}')" style="cursor:pointer"/>`
+    ? `<img class="profile-pic" src="${escapeHtml(profilePicUrl)}" alt="${escapeHtml(c.name || 'User')} profile picture" loading="lazy"/>`
     : `<div class="profile-placeholder"><span>${escapeHtml(initialsOf(c))}</span></div>`;
 
   div.innerHTML = `
@@ -137,7 +137,7 @@ function renderContacts(filter = '') {
     const isSelfOnline     = selfContact.online || false;
 
     let selfAvatarContent = selfContact.profilePic
-      ? `<img class="profile-pic" src="${escapeHtml(addCacheBuster(selfContact.profilePic))}" alt="Your profile picture" loading="lazy" onclick="openImageFullscreen('${escapeHtml(addCacheBuster(selfContact.profilePic))}', '${escapeHtml(selfContact.name)}')" style="cursor:pointer"/>`
+      ? `<img class="profile-pic" src="${escapeHtml(addCacheBuster(selfContact.profilePic))}" alt="Your profile picture" loading="lazy"/>`
       : `<div class="profile-placeholder"><span>${escapeHtml(initialsOf(selfContact))}</span></div>`;
 
     selfRow.innerHTML = `
@@ -222,7 +222,7 @@ function openChat(id) {
     : addCacheBuster(c.profilePic);
 
   const chatAvatarContent = (c.profilePic && !c.isProfilePicHidden)
-    ? `<img class="profile-pic" src="${escapeHtml(profilePicUrl)}" alt="${escapeHtml(c.name)} profile picture" loading="lazy" onclick="openImageFullscreen('${escapeHtml(profilePicUrl)}', '${escapeHtml(c.name)}')" style="cursor:pointer"/>`
+    ? `<img class="profile-pic" src="${escapeHtml(profilePicUrl)}" alt="${escapeHtml(c.name)} profile picture" loading="lazy"/>`
     : `<div class="profile-placeholder"><span>${escapeHtml(initialsOf(c))}</span></div>`;
 
   elChatHeader.innerHTML = `
@@ -253,13 +253,23 @@ function openChat(id) {
   $('#chatSub').textContent = (c.online ? 'Online' : 'Offline') + statusText;
   $('#contactIdDisplay').textContent = c.id;
 
-  $('#backBtn')?.addEventListener('click', () => {
-    closeChat();
-    elChat?.classList.add('hidden');
-    elContacts?.classList.remove('hidden');
-    debouncedRenderContacts();
-  });
-  $('#chatMoreBtn')?.addEventListener('click', renderChatMoreMenu);
+  const backBtn = $('#backBtn');
+  if (backBtn) {
+    const freshBackBtn = backBtn.cloneNode(true);
+    backBtn.parentNode.replaceChild(freshBackBtn, backBtn);
+    freshBackBtn.addEventListener('click', () => {
+      closeChat();
+      elChat?.classList.add('hidden');
+      elContacts?.classList.remove('hidden');
+      debouncedRenderContacts();
+    });
+  }
+  const chatMoreBtn = $('#chatMoreBtn');
+  if (chatMoreBtn) {
+    const freshMoreBtn = chatMoreBtn.cloneNode(true);
+    chatMoreBtn.parentNode.replaceChild(freshMoreBtn, chatMoreBtn);
+    freshMoreBtn.addEventListener('click', renderChatMoreMenu);
+  }
 
   renderMessages();
   setTimeout(() => scrollToBottom(), 200);
