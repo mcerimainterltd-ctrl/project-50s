@@ -272,8 +272,7 @@ function openChat(id) {
   }
 
   // Tap chat header avatar to fullscreen profile pic
-  const chatAvatar = $('#elChatHeader .avatar-container.chat-header img.profile-pic') ||
-                     document.querySelector('#elChatHeader .avatar-container.chat-header img.profile-pic');
+  const chatAvatar = elChatHeader.querySelector('.avatar-container.chat-header img.profile-pic');
   if (chatAvatar && c.profilePic && !c.isProfilePicHidden) {
     chatAvatar.style.cursor = 'pointer';
     chatAvatar._xameAvatarHandler && chatAvatar.removeEventListener('click', chatAvatar._xameAvatarHandler);
