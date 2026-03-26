@@ -10,6 +10,29 @@ let audioCtx   = null;
 let mergedDest = null;
 let callActive = false;
 let holdUserId = null;
+let _callTimerInterval = null;
+let _callTimerSeconds = 0;
+
+function _startCallTimer() {
+  const display = document.getElementById('callTimerDisplay');
+  if (!display) return;
+  _callTimerSeconds = 0;
+  display.textContent = '00:00';
+  clearInterval(_callTimerInterval);
+  _callTimerInterval = setInterval(() => {
+    _callTimerSeconds++;
+    const m = String(Math.floor(_callTimerSeconds / 60)).padStart(2, '0');
+    const s = String(_callTimerSeconds % 60).padStart(2, '0');
+    display.textContent = m + ':' + s;
+  }, 1000);
+}
+
+function _stopCallTimer() {
+  clearInterval(_callTimerInterval);
+  _callTimerInterval = null;
+  const display = document.getElementById('callTimerDisplay');
+  if (display) display.textContent = '';
+}
 
 // ── Draggable local video ─────────────────────────────────────────────────
 const makeDraggable = (el) => {
@@ -94,9 +117,11 @@ function createPeerConnection(userId) {
       if (mergedDest) { remoteVideo.srcObject = mergedDest.stream; remoteVideo.muted = false; remoteVideo.play().catch(() => {}); }
     }
     updateCallParticipantsUI();
+    if (!_callTimerInterval) { _startCallTimer(); }
   };
   pc.oniceconnectionstatechange = () => {
     console.log('ICE [' + userId + ']: ' + pc.iceConnectionState);
+    if (pc.iceConnectionState === 'connected' && !_callTimerInterval && remoteVideo.srcObject) { _startCallTimer(); }
     if (['failed','disconnected'].includes(pc.iceConnectionState)) {
       showNotification('Connection lost with ' + (CONTACTS.find(c => c.id === userId)?.name || userId));
       removePeer(userId);
@@ -296,7 +321,7 @@ function endCall() {
   pendingIceCandidates = [];
   if (audioCtx) { try { audioCtx.close(); } catch(_) {} audioCtx = null; mergedDest = null; }
   isAudioMuted = false; isVideoMuted = false; isLoudspeakerOn = false;
-  callActive = false; holdUserId = null;
+  callActive = false; holdUserId = null; _stopCallTimer();
   // Reset to normal audio mode
   if (window.AndroidBridge?.setCallAudioMode) window.AndroidBridge.setCallAudioMode(false);
 }
@@ -304,14 +329,9 @@ function endCall() {
 function exitVideoCall() {
   stopOutgoingRing(); stopCallRing();
   if (window._callTimeouts) { window._callTimeouts.forEach(t => clearTimeout(t)); window._callTimeouts = []; }
-  peers.forEach((peer, uid) => {
-    socket?.emit('call-rejected', { recipientId: uid, reason: 'ended' });
-    socket?.emit('call-ended', { recipientId: uid });
-  });
-  if (peers.size === 0) {
-    socket?.emit('call-rejected', { recipientId: ACTIVE_ID, reason: 'ended' });
-    socket?.emit('call-ended', { recipientId: ACTIVE_ID });
-  }
+  window._lastCallEndedAt = Date.now();
+  const _notifyIds = peers.size > 0 ? [...peers.keys()] : (ACTIVE_ID ? [ACTIVE_ID] : []);
+  _notifyIds.forEach(uid => socket?.emit('call-ended', { recipientId: uid }));
   endCall();
   videoCallOverlay?.classList.add('hidden');
   elChatHeader?.classList.remove('hidden'); composer?.classList.remove('hidden');

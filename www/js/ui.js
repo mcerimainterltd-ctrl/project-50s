@@ -318,19 +318,149 @@ function showImagePreview(file) {
 // ─────────────────────────────────────────────────────────────────────────
 function openImageFullscreen(imageUrl, imageName) {
   const overlay = document.createElement('div');
-  overlay.className = 'fullscreen-image-overlay';
-  overlay.innerHTML = `
-    <div class="fullscreen-image-container">
-      <button class="close-fullscreen-btn">✕</button>
-      <img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(imageName)}">
-      <div class="image-actions">
-        <a href="${escapeHtml(imageUrl)}" download="${escapeHtml(imageName)}" class="btn secondary">Download</a>
-      </div>
-    </div>
-  `;
+  overlay.style.cssText = [
+    'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.93)',
+    'display:flex;align-items:center;justify-content:center',
+    'touch-action:none;user-select:none;-webkit-user-select:none',
+    'opacity:0;transition:opacity 0.22s ease'
+  ].join(';');
+
+  const img = document.createElement('img');
+  img.src = escapeHtml(imageUrl);
+  img.alt = escapeHtml(imageName || '');
+  img.style.cssText = [
+    'max-width:92vw;max-height:88vh;border-radius:10px',
+    'object-fit:contain;display:block',
+    'transform-origin:center center;will-change:transform',
+    'transition:transform 0.08s linear',
+    'box-shadow:0 8px 40px rgba(0,0,0,0.7)'
+  ].join(';');
+
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = '✕';
+  closeBtn.style.cssText = [
+    'position:absolute;top:14px;right:14px;background:rgba(255,255,255,0.12)',
+    'border:none;color:#fff;font-size:14px;width:28px;height:28px',
+    'border-radius:50%;cursor:pointer;display:flex;align-items:center',
+    'justify-content:center;z-index:10;backdrop-filter:blur(4px)',
+    'transition:background 0.15s;line-height:1;pointer-events:auto'
+  ].join(';');
+
+  const dlBtn = document.createElement('a');
+  dlBtn.href = escapeHtml(imageUrl);
+  dlBtn.download = escapeHtml(imageName || 'image');
+  dlBtn.textContent = '⬇ Save';
+  dlBtn.style.cssText = [
+    'position:absolute;bottom:22px;left:50%;transform:translateX(-50%)',
+    'background:rgba(255,255,255,0.13);color:#fff;font-size:13px',
+    'padding:7px 22px;border-radius:20px;text-decoration:none',
+    'backdrop-filter:blur(4px);border:1px solid rgba(255,255,255,0.2)',
+    'transition:background 0.15s;pointer-events:auto'
+  ].join(';');
+
+  overlay.appendChild(img);
+  overlay.appendChild(closeBtn);
+  overlay.appendChild(dlBtn);
   document.body.appendChild(overlay);
-  overlay.querySelector('.close-fullscreen-btn')?.addEventListener('click', () => overlay.remove());
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  requestAnimationFrame(() => overlay.style.opacity = '1');
+
+  let scale = 1, minScale = 1, maxScale = 5;
+  let originX = 0, originY = 0;
+  let lastDist = 0;
+  let isDragging = false, dragStartX = 0, dragStartY = 0;
+  let swipeStartY = 0, isSwiping = false;
+
+  function applyTransform(transition) {
+    img.style.transition = transition ? 'transform 0.2s ease' : 'none';
+    img.style.transform = 'translate(' + originX + 'px,' + originY + 'px) scale(' + scale + ')';
+  }
+
+  function clampPan() {
+    if (scale <= 1) { originX = 0; originY = 0; return; }
+    const r = img.getBoundingClientRect();
+    const maxX = Math.max(0, (r.width  - window.innerWidth)  / 2);
+    const maxY = Math.max(0, (r.height - window.innerHeight) / 2);
+    originX = Math.max(-maxX, Math.min(maxX, originX));
+    originY = Math.max(-maxY, Math.min(maxY, originY));
+  }
+
+  function dismiss() {
+    overlay.style.opacity = '0';
+    setTimeout(() => overlay.remove(), 220);
+  }
+
+  overlay.addEventListener('touchstart', (e) => {
+    if (closeBtn.contains(e.target) || dlBtn.contains(e.target)) return;
+    if (e.touches.length === 1) {
+      swipeStartY = e.touches[0].clientY;
+      isSwiping = scale <= 1;
+      isDragging = scale > 1;
+      dragStartX = e.touches[0].clientX - originX;
+      dragStartY = e.touches[0].clientY - originY;
+    } else if (e.touches.length === 2) {
+      isSwiping = false; isDragging = false;
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      lastDist = Math.hypot(dx, dy);
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  overlay.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      const newScale = Math.min(maxScale, Math.max(minScale, scale * (dist / lastDist)));
+      originX = originX * (newScale / scale);
+      originY = originY * (newScale / scale);
+      scale = newScale; lastDist = dist;
+      clampPan(); applyTransform(false);
+    } else if (e.touches.length === 1) {
+      if (isDragging) {
+        originX = e.touches[0].clientX - dragStartX;
+        originY = e.touches[0].clientY - dragStartY;
+        clampPan(); applyTransform(false);
+      } else if (isSwiping) {
+        const dy = e.touches[0].clientY - swipeStartY;
+        if (dy > 0) {
+          overlay.style.transform = 'translateY(' + (dy * 0.4) + 'px)';
+          overlay.style.opacity = String(Math.max(0, 1 - dy / 320));
+        }
+      }
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  overlay.addEventListener('touchend', (e) => {
+    if (e.touches.length === 0) {
+      if (isSwiping) {
+        const dy = e.changedTouches[0].clientY - swipeStartY;
+        if (dy > 90) { dismiss(); return; }
+        overlay.style.transform = ''; overlay.style.opacity = '1';
+      }
+      if (scale < 1.05) { scale = 1; originX = 0; originY = 0; applyTransform(true); }
+      isSwiping = false; isDragging = false;
+    }
+    if (e.touches.length === 1 && e.changedTouches.length === 1) {
+      dragStartX = e.touches[0].clientX - originX;
+      dragStartY = e.touches[0].clientY - originY;
+      isDragging = scale > 1;
+    }
+  });
+
+  let tapTime = 0;
+  overlay.addEventListener('click', (e) => {
+    if (closeBtn.contains(e.target) || dlBtn.contains(e.target)) return;
+    const now = Date.now();
+    if (now - tapTime < 300) { scale = 1; originX = 0; originY = 0; applyTransform(true); tapTime = 0; return; }
+    tapTime = now;
+    setTimeout(() => { if (Date.now() - tapTime >= 280 && scale <= 1) dismiss(); }, 290);
+  });
+
+  closeBtn.addEventListener('click', dismiss);
+  const onKey = (e) => { if (e.key === 'Escape') { dismiss(); document.removeEventListener('keydown', onKey); } };
+  document.addEventListener('keydown', onKey);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
