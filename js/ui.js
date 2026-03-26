@@ -399,6 +399,7 @@ function openImageFullscreen(imageUrl, imageName) {
 
   // ── Touch handlers ─────────────────────────────────────────────────────
   overlay.addEventListener('touchstart', (e) => {
+    if (closeBtn.contains(e.target) || dlBtn.contains(e.target)) return;
     if (e.touches.length === 1) {
       swipeStartY = e.touches[0].clientY;
       swipeStartX = e.touches[0].clientX;
