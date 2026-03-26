@@ -255,20 +255,33 @@ function openChat(id) {
 
   const backBtn = $('#backBtn');
   if (backBtn) {
-    const freshBackBtn = backBtn.cloneNode(true);
-    backBtn.parentNode.replaceChild(freshBackBtn, backBtn);
-    freshBackBtn.addEventListener('click', () => {
+    backBtn._xameBackHandler && backBtn.removeEventListener('click', backBtn._xameBackHandler);
+    backBtn._xameBackHandler = () => {
       closeChat();
       elChat?.classList.add('hidden');
       elContacts?.classList.remove('hidden');
       debouncedRenderContacts();
-    });
+    };
+    backBtn.addEventListener('click', backBtn._xameBackHandler);
   }
   const chatMoreBtn = $('#chatMoreBtn');
   if (chatMoreBtn) {
-    const freshMoreBtn = chatMoreBtn.cloneNode(true);
-    chatMoreBtn.parentNode.replaceChild(freshMoreBtn, chatMoreBtn);
-    freshMoreBtn.addEventListener('click', renderChatMoreMenu);
+    chatMoreBtn._xameMoreHandler && chatMoreBtn.removeEventListener('click', chatMoreBtn._xameMoreHandler);
+    chatMoreBtn._xameMoreHandler = renderChatMoreMenu;
+    chatMoreBtn.addEventListener('click', chatMoreBtn._xameMoreHandler);
+  }
+
+  // Tap chat header avatar to fullscreen profile pic
+  const chatAvatar = $('#elChatHeader .avatar-container.chat-header img.profile-pic') ||
+                     document.querySelector('#elChatHeader .avatar-container.chat-header img.profile-pic');
+  if (chatAvatar && c.profilePic && !c.isProfilePicHidden) {
+    chatAvatar.style.cursor = 'pointer';
+    chatAvatar._xameAvatarHandler && chatAvatar.removeEventListener('click', chatAvatar._xameAvatarHandler);
+    chatAvatar._xameAvatarHandler = (e) => {
+      e.stopPropagation();
+      openImageFullscreen(addCacheBuster(c.profilePic), c.name || 'Profile');
+    };
+    chatAvatar.addEventListener('click', chatAvatar._xameAvatarHandler);
   }
 
   renderMessages();

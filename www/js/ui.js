@@ -317,20 +317,179 @@ function showImagePreview(file) {
 // Fullscreen image viewer
 // ─────────────────────────────────────────────────────────────────────────
 function openImageFullscreen(imageUrl, imageName) {
+  // ── Overlay & layout ───────────────────────────────────────────────────
   const overlay = document.createElement('div');
-  overlay.className = 'fullscreen-image-overlay';
-  overlay.innerHTML = `
-    <div class="fullscreen-image-container">
-      <button class="close-fullscreen-btn">✕</button>
-      <img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(imageName)}">
-      <div class="image-actions">
-        <a href="${escapeHtml(imageUrl)}" download="${escapeHtml(imageName)}" class="btn secondary">Download</a>
-      </div>
-    </div>
-  `;
+  overlay.style.cssText = [
+    'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.93)',
+    'display:flex;align-items:center;justify-content:center',
+    'touch-action:none;user-select:none;-webkit-user-select:none',
+    'opacity:0;transition:opacity 0.22s ease'
+  ].join(';');
+
+  const img = document.createElement('img');
+  img.src = escapeHtml(imageUrl);
+  img.alt = escapeHtml(imageName || '');
+  img.style.cssText = [
+    'max-width:92vw;max-height:88vh;border-radius:10px',
+    'object-fit:contain;display:block',
+    'transform-origin:center center;will-change:transform',
+    'transition:transform 0.08s linear',
+    'box-shadow:0 8px 40px rgba(0,0,0,0.7)'
+  ].join(';');
+
+  // Close btn
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = '✕';
+  closeBtn.style.cssText = [
+    'position:absolute;top:16px;right:18px;background:rgba(255,255,255,0.15)',
+    'border:none;color:#fff;font-size:20px;width:38px;height:38px',
+    'border-radius:50%;cursor:pointer;display:flex;align-items:center',
+    'justify-content:center;z-index:1;backdrop-filter:blur(4px)',
+    'transition:background 0.15s'
+  ].join(';');
+  closeBtn.onmouseenter = () => closeBtn.style.background = 'rgba(255,255,255,0.28)';
+  closeBtn.onmouseleave = () => closeBtn.style.background = 'rgba(255,255,255,0.15)';
+
+  // Download btn
+  const dlBtn = document.createElement('a');
+  dlBtn.href = escapeHtml(imageUrl);
+  dlBtn.download = escapeHtml(imageName || 'image');
+  dlBtn.textContent = '⬇ Save';
+  dlBtn.style.cssText = [
+    'position:absolute;bottom:22px;left:50%;transform:translateX(-50%)',
+    'background:rgba(255,255,255,0.13);color:#fff;font-size:13px',
+    'padding:7px 22px;border-radius:20px;text-decoration:none',
+    'backdrop-filter:blur(4px);border:1px solid rgba(255,255,255,0.2)',
+    'transition:background 0.15s'
+  ].join(';');
+
+  overlay.appendChild(img);
+  overlay.appendChild(closeBtn);
+  overlay.appendChild(dlBtn);
   document.body.appendChild(overlay);
-  overlay.querySelector('.close-fullscreen-btn')?.addEventListener('click', () => overlay.remove());
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  requestAnimationFrame(() => overlay.style.opacity = '1');
+
+  // ── State ──────────────────────────────────────────────────────────────
+  let scale = 1, minScale = 1, maxScale = 5;
+  let originX = 0, originY = 0; // pan offset
+  let lastDist = 0, lastMidX = 0, lastMidY = 0;
+  let isDragging = false, dragStartX = 0, dragStartY = 0;
+  let panOriginX = 0, panOriginY = 0;
+  let swipeStartY = 0, swipeStartX = 0, isSwiping = false;
+
+  function applyTransform(transition) {
+    img.style.transition = transition ? 'transform 0.2s ease' : 'none';
+    img.style.transform = `translate(${originX}px, ${originY}px) scale(${scale})`;
+  }
+
+  function clampPan() {
+    if (scale <= 1) { originX = 0; originY = 0; return; }
+    const r = img.getBoundingClientRect();
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const maxX = Math.max(0, (r.width  - vw) / 2);
+    const maxY = Math.max(0, (r.height - vh) / 2);
+    originX = Math.max(-maxX, Math.min(maxX, originX));
+    originY = Math.max(-maxY, Math.min(maxY, originY));
+  }
+
+  function dismiss() {
+    overlay.style.opacity = '0';
+    setTimeout(() => overlay.remove(), 220);
+  }
+
+  // ── Touch handlers ─────────────────────────────────────────────────────
+  overlay.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1) {
+      swipeStartY = e.touches[0].clientY;
+      swipeStartX = e.touches[0].clientX;
+      isSwiping = scale <= 1;
+      isDragging = scale > 1;
+      dragStartX = e.touches[0].clientX - originX;
+      dragStartY = e.touches[0].clientY - originY;
+      panOriginX = originX; panOriginY = originY;
+    } else if (e.touches.length === 2) {
+      isSwiping = false; isDragging = false;
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      lastDist = Math.hypot(dx, dy);
+      lastMidX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      lastMidY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  overlay.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 2) {
+      // Pinch zoom
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      const delta = dist / lastDist;
+      const newScale = Math.min(maxScale, Math.max(minScale, scale * delta));
+      // Zoom toward pinch midpoint
+      originX = midX - (midX - originX) * (newScale / scale);
+      originY = midY - (midY - originY) * (newScale / scale);
+      scale = newScale;
+      lastDist = dist; lastMidX = midX; lastMidY = midY;
+      clampPan();
+      applyTransform(false);
+    } else if (e.touches.length === 1) {
+      if (isDragging) {
+        originX = e.touches[0].clientX - dragStartX;
+        originY = e.touches[0].clientY - dragStartY;
+        clampPan();
+        applyTransform(false);
+      } else if (isSwiping) {
+        const dy = e.touches[0].clientY - swipeStartY;
+        if (dy > 0) {
+          overlay.style.transform = `translateY(${dy * 0.4}px)`;
+          overlay.style.opacity = String(Math.max(0, 1 - dy / 320));
+        }
+      }
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  overlay.addEventListener('touchend', (e) => {
+    if (e.touches.length === 0) {
+      if (isSwiping) {
+        const dy = e.changedTouches[0].clientY - swipeStartY;
+        if (dy > 90) { dismiss(); return; }
+        overlay.style.transform = '';
+        overlay.style.opacity = '1';
+      }
+      if (scale < 1.05) { scale = 1; originX = 0; originY = 0; applyTransform(true); }
+      isSwiping = false; isDragging = false;
+    }
+    if (e.touches.length === 1 && e.changedTouches.length === 1) {
+      // went from 2 fingers to 1 — reset drag anchor
+      dragStartX = e.touches[0].clientX - originX;
+      dragStartY = e.touches[0].clientY - originY;
+      isDragging = scale > 1;
+    }
+  });
+
+  // ── Tap to close (when not zoomed) ────────────────────────────────────
+  let tapTime = 0;
+  overlay.addEventListener('click', (e) => {
+    if (e.target === closeBtn || e.target === dlBtn) return;
+    const now = Date.now();
+    if (now - tapTime < 300) { // double tap — reset zoom
+      scale = 1; originX = 0; originY = 0; applyTransform(true); tapTime = 0; return;
+    }
+    tapTime = now;
+    setTimeout(() => {
+      if (Date.now() - tapTime >= 280 && scale <= 1) dismiss();
+    }, 290);
+  });
+
+  closeBtn.addEventListener('click', dismiss);
+
+  // ── Keyboard ──────────────────────────────────────────────────────────
+  const onKey = (e) => { if (e.key === 'Escape') { dismiss(); document.removeEventListener('keydown', onKey); } };
+  document.addEventListener('keydown', onKey);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -494,9 +653,6 @@ function openAccountMenu() {
     <div class="menu-item" id="accountGroups">👥 Xame Groups</div>
     <div class="menu-item" id="accountBroadcast">📢 Mass Messaging</div>
     <div class="menu-item" id="accountSmsTemplates">💬 SMS Templates</div>
-    <div class="menu-item" id="accountSessions">🔐 Active Sessions</div>
-    <div class="menu-item" id="accountExtraSecurity">🛡️ Extra Security</div>
-    <div class="menu-item" id="accountAppLock">🔐 App Lock PIN</div>
     <div class="menu-item" id="accountCallSchedule">📅 Call Schedule</div>
     <div class="menu-item" id="accountStealth" style="display:flex;align-items:center;justify-content:space-between">🕵️ Stealth Mode <span id="stealthBadge" style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(255,255,255,0.1);color:#aaa">OFF</span></div>
   `;
@@ -512,9 +668,6 @@ function openAccountMenu() {
   panel.querySelector('#accountGroups')?.addEventListener('click', () => { closeAccountMenu(); if (typeof groupsModule !== 'undefined') { groupsModule.init().then(() => groupsModule.showGroupsList()); } });
   panel.querySelector('#accountBroadcast')?.addEventListener('click', () => { closeAccountMenu(); if (typeof broadcastModule !== 'undefined') { broadcastModule.init().then(() => broadcastModule.showBroadcastScreen()); } });
   panel.querySelector('#accountSmsTemplates')?.addEventListener('click', () => { closeAccountMenu(); if (typeof smsTemplates !== 'undefined') smsTemplates.showManageDialog(); });
-  panel.querySelector('#accountSessions')?.addEventListener('click', () => { closeAccountMenu(); showActiveSessions(); });
-  panel.querySelector('#accountExtraSecurity')?.addEventListener('click', () => { closeAccountMenu(); showExtraSecurityDialog(); });
-  panel.querySelector('#accountAppLock')?.addEventListener('click', () => { closeAccountMenu(); appLock.showSetupDialog(); });
   // Stealth mode init
   const stealthBadge = panel.querySelector('#stealthBadge');
   const stealthOn = localStorage.getItem('xame:stealth') === 'true';
