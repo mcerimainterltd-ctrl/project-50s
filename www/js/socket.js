@@ -42,7 +42,7 @@ function connectSocket() {
       reconnection:           true,
       reconnectionDelay:      1000,
       reconnectionDelayMax:   5000,
-      reconnectionAttempts:   10,
+      reconnectionAttempts:   Infinity,
       timeout:                20000,
     });
 
@@ -161,7 +161,6 @@ function connectSocket() {
     socket.on('call-acknowledged', ({ senderId }) => { console.log('📞 Call acknowledged by:', senderId); });
 
     socket.on('call-ended', ({ senderId }) => {
-      if (Date.now() - (window._lastCallEndedAt || 0) < 2000) return;
       stopCallRing();
       stopOutgoingRing();
       const incomingOverlay = document.getElementById('incomingCallOverlay');
@@ -171,18 +170,47 @@ function connectSocket() {
         document.getElementById('quickReplyPanel')?.classList.add('hidden');
         showNotification('📵 Missed call from ' + (senderId || 'unknown'));
         if (senderId) {
-          // Log missed call in chat
-          const chat = getChat(senderId);
-          chat.push({ id: Date.now().toString(36), text: '📵 Missed call', type: 'received', ts: Date.now(), status: 'seen', system: true });
-          setChat(senderId, chat);
-          if (ACTIVE_ID === senderId && typeof renderMessages === 'function') renderMessages();
-          // Update call history badge
+          // Only update call history badge, not chat
           if (typeof callHistoryModule !== 'undefined') callHistoryModule.addMissedCall(senderId);
         }
       }
       if (typeof peers !== 'undefined' && peers.size > 0 && typeof exitVideoCall === 'function') {
         exitVideoCall();
       }
+    });
+
+    socket.on('profile-updated', ({ userId, profilePic, preferredName, hideProfilePicture, hidePreferredName }) => {
+      // Update contact in memory and storage
+      const contacts = storage.get(KEYS.contacts) || [];
+      const idx = contacts.findIndex(c => c.id === userId);
+      if (idx !== -1) {
+        if (profilePic !== undefined) contacts[idx].profilePic = profilePic;
+        if (preferredName !== undefined && preferredName !== '') contacts[idx].name = preferredName;
+        else if (preferredName === '') contacts[idx].name = userId;
+        if (hideProfilePicture !== undefined) contacts[idx].isProfilePicHidden = hideProfilePicture;
+        if (hidePreferredName !== undefined) contacts[idx].isNameHidden = hidePreferredName;
+        storage.set(KEYS.contacts, contacts);
+        CONTACTS = contacts;
+        scheduleRender(() => renderContacts(), 'contacts');
+      }
+      // Update USER if it's the current user
+      if (userId === USER?.xameId) {
+        if (profilePic !== undefined) USER.profilePic = profilePic;
+        if (preferredName !== undefined) USER.preferredName = preferredName;
+        if (hideProfilePicture !== undefined) USER.hideProfilePicture = hideProfilePicture;
+        if (hidePreferredName !== undefined) USER.hidePreferredName = hidePreferredName;
+        storage.set(KEYS.user, USER);
+      }
+    });
+
+    socket.on('force-logout', ({ reason }) => {
+      // Clear all local data and force back to login
+      persistentStorage.set('xame:sessionToken', null);
+      persistentStorage.set(KEYS.user, null);
+      persistentStorage.set(KEYS.contacts, null);
+      storage.clear();
+      alert('Security alert: ' + (reason || 'You have been logged out remotely.'));
+      window.location.reload();
     });
 
     console.log('✅ Socket event handlers registered for:', USER.xameId);
@@ -225,6 +253,8 @@ function registerSocketHandlers(socket) {
   socket.on('reconnect_attempt', (attemptNumber) => { console.log(`Reconnection attempt ${attemptNumber}`); showNotification(`Reconnecting... (attempt ${attemptNumber})`); });
 
   socket.on('reconnect', (attemptNumber) => {
+    reconnectAttempts = 0; // Reset counter on successful reconnect
+    if (window._offlineTimer) { clearTimeout(window._offlineTimer); window._offlineTimer = null; }
     console.log(`Reconnected after ${attemptNumber} attempts`);
     showNotification('Reconnected successfully!');
     if (USER?.xameId) {
@@ -302,8 +332,14 @@ function registerSocketHandlers(socket) {
   });
 
   socket.on('disconnect', () => {
-    const contacts = storage.get(KEYS.contacts);
-    if (contacts) { contacts.forEach(c => c.online = false); storage.set(KEYS.contacts, contacts); scheduleRender(() => renderContacts(), 'contacts'); }
+    // Don't immediately mark contacts offline - wait to see if we reconnect quickly
+    if (window._offlineTimer) clearTimeout(window._offlineTimer);
+    window._offlineTimer = setTimeout(() => {
+      if (!socket?.connected) {
+        const contacts = storage.get(KEYS.contacts);
+        if (contacts) { contacts.forEach(c => c.online = false); storage.set(KEYS.contacts, contacts); scheduleRender(() => renderContacts(), 'contacts'); }
+      }
+    }, 10000); // Wait 10 seconds before marking offline
   });
 
   socket.on('online_users', (ids) => {
@@ -412,8 +448,8 @@ function startHeartbeat() {
     if (socket?.connected && USER?.xameId) {
       if (localStorage.getItem('xame:stealth') !== 'true') socket.emit('heartbeat', { userId: USER.xameId, timestamp: Date.now() });
     } else if (!socket?.connected) {
-      console.log('💔 Heartbeat: socket disconnected, attempting reconnect');
-      connectSocket();
+      console.log('💔 Heartbeat: socket disconnected, letting socket.io handle reconnect');
+      // Don't manually reconnect - socket.io handles this automatically
     }
   }, HEARTBEAT_INTERVAL);
   if (socket?.connected && localStorage.getItem('xame:stealth') !== 'true') socket.emit('heartbeat', { userId: USER.xameId, timestamp: Date.now() });

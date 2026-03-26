@@ -117,14 +117,6 @@ const callHistoryModule = (() => {
     return d.toLocaleDateString();
   }
 
-  function _formatDuration(seconds) {
-    if (!seconds || seconds < 1) return '';
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    if (m === 0) return `${s}s`;
-    return `${m}m ${s}s`;
-  }
-
   async function clearHistory() {
     try {
       await fetch(serverURL+'/api/call-history/' + USER.xameId, { method: 'DELETE' });
