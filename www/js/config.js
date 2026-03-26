@@ -74,3 +74,4 @@ const MESSAGE_PAGE_SIZE = 100;
 //  VAPID public key (push notifications) 
 const VAPID_PUBLIC_KEY =
   'BKRD94hqX829Dy5EobzJRdUJRMMGJp_Irma-KBPOAtgn6CvK-FvSVnjRuAlelMfqBrKVsd47HvpciMr_ZpBenL8';
+// build trigger Thu Mar 26 13:41:03 WAT 2026
