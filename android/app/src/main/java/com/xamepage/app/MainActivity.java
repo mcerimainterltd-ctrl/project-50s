@@ -20,6 +20,8 @@ import android.net.NetworkRequest;
 import android.net.Network;
 import android.webkit.JavascriptInterface;
 import android.os.AsyncTask;
+import android.speech.tts.TextToSpeech;
+import java.util.Locale;
 import java.io.InputStream;
 import java.io.FileOutputStream;
 import java.net.HttpURLConnection;
@@ -29,6 +31,7 @@ import com.xamepage.app.CallNotificationReceiver;
 import com.capacitorjs.plugins.splashscreen.SplashScreenPlugin;
 
 public class MainActivity extends BridgeActivity {
+    private TextToSpeech tts;
 
     @Override
     protected void onCreate(android.os.Bundle savedInstanceState) {
@@ -168,6 +171,25 @@ public class MainActivity extends BridgeActivity {
                     }
                 });
             }
+            @JavascriptInterface
+            public void speak(String text) {
+                if (tts == null) {
+                    tts = new TextToSpeech(MainActivity.this, status -> {
+                        if (status == TextToSpeech.SUCCESS) {
+                            tts.setLanguage(Locale.getDefault());
+                            tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "xame_tts");
+                        }
+                    });
+                } else {
+                    tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "xame_tts");
+                }
+            }
+
+            @JavascriptInterface
+            public void stopSpeaking() {
+                if (tts != null) tts.stop();
+            }
+
             @JavascriptInterface
             public void openFileBase64(String base64Data, String fileName, String mimeType) {
                 try {

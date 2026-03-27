@@ -15,6 +15,7 @@ document.addEventListener('visibilitychange', () => {
     // Do NOT stop heartbeat — keep user online in background
 
     if ('speechSynthesis' in window) speechSynthesis.cancel();
+    if (window.AndroidBridge?.stopSpeaking) window.AndroidBridge.stopSpeaking();
 
     if (speechRecognizer?.running) speechRecognizer.stop();
 
