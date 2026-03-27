@@ -84,9 +84,24 @@ const translationModule = (() => {
       resultEl.style.display = "block";
       if(result.success) {
         const langName = LANGUAGES.find(l => l.code === lang)?.name || lang;
-        resultEl.innerHTML = "<div style=\"font-size:11px;color:#00B0A0;font-weight:700;margin-bottom:6px;\">&#127758; " + langName + "</div><div>" + result.text + "</div><button id=\"xTrCopy\" style=\"margin-top:10px;background:rgba(0,176,160,0.15);border:1px solid rgba(0,176,160,0.3);border-radius:8px;padding:6px 14px;color:#00B0A0;font-size:12px;font-weight:600;cursor:pointer;\">&#128203; Copy</button>";
+        resultEl.innerHTML = "<div style=\"font-size:11px;color:#00B0A0;font-weight:700;margin-bottom:6px;\">&#127758; " + langName + "</div><div>" + result.text + "</div><button id=\"xTrCopy\" style=\"margin-top:10px;background:rgba(0,176,160,0.15);border:1px solid rgba(0,176,160,0.3);border-radius:8px;padding:6px 14px;color:#00B0A0;font-size:12px;font-weight:600;cursor:pointer;\">&#10697; Copy</button>";
         resultEl.querySelector("#xTrCopy").addEventListener("click", () => {
-          navigator.clipboard?.writeText(result.text).then(() => showNotification("Translation copied!"));
+          const text = result.text;
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(() => showNotification("Translation copied!")).catch(() => {
+              const ta = document.createElement("textarea");
+              ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+              document.body.appendChild(ta); ta.focus(); ta.select();
+              document.execCommand("copy"); document.body.removeChild(ta);
+              showNotification("Translation copied!");
+            });
+          } else {
+            const ta = document.createElement("textarea");
+            ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+            document.body.appendChild(ta); ta.focus(); ta.select();
+            document.execCommand("copy"); document.body.removeChild(ta);
+            showNotification("Translation copied!");
+          }
         });
         showTranslationBubble(bubbleEl, result.text, langName);
       } else {
