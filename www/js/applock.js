@@ -240,12 +240,20 @@ const appLock = (() => {
     if (_locked && isEnabled()) showLockScreen();
   });
 
-  // Initialize
-  checkBiometric();
+  // Initialize — wait for biometric check before showing lock screen
   if (isEnabled() && getPin()) {
     _locked = true;
-    // Lock on next frame after app loads
-    setTimeout(() => { if (_locked) showLockScreen(); }, 1000);
+    if (window.AndroidBridge?.checkBiometricAvailable) {
+      window.onBiometricAvailable = (available) => {
+        _biometricAvailable = available;
+        if (_locked) showLockScreen();
+      };
+      window.AndroidBridge.checkBiometricAvailable();
+    } else {
+      setTimeout(() => { if (_locked) showLockScreen(); }, 1000);
+    }
+  } else {
+    checkBiometric();
   }
 
   return { lock, unlock, showSetupDialog, isEnabled };
