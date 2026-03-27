@@ -217,6 +217,14 @@ function connectSocket() {
     console.log('✅ Socket event handlers registered for:', USER.xameId);
     document.dispatchEvent(new CustomEvent('xame:socket-ready'));
 
+    // Handle answer from notification (Android)
+    document.addEventListener('xame:answer-call', () => {
+      const pending = window.__pendingCall__;
+      if (pending && typeof handleIncomingCall === 'function') {
+        handleIncomingCall(pending.offer, pending.callerId);
+      }
+    }, { once: true });
+
   } catch (error) {
     console.error('❌ Socket connection error:', error);
     showNotification('Failed to connect to server');

@@ -392,6 +392,34 @@ public class MainActivity extends BridgeActivity {
         }
     }
     @Override
+    protected void onNewIntent(android.content.Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleCallIntent(intent);
+    }
+
+    private void handleCallIntent(android.content.Intent intent) {
+        if (intent == null) return;
+        if (intent.getBooleanExtra("answerCall", false)) {
+            intent.removeExtra("answerCall");
+            getBridge().getWebView().post(() ->
+                getBridge().getWebView().evaluateJavascript(
+                    "window.__pendingCallAction__ = 'answer'; document.dispatchEvent(new CustomEvent('xame:answer-call'));",
+                    null
+                )
+            );
+        } else if (intent.getBooleanExtra("declineCall", false)) {
+            intent.removeExtra("declineCall");
+            getBridge().getWebView().post(() ->
+                getBridge().getWebView().evaluateJavascript(
+                    "window.__pendingCallAction__ = 'decline'; document.dispatchEvent(new CustomEvent('xame:decline-call'));",
+                    null
+                )
+            );
+        }
+    }
+
+    @Override
     public void onStart() {
         super.onStart();
         java.util.List<String> permList = new java.util.ArrayList<>();
