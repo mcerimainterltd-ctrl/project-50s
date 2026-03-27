@@ -227,17 +227,26 @@ const appLock = (() => {
   }
 
   // Lock on background
+  function _hasActiveCall() {
+    const incomingOverlay = document.getElementById('incomingCallOverlay');
+    const videoCallOverlay = document.getElementById('videoCallOverlay');
+    const incomingVisible = incomingOverlay && !incomingOverlay.classList.contains('hidden');
+    const callActive = videoCallOverlay && !videoCallOverlay.classList.contains('hidden');
+    return incomingVisible || callActive || (typeof window.callActive !== 'undefined' && window.callActive);
+  }
+
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
       if (isEnabled()) _locked = true;
-    } else if (document.visibilitystate === 'visible' && _locked) {
+    } else if (document.visibilityState === 'visible' && _locked) {
+      if (_hasActiveCall()) return;
       showLockScreen();
     }
   });
 
   // Also handle Capacitor app state
   document.addEventListener('resume', () => {
-    if (_locked && isEnabled()) showLockScreen();
+    if (_locked && isEnabled() && !_hasActiveCall()) showLockScreen();
   });
 
   // Initialize — wait for biometric check before showing lock screen
