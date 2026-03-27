@@ -59,6 +59,23 @@ public class MainActivity extends BridgeActivity {
         });
         XameTelecomHelper.registerPhoneAccount(this);
         registerPlugin(FirebaseMessagingPlugin.class);
+
+        // ── WebView stability & native feel ──────────────────────────────
+        android.webkit.WebView webView = getBridge().getWebView();
+        // Hardware acceleration
+        webView.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null);
+        // Remove overscroll bounce effect
+        webView.setOverScrollMode(android.view.View.OVER_SCROLL_NEVER);
+        // Remove scroll bars
+        webView.setVerticalScrollBarEnabled(false);
+        webView.setHorizontalScrollBarEnabled(false);
+        // Remove scroll glow effect
+        webView.setVerticalFadingEdgeEnabled(false);
+        webView.setHorizontalFadingEdgeEnabled(false);
+        // Disable long-press selection vibration
+        webView.setHapticFeedbackEnabled(false);
+        // Smooth rendering
+        webView.getSettings().setRenderPriority(android.webkit.WebSettings.RenderPriority.HIGH);
         // Enable file downloads in WebView
         // Add JavaScript interface for native file opening
         getBridge().getWebView().addJavascriptInterface(new Object() {
