@@ -663,20 +663,26 @@ html, body {
 
 .online-dot {
   position: absolute;
-  bottom: 0;
-  right: 0;
-  width: 12px;
-  height: 12px;
-  background-color: var(--secondary-accent);
-  border: 2px solid var(--dark-bg);
+  inset: -2px;
+  width: auto;
+  height: auto;
+  background: transparent;
+  border: 2.5px solid var(--secondary-accent);
   border-radius: 50%;
-  animation: pulse 1.5s infinite;
+  animation: onlineRing 2s ease-in-out infinite;
+  pointer-events: none;
 }
 
 @keyframes pulse {
   0%   { box-shadow: 0 0 0 0 rgba(37, 211, 102, 0.7); }
   70%  { box-shadow: 0 0 0 10px rgba(37, 211, 102, 0); }
   100% { box-shadow: 0 0 0 0 rgba(37, 211, 102, 0); }
+}
+
+@keyframes onlineRing {
+  0%   { border-color: var(--secondary-accent); opacity: 1; }
+  50%  { border-color: var(--secondary-accent); opacity: 0.5; }
+  100% { border-color: var(--secondary-accent); opacity: 1; }
 }
 
 #chat {
@@ -1954,7 +1960,7 @@ audio { display: none; }
 .avatar-container { position: relative; width: 50px; height: 50px; flex-shrink: 0; }
 .avatar-container.chat-header { width: 36px; height: 36px; }
 .avatar-container .profile-placeholder { width: 100%; height: 100%; font-size: 18px; }
-.chat-header .online-dot { width: 10px; height: 10px; bottom: -1px; right: -1px; }
+
 .item.fade-in { animation: fade 0.15s ease-out; }
 .selection-toolbar-wrapper .counter { color: var(--text-primary); }
 
