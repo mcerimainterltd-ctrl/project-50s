@@ -66,8 +66,8 @@ const callHistoryModule = (() => {
       const contact    = CONTACTS?.find(c => c.id === contactId);
       const name       = call.callerName || contact?.name || contactId;
       const initials   = name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2);
-      const isMissed    = call.status === 'missed' || (call.status === 'pending' && isIncoming);
-      const isDeclined  = call.status === 'rejected' && isIncoming;
+      const isMissed    = call.status === 'missed' || (call.status === 'pending' && isIncoming) || (isIncoming && ['rejected','ended'].includes(call.status) && !call.duration);
+      const isDeclined  = call.status === 'rejected' && isIncoming && !!call.duration;
       const isDeclinedByMe = call.status === 'rejected' && !isIncoming;
       const isOffline   = call.status === 'offline';
       const icon = isMissed ? '📵' : isDeclined ? '❌' : isDeclinedByMe ? '🚫' : isOffline ? '📴' : isIncoming ? '📲' : '📤';

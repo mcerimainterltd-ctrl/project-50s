@@ -803,7 +803,35 @@ function sendMessage(text) {
 }
 
 // Send file
-function sendFile(file, caption, viewOnce) {
+async function uploadLargeFileToCDN(file) {
+  const CLOUD_NAME = 'dveoa6j32';
+  const UPLOAD_PRESET = 'gx8rteqo';
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('upload_preset', UPLOAD_PRESET);
+  formData.append('folder', 'xamepage_chat');
+  formData.append('resource_type', 'raw');
+  // Try raw first, fall back to auto
+  let response = await fetch('https://api.cloudinary.com/v1_1/' + CLOUD_NAME + '/raw/upload', {
+    method: 'POST',
+    body: formData
+  });
+  if (!response.ok) {
+    formData.delete('resource_type');
+    response = await fetch('https://api.cloudinary.com/v1_1/' + CLOUD_NAME + '/auto/upload', {
+      method: 'POST',
+      body: formData
+    });
+  }
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error('Upload failed: ' + (errData.error?.message || response.status));
+  }
+  const data = await response.json();
+  return data.secure_url;
+}
+
+async function sendFile(file, caption, viewOnce) {
   const inGroup = typeof ACTIVE_GROUP !== 'undefined' && ACTIVE_GROUP;
 
   if ((!ACTIVE_ID && !inGroup) || !socket) {
@@ -820,6 +848,28 @@ function sendFile(file, caption, viewOnce) {
   }
 
   createUploadProgress(msgId, file.name);
+
+  // All files go through server
+  if (false) {
+    try {
+      updateUploadProgress(msgId, 10);
+      const cdnUrl = await uploadLargeFileToCDN(file);
+      updateUploadProgress(msgId, 100);
+      removeUploadProgress(msgId);
+      const finalMessage = { id: msgId, file: { name: file.name, type: file.type, url: cdnUrl }, type: 'sent', ts, status: 'sending', text: caption || '', viewOnce: !!viewOnce };
+      if (!inGroup) {
+        const chatToUpdate = getChat(ACTIVE_ID);
+        const idx = chatToUpdate.findIndex(m => m.id === msgId);
+        if (idx !== -1) { chatToUpdate[idx] = finalMessage; setChat(ACTIVE_ID, chatToUpdate); renderMessages(); }
+        socket.emit('send-message', { recipientId: ACTIVE_ID, message: finalMessage }, () => {});
+      }
+    } catch(e) {
+      removeUploadProgress(msgId);
+      console.error('Upload error:', e);
+      showNotification('Upload failed: ' + (e.message || JSON.stringify(e)));
+    }
+    return;
+  }
 
   const formData = new FormData();
   formData.append('file',        file);
@@ -882,7 +932,7 @@ function sendFile(file, caption, viewOnce) {
     showNotification('Upload cancelled'); currentUpload = null;
   });
 
-  xhr.open('POST', '/api/upload-file');
+  xhr.open('POST', serverURL+'/api/upload-file');
   xhr.send(formData);
 }
 
@@ -935,3 +985,43 @@ async function intelligentMerge(serverChatHistory) {
     console.log('Intelligent merge complete.');
   } catch (error) { console.error('Merge error:', error); } 
 }
+
+
+// ── APK file download/open interceptor ──────────────────────────────────
+async function openFileNatively(url, fileName) {
+  if (url.includes('localhost')) {
+    url = url.replace('https://localhost', serverURL).replace('http://localhost', serverURL);
+  }
+  if (window.AndroidBridge && window.AndroidBridge.openFileBase64) {
+    try {
+      showNotification('Opening ' + fileName + '...');
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Fetch failed: ' + response.status);
+      const blob = await response.blob();
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      window.AndroidBridge.openFileBase64(base64, fileName, blob.type);
+    } catch(e) {
+      console.error('File open error:', e);
+      showNotification('Could not open file: ' + (e.message || 'Unknown error') + ' | ' + fileName);
+    }
+  } else {
+    window.open(url, '_blank');
+  }
+}
+
+document.addEventListener('click', function(e) {
+  if (!window.Capacitor?.isNativePlatform?.()) return;
+  const btn = e.target.closest('.download-btn, .doc-download-btn, .document-preview');
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  let url = btn.href || btn.closest('[data-url]')?.dataset.url || btn.parentElement?.querySelector('a')?.href;
+  if (!url) return;
+  const fileName = btn.getAttribute('download') || url.split('/').pop().split('?')[0] || 'file';
+  openFileNatively(url, fileName);
+}, true);

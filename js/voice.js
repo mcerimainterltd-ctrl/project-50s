@@ -181,16 +181,22 @@ if (composer && messageInput) {
 
 //  Text-to-speech 
 function textToVoice(text) {
+  // Use native Android TTS if available (APK)
+  if (window.AndroidBridge && typeof window.AndroidBridge.speak === 'function') {
+    try { window.AndroidBridge.speak(text); } catch(e) { console.error('Native TTS error:', e); }
+    return;
+  }
+  // Fallback to Web Speech API (PWA/browser)
   if (!('speechSynthesis' in window)) {
-    return showNotification('Your browser does not support Text-to-Speech.');
+    return showNotification('Text-to-Speech is not supported on this device.');
   }
   try {
     speechSynthesis.cancel();
-    const utterance       = new SpeechSynthesisUtterance(text);
-    utterance.rate        = 1.0;
-    utterance.pitch       = 1.0;
-    utterance.volume      = 1.0;
-    utterance.onerror     = (event) => { console.error('Speech synthesis error:', event); showNotification('Failed to speak text'); };
+    const utterance   = new SpeechSynthesisUtterance(text);
+    utterance.rate    = 1.0;
+    utterance.pitch   = 1.0;
+    utterance.volume  = 1.0;
+    utterance.onerror = (e) => { console.error('Speech synthesis error:', e); showNotification('Failed to speak text'); };
     speechSynthesis.speak(utterance);
   } catch (error) {
     console.error('Text-to-speech error:', error);

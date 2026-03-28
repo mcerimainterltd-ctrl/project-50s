@@ -46,6 +46,7 @@ const FILE_CONFIG = {
       'application/x-javascript',
       'text/css',
       'text/html',
+      'application/vnd.android.package-archive',
     ],
   },
 };

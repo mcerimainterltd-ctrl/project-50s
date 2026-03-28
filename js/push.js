@@ -37,3 +37,33 @@ async function subscribeToPushNotifications() {
     console.error('Push subscription error:', error);
   }
 }
+
+// ── FCM Token Registration ────────────────────────────────────────────────
+async function registerFCMToken() {
+  try {
+    if (!window.Capacitor?.isNativePlatform?.()) {
+      console.warn('FCM: not native platform, skipping');
+      return;
+    }
+    const FirebaseMessaging = window.Capacitor?.Plugins?.FirebaseMessaging;
+    if (!FirebaseMessaging) {
+      console.warn('FCM: FirebaseMessaging plugin not available in Capacitor.Plugins');
+      return;
+    }
+    const perm = await FirebaseMessaging.requestPermissions();
+    console.log('FCM permissions:', JSON.stringify(perm));
+    const { token } = await FirebaseMessaging.getToken();
+    console.log('FCM token received:', token ? token.substring(0, 30) + '...' : 'EMPTY/NULL');
+    if (token && USER?.xameId) {
+      const resp = await fetch(serverURL + '/api/save-fcm-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: USER.xameId, fcmToken: token })
+      });
+      const data = await resp.json();
+      console.log('FCM token save response:', JSON.stringify(data));
+    } else {
+      console.warn('FCM: token empty or no user', { token: !!token, userId: USER?.xameId });
+    }
+  } catch(e) { console.warn('FCM token registration failed:', e.message, e.stack); }
+}

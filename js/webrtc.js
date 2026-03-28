@@ -135,20 +135,31 @@ function createPeerConnection(userId) {
 
 function removePeer(userId) {
   const peer = peers.get(userId); if (!peer) return;
-  peer.pc.close(); peer.stream?.getTracks().forEach(t => t.stop());
+  const pc = peer.pc;
+  pc.oniceconnectionstatechange = null;
+  pc.ontrack = null;
+  pc.onicecandidate = null;
+  pc.close();
+  peer.stream?.getTracks().forEach(t => t.stop());
+  // Remove from RESOURCES
+  const idx = RESOURCES.peerConnections.indexOf(pc);
+  if (idx !== -1) RESOURCES.peerConnections.splice(idx, 1);
   peers.delete(userId); updateCallParticipantsUI();
   if (peers.size === 0) exitVideoCall();
 }
 
 // ── Start outgoing call ───────────────────────────────────────────────────
 async function startCall(recipientId, callType) {
-  playOutgoingRing();
   try {
     const hasVideo = callType === 'video';
     if (!localStream) {
       localStream = await navigator.mediaDevices.getUserMedia({ video: hasVideo, audio: true });
       RESOURCES.localStreams.push(localStream);
     }
+    // Set earpiece BEFORE any audio plays
+    isLoudspeakerOn = false;
+    if (window.AndroidBridge?.setCallAudioMode) window.AndroidBridge.setCallAudioMode(true);
+    playOutgoingRing();
     videoCallOverlay.classList.remove('hidden');
     elChatHeader.classList.add('hidden'); composer.classList.add('hidden');
     localVideo.srcObject = localStream; localVideo.muted = true;
@@ -162,6 +173,10 @@ async function startCall(recipientId, callType) {
     await pc.setLocalDescription(offer);
     socket?.emit('call-user', { recipientId, offer, callType });
     callActive = true; showCallControls();
+    // Update speaker button to show earpiece state
+    if (typeof loudSpeakerBtn !== 'undefined' && loudSpeakerBtn) loudSpeakerBtn.textContent = '🔈';
+    // Update speaker button to show earpiece state
+    if (typeof loudSpeakerBtn !== 'undefined' && loudSpeakerBtn) loudSpeakerBtn.textContent = '🔈';
   // Auto-timeout if unanswered after 60 seconds
   if (window._callTimeouts) window._callTimeouts.forEach(t => clearTimeout(t));
   window._callTimeouts = [];
@@ -172,8 +187,9 @@ async function startCall(recipientId, callType) {
   }, 60000));
   // Auto-timeout if unanswered after 60 seconds
   } catch (err) {
-    console.error('Failed to start call:', err);
-    showNotification('Failed to start call. Check permissions.'); exitVideoCall();
+    console.error('Call error:', err.name, err.message);
+    alert('Call error: ' + (err.name || err.message || String(err)));
+    exitVideoCall();
   }
 }
 
@@ -221,6 +237,9 @@ async function handleIncomingCall(offer, callerId) {
       localStream = await navigator.mediaDevices.getUserMedia({ video: hasVideo, audio: true });
       RESOURCES.localStreams.push(localStream);
     }
+    // Set earpiece BEFORE audio plays on incoming call answer
+    isLoudspeakerOn = false;
+    if (window.AndroidBridge?.setCallAudioMode) window.AndroidBridge.setCallAudioMode(true);
     videoCallOverlay.classList.remove('hidden');
     elChatHeader.classList.add('hidden'); composer.classList.add('hidden');
     localVideo.srcObject = localStream; localVideo.muted = true;
@@ -284,7 +303,14 @@ function handleNewIceCandidate(candidate, fromUserId) {
 
 // ── End call ──────────────────────────────────────────────────────────────
 function endCall() {
-  peers.forEach((peer) => { try { peer.pc.close(); } catch(_) {} });
+  peers.forEach((peer) => {
+    try {
+      peer.pc.oniceconnectionstatechange = null;
+      peer.pc.ontrack = null;
+      peer.pc.onicecandidate = null;
+      peer.pc.close();
+    } catch(_) {}
+  });
   peers.clear(); peerConnection = null;
   localStream?.getTracks().forEach(t => t.stop()); localStream = null;
   remoteStream?.getTracks().forEach(t => t.stop()); remoteStream = null;
@@ -296,6 +322,8 @@ function endCall() {
   if (audioCtx) { try { audioCtx.close(); } catch(_) {} audioCtx = null; mergedDest = null; }
   isAudioMuted = false; isVideoMuted = false; isLoudspeakerOn = false;
   callActive = false; holdUserId = null; _stopCallTimer();
+  // Reset to normal audio mode
+  if (window.AndroidBridge?.setCallAudioMode) window.AndroidBridge.setCallAudioMode(false);
 }
 
 function exitVideoCall() {
@@ -409,7 +437,9 @@ function showIncomingCallNotification(caller, callType, offer) {
   }
   incomingCallOverlay.classList.remove('hidden');
   acceptCallBtn.onclick = async () => {
-    stopCallRing(); incomingCallOverlay.classList.add('hidden');
+    stopCallRing(); 
+    incomingCallOverlay.classList.add('hidden');
+    document.getElementById('quickReplyPanel')?.classList.add('hidden');
     if (callActive && peers.size > 0) {
       peers.forEach(peer => { peer.onHold = true; peer.stream?.getAudioTracks().forEach(t => t.enabled = false); });
     }
@@ -418,7 +448,9 @@ function showIncomingCallNotification(caller, callType, offer) {
     socket?.emit('call-accepted', { recipientId: caller.xameId });
   };
   declineCallBtn.onclick = () => {
-    stopCallRing(); incomingCallOverlay.classList.add('hidden');
+    stopCallRing(); 
+    incomingCallOverlay.classList.add('hidden');
+    document.getElementById('quickReplyPanel')?.classList.add('hidden');
     socket?.emit('call-rejected', { recipientId: caller.xameId, reason: 'user-rejected' });
   };
 }
@@ -455,7 +487,10 @@ cameraMuteBtn?.addEventListener('click', () => {
 });
 loudSpeakerBtn?.addEventListener('click', () => {
   isLoudspeakerOn = !isLoudspeakerOn;
-  if (remoteVideo) remoteVideo.muted = !isLoudspeakerOn;
+  // Use native bridge to switch between earpiece and speaker
+  if (window.AndroidBridge && window.AndroidBridge.setSpeaker) {
+    window.AndroidBridge.setSpeaker(isLoudspeakerOn);
+  }
   loudSpeakerBtn.textContent = isLoudspeakerOn ? '🔊' : '🔈';
 });
 

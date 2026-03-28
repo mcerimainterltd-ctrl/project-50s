@@ -37,6 +37,9 @@ function playSound(type, loop = false) {
     if (!audio) { console.warn(`Audio element not found: ${type}`); return; }
     audio.currentTime = 0;
     audio.loop        = loop;
+    // Set reasonable volume for ringtones
+    const savedVol = persistentStorage.get('xame:tone:' + type + ':volume');
+    audio.volume = (savedVol !== null && savedVol !== undefined) ? Number(savedVol) : (type === 'incomingCall' || type === 'outgoingCall') ? 0.5 : 0.7;
     const p = audio.play();
     if (p !== undefined) p.catch(err => console.warn('Audio blocked (user interaction required):', err));
   } catch (e) {
@@ -92,6 +95,8 @@ function playCallRing() {
 }
 function playOutgoingRing() {
   if (!FEEDBACK.soundEnabled) return;
+  // Route outgoing ring through earpiece
+  if (window.AndroidBridge?.setCallAudioMode) window.AndroidBridge.setCallAudioMode(true);
   const toneId = getActiveTone('outgoingCall');
   const customUrl = persistentStorage.get('xame:tone:outgoingCall:custom');
   if (toneId === 'default') { playSound('outgoingCall', true); return; }
@@ -107,6 +112,7 @@ function stopCallRing() {
 function stopOutgoingRing() {
   stopSound('outgoingCall');
   if (window._outgoingRingInterval) { clearInterval(window._outgoingRingInterval); window._outgoingRingInterval = null; }
+  if (!window.callActive && window.AndroidBridge?.setCallAudioMode) window.AndroidBridge.setCallAudioMode(false);
 }
 
 // ── Unified notification with sound + vibration ───────────────────────────
@@ -254,10 +260,21 @@ const RINGTONE_TEMPLATES = [
   { id: 'custom',  label: '+ Upload', custom: true },
 ];
 
-function playRingtoneTemplate(toneId, direction) {
+function playRingtoneTemplate(toneId, direction, type) {
   try {
     const tmpl = RINGTONE_TEMPLATES.find(t => t.id === toneId);
-    if (tmpl && tmpl.gen) { const ctx = new (window.AudioContext || window.webkitAudioContext)(); tmpl.gen(ctx, direction === 'outgoing'); }
+    if (tmpl && tmpl.gen) {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const masterGain = ctx.createGain();
+      const savedVol = persistentStorage.get('xame:tone:' + (type || (direction === 'outgoing' ? 'outgoingCall' : 'incomingCall')) + ':volume');
+      masterGain.gain.value = (savedVol !== null && savedVol !== undefined) ? Number(savedVol) * 2 : 1.0;
+      masterGain.connect(ctx.destination);
+      // Temporarily override destination so all template nodes connect through master gain
+      const origDest = ctx.destination;
+      Object.defineProperty(ctx, 'destination', { get: () => masterGain, configurable: true });
+      tmpl.gen(ctx, direction === 'outgoing');
+      Object.defineProperty(ctx, 'destination', { get: () => origDest, configurable: true });
+    }
   } catch(e) { console.warn('Ringtone play error:', e); }
 }
 
@@ -285,10 +302,22 @@ function showRingtonePicker(type) {
           + (active ? '<span style="color:#00B0A0;font-size:18px;">&#10003;</span>' : '') + '</div></div>';
       }).join('')
     + '</div><input type="file" id="ringtoneUploadInput" accept="audio/*" style="display:none;">'
-    + '<p style="font-size:12px;color:#aaa;margin-top:16px;text-align:center;">Tap to select. Tap &#9654; to preview.</p></div>';
+    + '<div style="margin-top:20px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.1);">'
+  + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">'
+  + '<span style="font-size:14px;color:#fff;font-weight:600;">🔊 Volume</span>'
+  + '<span id="volumeLabel" style="font-size:13px;color:#00B0A0;">' + Math.round((persistentStorage.get('xame:tone:' + type + ':volume') || 0.5) * 100) + '%</span>'
+  + '</div>'
+  + '<input type="range" id="ringtoneVolume" min="0" max="100" value="' + Math.round((persistentStorage.get('xame:tone:' + type + ':volume') || 0.5) * 100) + '" style="width:100%;accent-color:#00B0A0;cursor:pointer;">'
+  + '</div>'
+  + '<p style="font-size:12px;color:#aaa;margin-top:16px;text-align:center;">Tap to select. Tap &#9654; to preview.</p></div>';
 
   document.body.appendChild(dlg);
   dlg.querySelector('#closeRingtonePicker').addEventListener('click', () => dlg.remove());
+  dlg.querySelector('#ringtoneVolume')?.addEventListener('input', e => {
+    const vol = e.target.value / 100;
+    persistentStorage.set('xame:tone:' + type + ':volume', vol);
+    dlg.querySelector('#volumeLabel').textContent = e.target.value + '%';
+  });
   dlg.addEventListener('click', e => { if (e.target === dlg) dlg.remove(); });
   dlg.querySelectorAll('.preview-ring-btn').forEach(btn => {
     btn.addEventListener('click', e => {

@@ -147,6 +147,17 @@ logoutBtn?.addEventListener('click', () => {
   stopHeartbeat();
 
   // Clear user session only (keep contacts/chat data)
+  // Remove session from server
+  const _token = persistentStorage.get('xame:sessionToken');
+  const _userId = USER?.xameId;
+  if (_token && _userId) {
+    fetch(`${serverURL}/api/sessions/kill`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: _userId, sessionId: _token })
+    }).catch(() => {});
+  }
+  persistentStorage.set('xame:sessionToken', null);
   storage.del(KEYS.user);
   USER      = null;
   ACTIVE_ID = null;
