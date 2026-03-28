@@ -13,27 +13,25 @@ const urlsToCache = [
   "js/app.js"
 ];
 
-// Force immediate activation
-self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', event => event.waitUntil(clients.claim()));
+const IMAGE_CACHE = 'xamepage-images-v1773970835921';
 
-// Install and cache assets
+// Install and cache core assets
 self.addEventListener("install", event => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(urlsToCache))
+    caches.open(CACHE_NAME).then(cache => cache.addAll(urlsToCache)).then(() => self.skipWaiting())
   );
 });
 
-// Clean up old caches
+// Clean up old caches and claim clients
 self.addEventListener("activate", event => {
   event.waitUntil(
     caches.keys().then(names =>
-      Promise.all(names.map(name => name !== CACHE_NAME && name !== IMAGE_CACHE && caches.delete(name)))
-    )
+      Promise.all(names.map(name => {
+        if (name !== CACHE_NAME && name !== IMAGE_CACHE) return caches.delete(name);
+      }))
+    ).then(() => clients.claim())
   );
 });
-
-const IMAGE_CACHE = 'xamepage-images-v1773970835921';
 
 // Serve from cache, fallback to network, then to offline page
 self.addEventListener("fetch", event => {
@@ -45,8 +43,10 @@ self.addEventListener("fetch", event => {
       caches.open(IMAGE_CACHE).then(cache =>
         cache.match(event.request).then(cached => {
           if (cached) return cached;
-          return fetch(event.request).then(response => {
-            if (response.ok) cache.put(event.request, response.clone());
+          return fetch(event.request, { mode: 'cors' }).then(response => {
+            if (response.ok && response.status === 200) {
+              cache.put(event.request, response.clone());
+            }
             return response;
           }).catch(() => cached || new Response('', { status: 503 }));
         })
