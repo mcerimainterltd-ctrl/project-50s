@@ -265,17 +265,14 @@ const appLock = (() => {
     if (document.visibilityState === 'hidden') {
       if (!isEnabled()) return;
       _hiddenAt = Date.now();
-      const delay = getLockDelay();
-      if (delay === 0) {
-        _locked = true;
-      } else {
-        clearTimeout(_lockTimer);
-        _lockTimer = setTimeout(() => { _locked = true; }, delay);
-      }
     } else if (document.visibilityState === 'visible') {
-      if (_hasActiveCall()) { clearTimeout(_lockTimer); _locked = false; return; }
-      if (_locked) showLockScreen();
-      else clearTimeout(_lockTimer); // came back before delay expired
+      if (_hasActiveCall()) { _hiddenAt = null; return; }
+      if (!isEnabled() || !getPin()) return;
+      const delay = getLockDelay();
+      const elapsed = _hiddenAt ? Date.now() - _hiddenAt : 0;
+      if (delay === -1) return;
+      if (elapsed >= delay) { _locked = true; showLockScreen(); }
+      _hiddenAt = null;
     }
   });
 
