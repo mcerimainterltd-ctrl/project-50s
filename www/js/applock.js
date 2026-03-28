@@ -165,8 +165,6 @@ const appLock = (() => {
         showNotification('PIN removed. Set a new PIN in Settings.');
       }
     });
-  }
-
   } // end _renderLockScreen
 
   function showSetupDialog() {
