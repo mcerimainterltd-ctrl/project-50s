@@ -453,31 +453,39 @@
 
 <!-- ═══════════════════════════════ INCOMING CALL OVERLAY ═══════════════════════════════ -->
 <div id="incomingCallOverlay" class="call-overlay hidden" data-module="webrtc">
-  <div class="call-notification-card">
-    <div class="call-avatar-container">
+  <!-- Top section: caller info -->
+  <div style="display:flex;flex-direction:column;align-items:center;text-align:center;width:100%;">
+    <p id="callStatus" style="color:rgba(255,255,255,0.5);font-size:14px;letter-spacing:1px;text-transform:uppercase;margin-bottom:32px;"></p>
+    <div class="call-avatar-container" style="position:relative;">
       <img id="callerPic" class="profile-pic" alt="Caller's profile picture"
            data-default-src="/media/profile_pics/default.png">
-      <div id="callAvatarInitials" class="profile-initials hidden"></div>
+      <div id="callAvatarInitials" class="profile-initials hidden" style="width:140px;height:140px;font-size:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#3e5163,#2a3a4a);color:#fff;"></div>
     </div>
-    <h2 id="callerName"></h2>
-    <p  id="callerId"   class="xame-id"></p>
-    <p  id="callStatus"></p>
-    <div class="call-actions">
-      <button id="declineCallBtn" class="call-btn decline-btn">
-        <span class="icon">📞</span> Decline
-      </button>
-      <button id="replyWithMsgBtn" class="call-btn reply-btn">
-        <span class="icon">💬</span> Message
-      </button>
-      <button id="acceptCallBtn"  class="call-btn accept-btn">
-        <span class="icon">📞</span> Accept
-      </button>
+    <h2 id="callerName" style="color:#fff;font-size:28px;font-weight:700;margin:20px 0 6px;"></h2>
+    <p  id="callerId" class="xame-id" style="color:rgba(255,255,255,0.5);font-size:15px;margin:0;"></p>
+  </div>
+
+  <!-- Bottom section: actions -->
+  <div style="width:100%;">
+    <div class="call-actions" style="justify-content:center;gap:48px;margin-bottom:24px;">
+      <div style="display:flex;flex-direction:column;align-items:center;gap:10px;">
+        <button id="declineCallBtn" class="call-btn btn-decline" style="width:72px;height:72px;border-radius:50%;background:#e53935;border:none;font-size:28px;color:#fff;cursor:pointer;box-shadow:0 6px 20px rgba(229,57,53,0.4);">📵</button>
+        <span style="color:rgba(255,255,255,0.6);font-size:13px;">Decline</span>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:10px;">
+        <button id="replyWithMsgBtn" class="call-btn" style="width:56px;height:56px;border-radius:50%;background:rgba(255,255,255,0.15);border:none;font-size:22px;color:#fff;cursor:pointer;">💬</button>
+        <span style="color:rgba(255,255,255,0.6);font-size:13px;">Message</span>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:10px;">
+        <button id="acceptCallBtn" class="call-btn btn-accept" style="width:72px;height:72px;border-radius:50%;background:#00B0A0;border:none;font-size:28px;color:#fff;cursor:pointer;box-shadow:0 6px 20px rgba(0,176,160,0.4);">📞</button>
+        <span style="color:rgba(255,255,255,0.6);font-size:13px;">Accept</span>
+      </div>
     </div>
-    <div id="quickReplyPanel" class="hidden" style="margin-top:12px;width:100%">
-      <div id="quickReplyList" style="display:flex;flex-direction:column;gap:6px;max-height:200px;overflow-y:auto"></div>
-      <div style="display:flex;gap:6px;margin-top:8px">
-        <input type="text" id="customReplyInput" placeholder="Custom message..." style="flex:1;padding:8px;border-radius:20px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.1);color:white;font-size:13px">
-        <button id="sendCustomReplyBtn" style="padding:8px 14px;border-radius:20px;background:var(--accent-color,#0084ff);color:white;border:none;cursor:pointer;font-size:13px">Send</button>
+    <div id="quickReplyPanel" class="hidden" style="margin-top:8px;width:100%;">
+      <div id="quickReplyList" style="display:flex;flex-direction:column;gap:6px;max-height:160px;overflow-y:auto;"></div>
+      <div style="display:flex;gap:6px;margin-top:8px;">
+        <input type="text" id="customReplyInput" placeholder="Custom message..." style="flex:1;padding:8px;border-radius:20px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.1);color:white;font-size:13px;">
+        <button id="sendCustomReplyBtn" style="padding:8px 14px;border-radius:20px;background:var(--accent-color,#0084ff);color:white;border:none;cursor:pointer;font-size:13px;">Send</button>
       </div>
     </div>
   </div>
