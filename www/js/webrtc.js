@@ -437,7 +437,9 @@ function showIncomingCallNotification(caller, callType, offer) {
   }
   incomingCallOverlay.classList.remove('hidden');
   acceptCallBtn.onclick = async () => {
-    stopCallRing(); incomingCallOverlay.classList.add('hidden');
+    stopCallRing(); 
+    incomingCallOverlay.classList.add('hidden');
+    document.getElementById('quickReplyPanel')?.classList.add('hidden');
     if (callActive && peers.size > 0) {
       peers.forEach(peer => { peer.onHold = true; peer.stream?.getAudioTracks().forEach(t => t.enabled = false); });
     }
@@ -446,7 +448,9 @@ function showIncomingCallNotification(caller, callType, offer) {
     socket?.emit('call-accepted', { recipientId: caller.xameId });
   };
   declineCallBtn.onclick = () => {
-    stopCallRing(); incomingCallOverlay.classList.add('hidden');
+    stopCallRing(); 
+    incomingCallOverlay.classList.add('hidden');
+    document.getElementById('quickReplyPanel')?.classList.add('hidden');
     socket?.emit('call-rejected', { recipientId: caller.xameId, reason: 'user-rejected' });
   };
 }
