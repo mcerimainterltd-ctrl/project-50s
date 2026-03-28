@@ -1,13 +1,16 @@
-const CACHE_NAME = "xamepage-v2.1-v1773970835921"; // Renamed cache for a new version
+const CACHE_NAME = "xamepage-v2.1-v1773970835921";
 const urlsToCache = [
   "./",
   "index.html",
-  "styles.css",
-  "app.js",
   "manifest.json",
-  "offline.html", // New: Add the fallback page to the cache
-  "icons/icon-192x192.png",
-  "icons/icon-512x512.png"
+  "css/style.css",
+  "js/config.js",
+  "js/storage.js",
+  "js/state.js",
+  "js/utils.js",
+  "js/ui.js",
+  "js/auth.js",
+  "js/app.js"
 ];
 
 // Force immediate activation
@@ -73,13 +76,13 @@ self.addEventListener("fetch", event => {
 
   if (event.request.mode === 'navigate') {
     event.respondWith(
-      fetch(event.request).catch(() => caches.match('offline.html'))
+      fetch(event.request).catch(() => caches.match('index.html'))
     );
   } else {
     event.respondWith(
       caches.match(event.request)
         .then(response => response || fetch(event.request)
-          .catch(() => caches.match('offline.html'))
+          .catch(() => caches.match('index.html'))
         )
     );
   }
