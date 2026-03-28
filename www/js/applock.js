@@ -38,6 +38,20 @@ const appLock = (() => {
 
   function showLockScreen(onSuccess) {
     if (_overlay) return;
+    // Always recheck biometric then render
+    if (window.AndroidBridge?.checkBiometricAvailable) {
+      window.onBiometricAvailable = (available) => {
+        _biometricAvailable = available;
+        _renderLockScreen(onSuccess);
+      };
+      window.AndroidBridge.checkBiometricAvailable();
+      return; // wait for callback
+    }
+    _renderLockScreen(onSuccess);
+  }
+
+  function _renderLockScreen(onSuccess) {
+    if (_overlay) return;
     const lockout = persistentStorage.get(LOCKOUT_KEY);
     const isLockedOut = lockout && Date.now() < lockout;
 
@@ -152,6 +166,8 @@ const appLock = (() => {
       }
     });
   }
+
+  } // end _renderLockScreen
 
   function showSetupDialog() {
     const existing = document.getElementById('pinSetupDialog');
