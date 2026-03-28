@@ -202,6 +202,34 @@ const walletSchema = new mongoose.Schema({
 });
 const Wallet = mongoose.model('Wallet', walletSchema);
 
+// ── Call Credits Schema ───────────────────────────────────────────────────
+const callCreditsSchema = new mongoose.Schema({
+    xameId:   { type: String, required: true, unique: true },
+    balance:  { type: Number, default: 0 }, // in units (1 unit = 1 second of call)
+    currency: { type: String, default: 'NGN' },
+    transactions: [{
+        id:       { type: String },
+        type:     { type: String, enum: ['topup', 'debit', 'recharge'] },
+        amount:   { type: Number },
+        label:    { type: String },
+        ref:      { type: String },
+        ts:       { type: Date, default: Date.now }
+    }],
+    createdAt: { type: Date, default: Date.now }
+});
+const CallCredits = mongoose.model('CallCredits', callCreditsSchema);
+
+// ── PSTN Rates (per minute in NGN) ───────────────────────────────────────
+const PSTN_RATES = {
+    'NG': { rate: 12, label: 'Nigeria' },
+    'US': { rate: 8,  label: 'United States' },
+    'GB': { rate: 10, label: 'United Kingdom' },
+    'GH': { rate: 15, label: 'Ghana' },
+    'KE': { rate: 15, label: 'Kenya' },
+    'ZA': { rate: 12, label: 'South Africa' },
+    'default': { rate: 20, label: 'International' }
+};
+
 const userSchema = new mongoose.Schema({
     xameId:             { type: String, required: true, unique: true },
     firstName:          { type: String, required: true },
@@ -2168,6 +2196,128 @@ app.delete('/api/call-history/:userId', async (req, res) => {
         const userId = req.params.userId;
         await CallHistory.deleteMany({ $or: [{ callerId: userId }, { recipientId: userId }] });
         res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// ── Call Credits API ─────────────────────────────────────────────────────
+
+app.get('/api/call-credits/:userId', async (req, res) => {
+    try {
+        let credits = await CallCredits.findOne({ xameId: req.params.userId });
+        if (!credits) credits = await CallCredits.create({ xameId: req.params.userId });
+        res.json({ success: true, balance: credits.balance, currency: credits.currency, transactions: credits.transactions.slice(-20).reverse() });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.post('/api/call-credits/topup', async (req, res) => {
+    try {
+        const { userId, amount } = req.body;
+        if (!userId || !amount || amount <= 0) return res.status(400).json({ success: false, message: 'Invalid request' });
+        // Deduct from wallet
+        const wallet = await Wallet.findOne({ xameId: userId });
+        if (!wallet || wallet.balance < amount) return res.status(400).json({ success: false, message: 'Insufficient wallet balance' });
+        wallet.balance -= amount;
+        wallet.transactions.push({ id: require('uuid').v4(), label: 'Call Credits Top-up', icon: '📞', amount: -amount, type: 'debit', ref: 'call-credits', ts: new Date() });
+        await wallet.save();
+        // Credit call credits
+        let credits = await CallCredits.findOne({ xameId: userId });
+        if (!credits) credits = new CallCredits({ xameId: userId });
+        credits.balance += amount;
+        credits.transactions.push({ id: require('uuid').v4(), type: 'topup', amount, label: `Topped up ${amount} ${credits.currency}`, ref: 'wallet', ts: new Date() });
+        await credits.save();
+        res.json({ success: true, balance: credits.balance });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.post('/api/call-credits/recharge', async (req, res) => {
+    try {
+        const { userId, token } = req.body;
+        if (!userId || !token) return res.status(400).json({ success: false, message: 'Invalid request' });
+        // Token format: XAME-XXXX-XXXX-XXXX (encode amount in token)
+        // For now validate token format and extract amount
+        const validToken = /^XAME-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(token);
+        if (!validToken) return res.status(400).json({ success: false, message: 'Invalid recharge token' });
+        // Decode amount from token (last 4 chars = amount in hundreds)
+        const lastSegment = token.split('-')[3];
+        const amount = parseInt(lastSegment, 36) * 100;
+        if (isNaN(amount) || amount <= 0) return res.status(400).json({ success: false, message: 'Invalid token value' });
+        let credits = await CallCredits.findOne({ xameId: userId });
+        if (!credits) credits = new CallCredits({ xameId: userId });
+        credits.balance += amount;
+        credits.transactions.push({ id: require('uuid').v4(), type: 'recharge', amount, label: `Recharge token: ${token}`, ref: token, ts: new Date() });
+        await credits.save();
+        res.json({ success: true, balance: credits.balance });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.get('/api/call-credits/rates', (req, res) => {
+    res.json({ success: true, rates: PSTN_RATES });
+});
+
+// ── PSTN Call API ─────────────────────────────────────────────────────────
+
+app.post('/api/pstn/call', async (req, res) => {
+    try {
+        const { userId, to, countryCode } = req.body;
+        if (!userId || !to) return res.status(400).json({ success: false, message: 'Missing parameters' });
+        if (!twilioClient) return res.status(503).json({ success: false, message: 'PSTN not available' });
+        // Check credits
+        const credits = await CallCredits.findOne({ xameId: userId });
+        const rate = (PSTN_RATES[countryCode] || PSTN_RATES['default']).rate;
+        if (!credits || credits.balance < rate) return res.status(400).json({ success: false, message: 'Insufficient call credits' });
+        // Initiate call via Twilio
+        const call = await twilioClient.calls.create({
+            url: `${process.env.SERVER_URL || 'https://project-50s.onrender.com'}/api/pstn/twiml`,
+            to: to,
+            from: process.env.TWILIO_PHONE_NUMBER,
+        });
+        // Deduct 1 minute upfront, refund unused later via webhook
+        credits.balance -= rate;
+        credits.transactions.push({ id: require('uuid').v4(), type: 'debit', amount: -rate, label: `PSTN call to ${to}`, ref: call.sid, ts: new Date() });
+        await credits.save();
+        // Log in call history
+        await new CallHistory({ callId: call.sid, callerId: userId, recipientId: to, callType: 'voice', status: 'pending', type: 'pstn' }).save();
+        res.json({ success: true, callSid: call.sid, deducted: rate });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.get('/api/pstn/twiml', (req, res) => {
+    res.set('Content-Type', 'text/xml');
+    res.send(`<?xml version="1.0" encoding="UTF-8"?><Response><Say>Connecting your call via XamePage.</Say><Dial>${req.query.to || ''}</Dial></Response>`);
+});
+
+// ── PSTN SMS API ──────────────────────────────────────────────────────────
+
+app.post('/api/pstn/sms', async (req, res) => {
+    try {
+        const { userId, to, message } = req.body;
+        if (!userId || !to || !message) return res.status(400).json({ success: false, message: 'Missing parameters' });
+        if (!twilioClient) return res.status(503).json({ success: false, message: 'SMS not available' });
+        const credits = await CallCredits.findOne({ xameId: userId });
+        const SMS_COST = 5; // 5 units per SMS
+        if (!credits || credits.balance < SMS_COST) return res.status(400).json({ success: false, message: 'Insufficient call credits' });
+        const msg = await twilioClient.messages.create({
+            body: message,
+            from: process.env.TWILIO_PHONE_NUMBER,
+            to: to
+        });
+        credits.balance -= SMS_COST;
+        credits.transactions.push({ id: require('uuid').v4(), type: 'debit', amount: -SMS_COST, label: `SMS to ${to}`, ref: msg.sid, ts: new Date() });
+        await credits.save();
+        res.json({ success: true, messageSid: msg.sid });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// ── Check if phone numbers are on XamePage ────────────────────────────────
+
+app.post('/api/phone/check-xamepage', async (req, res) => {
+    try {
+        const { phones } = req.body; // array of phone numbers
+        if (!phones || !Array.isArray(phones)) return res.status(400).json({ success: false });
+        const users = await User.find({ xameId: { $in: phones } }, { xameId: 1, preferredName: 1, firstName: 1, profilePic: 1 });
+        const map = {};
+        users.forEach(u => { map[u.xameId] = { name: u.preferredName || u.firstName, profilePic: u.profilePic }; });
+        res.json({ success: true, registered: map });
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
