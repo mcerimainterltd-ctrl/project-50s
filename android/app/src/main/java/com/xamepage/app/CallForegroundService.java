@@ -1,7 +1,6 @@
 package com.xamepage.app;
 
 import android.app.Notification;
-import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
@@ -15,46 +14,47 @@ public class CallForegroundService extends Service {
         String callerName = intent != null ? intent.getStringExtra("callerName") : "Unknown";
         String callType   = intent != null ? intent.getStringExtra("callType") : "voice";
 
-        Intent openIntent = new Intent(this, MainActivity.class);
-        openIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        openIntent.putExtra("incomingCall", true);
-        openIntent.putExtra("callerName", callerName);
-        openIntent.putExtra("callType", callType);
+        // Answer intent
+        Intent answerIntent = new Intent(this, CallNotificationReceiver.class);
+        answerIntent.setAction(CallNotificationReceiver.ACTION_ANSWER);
+        answerIntent.putExtra("callerName", callerName);
+        answerIntent.putExtra("callType", callType);
+        PendingIntent answerPI = PendingIntent.getBroadcast(this, 1, answerIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
-        PendingIntent pendingIntent = PendingIntent.getActivity(
-            this, 0, openIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
+        // Decline intent
+        Intent declineIntent = new Intent(this, CallNotificationReceiver.class);
+        declineIntent.setAction(CallNotificationReceiver.ACTION_DECLINE);
+        declineIntent.putExtra("callerName", callerName);
+        PendingIntent declinePI = PendingIntent.getBroadcast(this, 2, declineIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+        // Full screen intent for lock screen only
+        Intent fullScreenIntent = new Intent(this, MainActivity.class);
+        fullScreenIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        fullScreenIntent.putExtra("incomingCall", true);
+        fullScreenIntent.putExtra("callerName", callerName);
+        fullScreenIntent.putExtra("callType", callType);
+        PendingIntent fullScreenPI = PendingIntent.getActivity(this, 0, fullScreenIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+        String title = (callType != null && callType.equals("video")) ? "Incoming Video Call" : "Incoming Voice Call";
 
         Notification notification = new NotificationCompat.Builder(this, CallNotificationReceiver.CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_call)
-            .setContentTitle(callType != null && callType.equals("video") ? "📹 Incoming Video Call" : "📞 Incoming Voice Call")
-            .setContentText(callerName + " is calling you")
+            .setContentTitle(title)
+            .setContentText(callerName + " is calling...")
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setFullScreenIntent(pendingIntent, true)
+            .setFullScreenIntent(fullScreenPI, true)
             .setOngoing(true)
             .setAutoCancel(false)
+            .setContentIntent(fullScreenPI)
+            .addAction(android.R.drawable.ic_menu_call, "Answer", answerPI)
+            .addAction(android.R.drawable.ic_delete, "Decline", declinePI)
             .build();
 
-        startForeground(1001, notification);
-
-        // Directly launch MainActivity for full screen overlay on Android 10+
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
-            android.os.PowerManager.WakeLock wl = pm.newWakeLock(
-                android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK | android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP | android.os.PowerManager.ON_AFTER_RELEASE,
-                "xamepage:fgwakelock"
-            );
-            wl.acquire(30000);
-            Intent launchIntent = new Intent(this, MainActivity.class);
-            launchIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            launchIntent.putExtra("incomingCall", true);
-            launchIntent.putExtra("callerName", callerName);
-            launchIntent.putExtra("callType", callType);
-            startActivity(launchIntent);
-        }
-
+        startForeground(CallNotificationReceiver.NOTIFICATION_ID, notification);
         return START_STICKY;
     }
 
