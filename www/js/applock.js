@@ -4,6 +4,7 @@ const appLock = (() => {
   const ENABLED_KEY  = 'xame:applock:enabled';
   const ATTEMPTS_KEY = 'xame:applock:attempts';
   const LOCKOUT_KEY  = 'xame:applock:lockout';
+  const DELAY_KEY    = 'xame:applock:delay'; // ms before locking
   const MAX_ATTEMPTS = 5;
   const LOCKOUT_MS   = 30000; // 30 seconds
 
@@ -42,7 +43,7 @@ const appLock = (() => {
 
     _overlay = document.createElement('div');
     _overlay.id = 'appLockOverlay';
-    _overlay.style.cssText = 'position:fixed;inset:0;background:#0D1520;z-index:999999;display:flex;flex-direction:column;align-items:center;justify-content:center;';
+    _overlay.style.cssText = 'position:fixed;inset:0;background:#0D1520;z-index:99998;display:flex;flex-direction:column;align-items:center;justify-content:center;';
     _overlay.innerHTML = `
       <div style="text-align:center;max-width:320px;width:90%;padding:32px;">
         <div style="font-size:48px;margin-bottom:16px;">🔐</div>
@@ -167,6 +168,17 @@ const appLock = (() => {
         </div>
         <p style="font-size:13px;color:#aaa;margin-bottom:20px;line-height:1.6;">Set a PIN to lock the app when it goes to background. Supports fingerprint/biometric unlock.</p>
         ${enabled ? `
+          <div style="margin-bottom:20px;">
+            <label style="font-size:12px;color:#aaa;display:block;margin-bottom:8px;">Lock after</label>
+            <select id="lockDelaySelect" style="width:100%;padding:12px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:10px;color:#fff;font-size:14px;outline:none;">
+              <option value="0">Immediately</option>
+              <option value="30000">30 seconds</option>
+              <option value="60000">1 minute</option>
+              <option value="300000">5 minutes</option>
+              <option value="1800000">30 minutes</option>
+              <option value="-1">Never (manual only)</option>
+            </select>
+          </div>
           <button id="disablePin" style="width:100%;padding:14px;background:#e53935;border:none;border-radius:12px;color:#fff;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:12px;">
             Disable App Lock
           </button>
@@ -193,6 +205,16 @@ const appLock = (() => {
     document.body.appendChild(dlg);
     dlg.querySelector('#closePinDlg').onclick = () => dlg.remove();
     dlg.addEventListener('click', e => { if (e.target === dlg) dlg.remove(); });
+
+    const delaySelect = dlg.querySelector('#lockDelaySelect');
+    if (delaySelect) {
+      delaySelect.value = String(getLockDelay());
+      if (!delaySelect.value) delaySelect.value = '60000';
+      delaySelect.addEventListener('change', () => {
+        persistentStorage.set(DELAY_KEY, parseInt(delaySelect.value));
+        showNotification('Lock delay updated.');
+      });
+    }
 
     dlg.querySelector('#enablePin')?.addEventListener('click', () => {
       const pin = dlg.querySelector('#newPinInput').value.trim();
@@ -226,27 +248,41 @@ const appLock = (() => {
     });
   }
 
-  // Lock on background
+  let _lockTimer = null;
+  let _hiddenAt  = null;
+
+  function getLockDelay() { return persistentStorage.get(DELAY_KEY) ?? 60000; } // default 1 min
+
   function _hasActiveCall() {
-    const incomingOverlay = document.getElementById('incomingCallOverlay');
+    const incomingOverlay  = document.getElementById('incomingCallOverlay');
     const videoCallOverlay = document.getElementById('videoCallOverlay');
-    const incomingVisible = incomingOverlay && !incomingOverlay.classList.contains('hidden');
-    const callActive = videoCallOverlay && !videoCallOverlay.classList.contains('hidden');
-    return incomingVisible || callActive || (typeof window.callActive !== 'undefined' && window.callActive);
+    const incomingVisible  = incomingOverlay && !incomingOverlay.classList.contains('hidden');
+    const callOngoing      = videoCallOverlay && !videoCallOverlay.classList.contains('hidden');
+    return incomingVisible || callOngoing || (typeof window.callActive !== 'undefined' && window.callActive);
   }
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
-      if (isEnabled()) _locked = true;
-    } else if (document.visibilityState === 'visible' && _locked) {
-      if (_hasActiveCall()) return;
-      showLockScreen();
+      if (!isEnabled()) return;
+      _hiddenAt = Date.now();
+      const delay = getLockDelay();
+      if (delay === 0) {
+        _locked = true;
+      } else {
+        clearTimeout(_lockTimer);
+        _lockTimer = setTimeout(() => { _locked = true; }, delay);
+      }
+    } else if (document.visibilityState === 'visible') {
+      if (_hasActiveCall()) { clearTimeout(_lockTimer); _locked = false; return; }
+      if (_locked) showLockScreen();
+      else clearTimeout(_lockTimer); // came back before delay expired
     }
   });
 
   // Also handle Capacitor app state
   document.addEventListener('resume', () => {
-    if (_locked && isEnabled() && !_hasActiveCall()) showLockScreen();
+    if (_hasActiveCall()) { clearTimeout(_lockTimer); _locked = false; return; }
+    if (_locked && isEnabled()) setTimeout(() => { if (_locked) showLockScreen(); }, 300);
   });
 
   // Initialize — wait for biometric check before showing lock screen
