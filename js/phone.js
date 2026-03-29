@@ -28,13 +28,16 @@ const phoneModule = (() => {
   ];
 
   // ── Init ─────────────────────────────────────────────────────────────────
+  let _initialized = false;
   async function init() {
-    render(); // render immediately with defaults
+    if (_initialized) { render(); return; }
+    _initialized = true;
+    render();
     _loadCredits().then(() => {
       const bal = document.getElementById('creditsBalance');
       if (bal) bal.textContent = `${_credits.currency} ${(_credits.balance||0).toFixed(2)}`;
     });
-    _loadRates();
+    _loadRates().then(() => render()); // re-render once rates are loaded
   }
 
   async function _loadCredits() {
@@ -58,7 +61,7 @@ const phoneModule = (() => {
     const container = document.getElementById('phonePanelContent');
     if (!container) return;
 
-    const rate = _rates[_selectedCountry.code] || _rates['default'] || { rate: 20 };
+    const rate = (_rates && _rates[_selectedCountry.code]) || (_rates && _rates['default']) || { rate: 20 };
 
     container.innerHTML = `
       <!-- Credits bar -->
