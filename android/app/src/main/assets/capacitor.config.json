@@ -1,0 +1,22 @@
+{
+	"appId": "com.xamepage.app",
+	"appName": "XamePage",
+	"webDir": "www",
+	"android": {
+		"allowMixedContent": true,
+		"captureInput": true,
+		"webContentsDebuggingEnabled": true
+	},
+	"plugins": {
+		"Microphone": {
+			"permissions": [
+				"microphone"
+			]
+		},
+		"Camera": {
+			"permissions": [
+				"camera"
+			]
+		}
+	}
+}

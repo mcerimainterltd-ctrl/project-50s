@@ -1,0 +1,11 @@
+node_modules/
+.env
+*.log
+Compilation
+Run
+fix-termux-gradle.sh
+android/app/build/
+android/.gradle/
+xamePage/android/
+xamePage/node_modules/
+*.apk

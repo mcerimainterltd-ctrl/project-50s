@@ -1,0 +1,81 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v3
+        with:
+          java-version: "21"
+          distribution: 'temurin'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install && npm install @capacitor/android @capacitor/core @capacitor/cli @capacitor/splash-screen @capacitor-firebase/messaging @capacitor/filesystem @capacitor/share @capacitor-community/contacts@^7.0.0
+
+      - name: Update service worker cache version
+        run: node -e "const fs=require('fs');let c=fs.readFileSync('service-worker.js','utf8');const v=Date.now();c=c.replace(/xamepage-v2\.1-v\d+/g,'xamepage-v2.1-v'+v).replace(/xamepage-images-v\d+/g,'xamepage-images-v'+v);fs.writeFileSync('service-worker.js',c);"
+
+      - name: Update service worker cache version
+        run: node scripts/update-cache-version.js
+
+      - name: Sync Capacitor
+        run: npx @capacitor/cli sync android
+
+      - name: Verify MainActivity after sync
+        run: grep -n "FirebaseMessagingPlugin|registerPlugin|createChannel" android/app/src/main/java/com/xamepage/app/MainActivity.java || echo "MISSING - MainActivity was overwritten by sync"
+
+      - name: Configure Firebase Messaging
+        run: |
+          echo "include ':capacitor-firebase-messaging'" >> android/settings.gradle
+          echo "project(':capacitor-firebase-messaging').projectDir = new File('../node_modules/@capacitor-firebase/messaging/android')" >> android/settings.gradle
+          sed -i "s|implementation project(':capacitor-cordova-android-plugins')|implementation project(':capacitor-cordova-android-plugins')\n    implementation project(':capacitor-firebase-messaging')|" android/app/build.gradle
+
+
+      - name: Patch Capacitor WebChromeClient
+        run: cp BridgeWebChromeClient.java.patch node_modules/@capacitor/android/capacitor/src/main/java/com/getcapacitor/BridgeWebChromeClient.java
+
+      - name: Fix Capacitor Config
+        run: cp capacitor.config.json android/app/src/main/assets/capacitor.config.json
+
+      - name: Restore XamePage Icons
+        run: |
+          find android/app/src/main/res -name 'ic_launcher.png' -o -name 'ic_launcher_round.png' -o -name 'ic_launcher_foreground.png' | while read f; do cp www/media/icons/icon-512.png "$f"; done
+          find android/app/src/main/res -name 'splash.png' | while read f; do cp www/media/splash/xamepage_splash.png "$f"; echo "Copied splash to $f"; done
+          rm -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          rm -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+
+      - name: Final Icon and Splash Restore
+        run: |
+          find android/app/src/main/res -name 'splash.png' | while read f; do cp www/media/splash/xamepage_splash.png "$f"; done
+          find android/app/src/main/res -name 'ic_launcher.png' -o -name 'ic_launcher_round.png' -o -name 'ic_launcher_foreground.png' | while read f; do cp www/media/icons/icon-512.png "$f"; done
+
+      - name: Decode Keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/xamepage.keystore
+
+      - name: Build APK
+        run: |
+          cd android && chmod +x gradlew && ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=$GITHUB_WORKSPACE/android/app/xamepage.keystore \
+            -Pandroid.injected.signing.store.password=${{ secrets.STORE_PASSWORD }} \
+            -Pandroid.injected.signing.key.alias=${{ secrets.KEY_ALIAS }} \
+            -Pandroid.injected.signing.key.password=${{ secrets.KEY_PASSWORD }}
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: XamePage-release
+          path: android/app/build/outputs/apk/release/app-release.apk
