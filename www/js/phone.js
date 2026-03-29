@@ -86,7 +86,7 @@ const phoneModule = (() => {
       </div>
 
       <!-- Sub-tab content -->
-      <div id="phoneSubContent" style="overflow-y:auto;height:calc(100vh - 200px);"></div>
+      <div id="phoneSubContent" style="overflow-y:auto;flex:1;min-height:0;"></div>
     `;
 
     // Sub-tab switching — use delegation (set once)
@@ -180,8 +180,15 @@ const phoneModule = (() => {
     if (_deviceContacts.length) return;
     try {
       if (window.Capacitor?.Plugins?.Contacts) {
-        const result = await window.Capacitor.Plugins.Contacts.getContacts({
-          projection: { name: true, phones: true, photos: true }
+        const Contacts = window.Capacitor.Plugins.Contacts;
+        // Request permission first
+        const perm = await Contacts.requestPermissions().catch(() => ({ contacts: 'denied' }));
+        if (perm.contacts !== 'granted') {
+          showNotification('Contacts permission denied');
+          return;
+        }
+        const result = await Contacts.getContacts({
+          projection: { name: true, phones: true, image: true }
         });
         _deviceContacts = (result.contacts || [])
           .filter(c => c.phones?.length)
@@ -269,7 +276,7 @@ const phoneModule = (() => {
   function _renderKeypad(container) {
     const rate = (_rates && _rates[_selectedCountry.code]) || (_rates && _rates['default']) || { rate: 20 };
     container.innerHTML = `
-      <div style="padding:16px;display:flex;flex-direction:column;align-items:center;gap:12px;">
+      <div style="padding:12px 16px;display:flex;flex-direction:column;align-items:center;gap:8px;height:100%;box-sizing:border-box;">
         <!-- Country selector -->
         <button id="countrySelectBtn" style="display:flex;align-items:center;gap:8px;padding:8px 16px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:20px;color:#fff;font-size:14px;cursor:pointer;width:100%;justify-content:center;">
           <span>${_selectedCountry.flag}</span>
@@ -287,21 +294,21 @@ const phoneModule = (() => {
         </div>
 
         <!-- Keypad grid -->
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;width:100%;max-width:280px;">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;width:100%;max-width:260px;">
           ${['1','2','3','4','5','6','7','8','9','*','0','#'].map(k => `
             <button class="dial-key" data-key="${k}"
-              style="padding:16px;background:rgba(255,255,255,0.07);border:none;border-radius:50%;color:#fff;font-size:22px;font-weight:500;cursor:pointer;aspect-ratio:1;transition:background 0.15s;">
+              style="padding:12px;background:rgba(255,255,255,0.07);border:none;border-radius:50%;color:#fff;font-size:20px;font-weight:500;cursor:pointer;aspect-ratio:1;transition:background 0.15s;display:flex;align-items:center;justify-content:center;">
               ${k}
             </button>`).join('')}
         </div>
 
         <!-- Backspace -->
-        <button id="dialBackspace" style="padding:10px 24px;background:rgba(255,100,100,0.1);border:1px solid rgba(255,100,100,0.2);border-radius:20px;color:#ff6464;font-size:18px;cursor:pointer;">⌫</button>
+        <button id="dialBackspace" style="padding:8px 20px;background:rgba(255,100,100,0.1);border:1px solid rgba(255,100,100,0.2);border-radius:20px;color:#ff6464;font-size:16px;cursor:pointer;">⌫</button>
 
         <!-- Action buttons -->
-        <div style="display:flex;gap:16px;width:100%;max-width:280px;margin-top:8px;">
-          <button id="dialSmsBtn" style="flex:1;padding:14px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:12px;color:#fff;font-size:14px;cursor:pointer;">💬 SMS</button>
-          <button id="dialCallBtn" style="flex:2;padding:14px;background:#00B0A0;border:none;border-radius:12px;color:#000;font-size:16px;font-weight:700;cursor:pointer;">📞 Call</button>
+        <div style="display:flex;gap:12px;width:100%;max-width:260px;">
+          <button id="dialSmsBtn" style="flex:1;padding:12px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:12px;color:#fff;font-size:13px;cursor:pointer;">💬 SMS</button>
+          <button id="dialCallBtn" style="flex:2;padding:12px;background:#00B0A0;border:none;border-radius:12px;color:#000;font-size:15px;font-weight:700;cursor:pointer;">📞 Call</button>
         </div>
       </div>
     `;

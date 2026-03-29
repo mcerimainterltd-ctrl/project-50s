@@ -2266,8 +2266,9 @@ app.post('/api/pstn/call', async (req, res) => {
         const rate = (PSTN_RATES[countryCode] || PSTN_RATES['default']).rate;
         if (!credits || credits.balance < rate) return res.status(400).json({ success: false, message: 'Insufficient call credits' });
         // Initiate call via Twilio
+        const twimlUrl = `${process.env.SERVER_URL || 'https://project-50s.onrender.com'}/api/pstn/twiml?to=${encodeURIComponent(to)}`;
         const call = await twilioClient.calls.create({
-            url: `${process.env.SERVER_URL || 'https://project-50s.onrender.com'}/api/pstn/twiml`,
+            url: twimlUrl,
             to: to,
             from: process.env.TWILIO_PHONE_NUMBER,
         });
@@ -2281,9 +2282,16 @@ app.post('/api/pstn/call', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-app.get('/api/pstn/twiml', (req, res) => {
+app.post('/api/pstn/twiml', (req, res) => {
+    const to = req.body?.To || req.query?.to || '';
     res.set('Content-Type', 'text/xml');
-    res.send(`<?xml version="1.0" encoding="UTF-8"?><Response><Say>Connecting your call via XamePage.</Say><Dial>${req.query.to || ''}</Dial></Response>`);
+    res.send(`<?xml version="1.0" encoding="UTF-8"?><Response><Say>Connecting your call via XamePage.</Say><Dial>${to}</Dial></Response>`);
+});
+
+app.get('/api/pstn/twiml', (req, res) => {
+    const to = req.query?.to || '';
+    res.set('Content-Type', 'text/xml');
+    res.send(`<?xml version="1.0" encoding="UTF-8"?><Response><Say>Connecting your call via XamePage.</Say><Dial>${to}</Dial></Response>`);
 });
 
 // ── PSTN SMS API ──────────────────────────────────────────────────────────
