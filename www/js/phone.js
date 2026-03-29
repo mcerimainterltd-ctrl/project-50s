@@ -29,9 +29,12 @@ const phoneModule = (() => {
 
   // ── Init ─────────────────────────────────────────────────────────────────
   async function init() {
-    await _loadCredits();
-    await _loadRates();
-    render();
+    render(); // render immediately with defaults
+    _loadCredits().then(() => {
+      const bal = document.getElementById('creditsBalance');
+      if (bal) bal.textContent = `${_credits.currency} ${(_credits.balance||0).toFixed(2)}`;
+    });
+    _loadRates();
   }
 
   async function _loadCredits() {
@@ -573,10 +576,13 @@ const phoneModule = (() => {
       document.getElementById('chatsPanel')?.classList.add('hidden');
       document.getElementById('callsPanel')?.classList.add('hidden');
       const pp = document.getElementById('phonePanel');
-      if (pp) { pp.classList.remove('hidden'); pp.style.display = 'flex'; }
+      if (pp) { pp.classList.remove('hidden'); pp.style.display = 'block'; }
       document.querySelectorAll('.contacts-tab').forEach(t => t.classList.remove('active'));
       document.getElementById('tabPhone')?.classList.add('active');
-      setTimeout(() => init(), 50);
+      // ensure contacts screen is visible
+      const cs = document.getElementById('contacts');
+      if (cs) { cs.classList.remove('hidden'); cs.style.display = ''; }
+      requestAnimationFrame(() => init());
     });
   }
 
