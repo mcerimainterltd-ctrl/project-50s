@@ -306,21 +306,26 @@ const phoneModule = (() => {
       </div>
     `;
 
-    // Use delegation for all keypad interactions
-    container.addEventListener('click', (e) => {
-      const dialKey = e.target.closest('.dial-key');
-      if (dialKey) { _dialInput += dialKey.dataset.key; _renderKeypad(container); return; }
-      const t = e.target.id || e.target.closest('[id]')?.id;
-      if (t === 'dialBackspace') { _dialInput = _dialInput.slice(0,-1); _renderKeypad(container); }
-      else if (t === 'countrySelectBtn') { _showCountryPicker(); }
-      else if (t === 'dialCallBtn') {
-        if (!_dialInput) return showNotification('Enter a number first');
-        _initiateCall(_selectedCountry.dialCode + _dialInput, 'pstn', 'voice');
-      } else if (t === 'dialSmsBtn') {
-        if (!_dialInput) return showNotification('Enter a number first');
-        _showSmsComposer(_selectedCountry.dialCode + _dialInput);
-      }
-    });
+    // Use delegation — set only once
+    if (!container._keypadSet) {
+      container._keypadSet = true;
+      container.addEventListener('click', (e) => {
+        const dialKey = e.target.closest('.dial-key');
+        if (dialKey) { _dialInput += dialKey.dataset.key; _renderKeypad(container); return; }
+        const target = e.target.closest('button');
+        if (!target) return;
+        const t = target.id;
+        if (t === 'dialBackspace') { _dialInput = _dialInput.slice(0,-1); _renderKeypad(container); }
+        else if (t === 'countrySelectBtn') { _showCountryPicker(); }
+        else if (t === 'dialCallBtn') {
+          if (!_dialInput) return showNotification('Enter a number first');
+          _initiateCall(_selectedCountry.dialCode + _dialInput, 'pstn', 'voice');
+        } else if (t === 'dialSmsBtn') {
+          if (!_dialInput) return showNotification('Enter a number first');
+          _showSmsComposer(_selectedCountry.dialCode + _dialInput);
+        }
+      });
+    }
   }
 
   // ── Call Initiation ───────────────────────────────────────────────────────

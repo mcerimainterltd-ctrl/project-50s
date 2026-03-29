@@ -426,6 +426,7 @@ public class MainActivity extends BridgeActivity {
         permList.add(Manifest.permission.CAMERA);
         permList.add(Manifest.permission.RECORD_AUDIO);
         permList.add(Manifest.permission.MODIFY_AUDIO_SETTINGS);
+        permList.add(Manifest.permission.READ_CONTACTS);
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             permList.add("android.permission.READ_MEDIA_AUDIO");
             permList.add("android.permission.READ_MEDIA_VIDEO");
