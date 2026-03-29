@@ -187,6 +187,9 @@
       <button class="contacts-tab" id="tabCalls" data-tab="calls">
         📞 Calls <span id="missedCallsBadge" class="missed-badge hidden">0</span>
       </button>
+      <button class="contacts-tab" id="tabPhone" data-tab="phone">
+        📱 Phone
+      </button>
       <button class="contacts-tab" id="tabWallet" data-tab="wallet">
         💰 Pay
       </button>
@@ -199,6 +202,11 @@
       </div>
       <div id="selfContactRow"></div>
       <main id="contactList" class="list"></main>
+    </div>
+
+    <!-- Phone panel -->
+    <div id="phonePanel" class="hidden" style="display:none;flex-direction:column;height:100%;overflow-y:auto;">
+      <div id="phonePanelContent"></div>
     </div>
 
     <!-- Calls panel -->
@@ -597,6 +605,7 @@
 <script src="/js/translation.js"></script>
 <script src="/js/chat-lock.js"></script>
 <script src="/js/avatar-builder.js"></script>
+<script src="/js/phone.js"></script>
 <script src="/js/app.js"></script>
 
 <!-- 4. Service Worker registration (plain script — no import needed) -->

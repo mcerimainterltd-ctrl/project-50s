@@ -136,6 +136,7 @@ const callHistoryModule = (() => {
   function initTabs() {
     document.getElementById('tabWallet')?.addEventListener('click', () => {
       document.querySelectorAll('.contacts-tab').forEach(t => t.classList.remove('active'));
+      document.getElementById("phonePanel")?.classList.add("hidden");
       document.getElementById('tabWallet')?.classList.add('active');
       // Check wallet PIN before showing
       if (typeof walletLock !== 'undefined' && walletLock.isEnabled()) {
@@ -150,12 +151,14 @@ const callHistoryModule = (() => {
     document.getElementById('tabChats')?.addEventListener('click', () => {
       document.getElementById('chatsPanel')?.classList.remove('hidden');
       document.getElementById('callsPanel')?.classList.add('hidden');
+      const _pp = document.getElementById('phonePanel'); if (_pp) { _pp.classList.add('hidden'); _pp.style.display = 'none'; }
       document.querySelectorAll('.contacts-tab').forEach(t => t.classList.remove('active'));
       document.getElementById('tabChats')?.classList.add('active');
     });
     document.getElementById('tabCalls')?.addEventListener('click', () => {
       document.getElementById('callsPanel')?.classList.remove('hidden');
       document.getElementById('chatsPanel')?.classList.add('hidden');
+      const _pp = document.getElementById('phonePanel'); if (_pp) { _pp.classList.add('hidden'); _pp.style.display = 'none'; }
       document.querySelectorAll('.contacts-tab').forEach(t => t.classList.remove('active'));
       document.getElementById('tabCalls')?.classList.add('active');
       load().then(() => {
@@ -174,6 +177,9 @@ const callHistoryModule = (() => {
     document.getElementById('clearCallHistoryBtn')?.addEventListener('click', () => {
       if (confirm('Clear all call history?')) clearHistory();
     });
+
+    // Init phone tab
+    if (typeof phoneModule !== 'undefined') phoneModule.initTab();
   }
 
   return { load, render, addMissedCall, initTabs };
