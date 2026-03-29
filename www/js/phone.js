@@ -86,13 +86,17 @@ const phoneModule = (() => {
       <div id="phoneSubContent" style="overflow-y:auto;height:calc(100vh - 200px);"></div>
     `;
 
-    // Sub-tab switching
-    container.querySelectorAll('.phone-subtab').forEach(btn => {
-      btn.addEventListener('click', () => {
-        _activeSubTab = btn.dataset.subtab;
-        render();
+    // Sub-tab switching — use delegation (set once)
+    if (!container._delegationSet) {
+      container._delegationSet = true;
+      container.addEventListener('click', (e) => {
+        const btn = e.target.closest('.phone-subtab');
+        if (btn && btn.dataset.subtab) {
+          _activeSubTab = btn.dataset.subtab;
+          render();
+        }
       });
-    });
+    }
 
     document.getElementById('topupCreditsBtn')?.addEventListener('click', _showTopupDialog);
     document.getElementById('rechargeCreditsBtn')?.addEventListener('click', _showRechargeDialog);
