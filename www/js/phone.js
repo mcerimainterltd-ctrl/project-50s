@@ -201,11 +201,12 @@ const phoneModule = (() => {
         const d = await r.json();
         if (d.success) _xamePageUsers = d.registered;
       } else {
-        // Fallback: use XamePage contacts
-        _deviceContacts = (CONTACTS || []).map(c => ({
-          name: c.name || c.id,
+        // Fallback: use XamePage contacts with names
+        _deviceContacts = (CONTACTS || []).filter(c => c.id !== USER.xameId).map(c => ({
+          name: c.name && c.name !== c.id ? c.name : c.id,
           phones: [c.id],
-          photo: c.profilePic || null
+          photo: c.profilePic || null,
+          isXame: true
         }));
       }
     } catch(e) {
@@ -266,7 +267,7 @@ const phoneModule = (() => {
 
   // ── Keypad ────────────────────────────────────────────────────────────────
   function _renderKeypad(container) {
-    const rate = _rates[_selectedCountry.code] || _rates['default'] || { rate: 20 };
+    const rate = (_rates && _rates[_selectedCountry.code]) || (_rates && _rates['default']) || { rate: 20 };
     container.innerHTML = `
       <div style="padding:16px;display:flex;flex-direction:column;align-items:center;gap:12px;">
         <!-- Country selector -->
@@ -305,29 +306,20 @@ const phoneModule = (() => {
       </div>
     `;
 
-    // Dial keys
-    container.querySelectorAll('.dial-key').forEach(btn => {
-      btn.addEventListener('click', () => {
-        _dialInput += btn.dataset.key;
-        _renderKeypad(container);
-      });
-    });
-
-    document.getElementById('dialBackspace')?.addEventListener('click', () => {
-      _dialInput = _dialInput.slice(0,-1);
-      _renderKeypad(container);
-    });
-
-    document.getElementById('countrySelectBtn')?.addEventListener('click', _showCountryPicker);
-
-    document.getElementById('dialCallBtn')?.addEventListener('click', () => {
-      if (!_dialInput) return showNotification('Enter a number first');
-      _initiateCall(_selectedCountry.dialCode + _dialInput, 'pstn', 'voice');
-    });
-
-    document.getElementById('dialSmsBtn')?.addEventListener('click', () => {
-      if (!_dialInput) return showNotification('Enter a number first');
-      _showSmsComposer(_selectedCountry.dialCode + _dialInput);
+    // Use delegation for all keypad interactions
+    container.addEventListener('click', (e) => {
+      const dialKey = e.target.closest('.dial-key');
+      if (dialKey) { _dialInput += dialKey.dataset.key; _renderKeypad(container); return; }
+      const t = e.target.id || e.target.closest('[id]')?.id;
+      if (t === 'dialBackspace') { _dialInput = _dialInput.slice(0,-1); _renderKeypad(container); }
+      else if (t === 'countrySelectBtn') { _showCountryPicker(); }
+      else if (t === 'dialCallBtn') {
+        if (!_dialInput) return showNotification('Enter a number first');
+        _initiateCall(_selectedCountry.dialCode + _dialInput, 'pstn', 'voice');
+      } else if (t === 'dialSmsBtn') {
+        if (!_dialInput) return showNotification('Enter a number first');
+        _showSmsComposer(_selectedCountry.dialCode + _dialInput);
+      }
     });
   }
 
