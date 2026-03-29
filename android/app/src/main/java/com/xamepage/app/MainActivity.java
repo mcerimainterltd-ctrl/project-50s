@@ -27,6 +27,7 @@ import java.io.FileOutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import io.capawesome.capacitorjs.plugins.firebase.messaging.FirebaseMessagingPlugin;
+import com.capacitorcontacts.capacitorcontacts.CapacitorContacts;
 import com.xamepage.app.CallNotificationReceiver;
 import com.capacitorjs.plugins.splashscreen.SplashScreenPlugin;
 
@@ -59,6 +60,7 @@ public class MainActivity extends BridgeActivity {
         });
         XameTelecomHelper.registerPhoneAccount(this);
         registerPlugin(FirebaseMessagingPlugin.class);
+        registerPlugin(CapacitorContacts.class);
 
         // ── WebView stability & native feel ──────────────────────────────
         android.webkit.WebView webView = getBridge().getWebView();
