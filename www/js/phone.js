@@ -572,10 +572,11 @@ const phoneModule = (() => {
     document.getElementById('tabPhone')?.addEventListener('click', () => {
       document.getElementById('chatsPanel')?.classList.add('hidden');
       document.getElementById('callsPanel')?.classList.add('hidden');
-      document.getElementById('phonePanel')?.classList.remove('hidden');
+      const pp = document.getElementById('phonePanel');
+      if (pp) { pp.classList.remove('hidden'); pp.style.display = 'flex'; }
       document.querySelectorAll('.contacts-tab').forEach(t => t.classList.remove('active'));
       document.getElementById('tabPhone')?.classList.add('active');
-      init();
+      setTimeout(() => init(), 50);
     });
   }
 

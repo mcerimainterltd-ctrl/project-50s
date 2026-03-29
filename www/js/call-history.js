@@ -151,14 +151,14 @@ const callHistoryModule = (() => {
     document.getElementById('tabChats')?.addEventListener('click', () => {
       document.getElementById('chatsPanel')?.classList.remove('hidden');
       document.getElementById('callsPanel')?.classList.add('hidden');
-      document.getElementById('phonePanel')?.classList.add('hidden');
+      const _pp = document.getElementById('phonePanel'); if (_pp) { _pp.classList.add('hidden'); _pp.style.display = 'none'; }
       document.querySelectorAll('.contacts-tab').forEach(t => t.classList.remove('active'));
       document.getElementById('tabChats')?.classList.add('active');
     });
     document.getElementById('tabCalls')?.addEventListener('click', () => {
       document.getElementById('callsPanel')?.classList.remove('hidden');
       document.getElementById('chatsPanel')?.classList.add('hidden');
-      document.getElementById('phonePanel')?.classList.add('hidden');
+      const _pp = document.getElementById('phonePanel'); if (_pp) { _pp.classList.add('hidden'); _pp.style.display = 'none'; }
       document.querySelectorAll('.contacts-tab').forEach(t => t.classList.remove('active'));
       document.getElementById('tabCalls')?.classList.add('active');
       load().then(() => {
