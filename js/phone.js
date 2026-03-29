@@ -364,17 +364,59 @@ const phoneModule = (() => {
     dlg.querySelector('#confirmPSTN').onclick = async () => {
       dlg.remove();
       try {
+        // Get Twilio Voice SDK token
+        const tokenRes = await fetch(`${serverURL}/api/pstn/token/${USER.xameId}`);
+        const tokenData = await tokenRes.json();
+        if (!tokenData.success) {
+          // Fallback to server-side call
+          const r = await fetch(`${serverURL}/api/pstn/call`, {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ userId: USER.xameId, to: number, countryCode: _selectedCountry.code })
+          });
+          const d = await r.json();
+          if (d.success) {
+            showNotification('📞 Connecting call...');
+            _credits.balance = (_credits.balance || 0) - d.deducted;
+            const bal = document.getElementById('creditsBalance');
+            if (bal) bal.textContent = `${_credits.currency} ${_credits.balance.toFixed(2)}`;
+          } else {
+            showNotification(d.message || 'Call failed');
+          }
+          return;
+        }
+        // Use Twilio Voice SDK
+        if (typeof Twilio !== 'undefined' && Twilio.Device) {
+          const device = new Twilio.Device(tokenData.token, { codecPreferences: ['opus', 'pcmu'] });
+          device.on('ready', () => {
+            const conn = device.connect({ To: number, CallerId: process.env.TWILIO_PHONE_NUMBER });
+            showNotification('📞 Connecting call...');
+            conn.on('disconnect', () => { device.destroy(); showNotification('📵 Call ended'); });
+            conn.on('error', (e) => { device.destroy(); showNotification('Call error: ' + e.message); });
+          });
+          device.on('error', (e) => showNotification('Call setup error: ' + e.message));
+        } else {
+          // Fallback: load SDK then retry
+          const script = document.createElement('script');
+          script.src = 'https://sdk.twilio.com/js/client/v1.14/twilio.min.js';
+          script.onload = () => {
+            const device = new Twilio.Device(tokenData.token);
+            device.on('ready', () => {
+              device.connect({ To: number });
+              showNotification('📞 Connecting call...');
+            });
+          };
+          document.head.appendChild(script);
+        }
+        // Deduct credits
         const r = await fetch(`${serverURL}/api/pstn/call`, {
           method: 'POST', headers: {'Content-Type':'application/json'},
           body: JSON.stringify({ userId: USER.xameId, to: number, countryCode: _selectedCountry.code })
         });
         const d = await r.json();
         if (d.success) {
-          showNotification('📞 Connecting call...');
           _credits.balance = (_credits.balance || 0) - d.deducted;
-          document.getElementById('creditsBalance').textContent = `${_credits.currency} ${_credits.balance.toFixed(2)}`;
-        } else {
-          showNotification(d.message || 'Call failed');
+          const bal = document.getElementById('creditsBalance');
+          if (bal) bal.textContent = `${_credits.currency} ${_credits.balance.toFixed(2)}`;
         }
       } catch(e) { showNotification('Call failed. Check connection.'); }
     };

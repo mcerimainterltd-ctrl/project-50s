@@ -2254,6 +2254,26 @@ app.get('/api/call-credits/rates', (req, res) => {
     res.json({ success: true, rates: PSTN_RATES });
 });
 
+// ── Twilio Voice SDK Token ───────────────────────────────────────────────────
+app.get('/api/pstn/token/:userId', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const AccessToken = require('twilio').jwt.AccessToken;
+        const VoiceGrant = AccessToken.VoiceGrant;
+        const apiKey    = process.env.TWILIO_API_KEY;
+        const apiSecret = process.env.TWILIO_API_SECRET;
+        const appSid    = process.env.TWILIO_APP_SID;
+        const accountSid = process.env.TWILIO_ACCOUNT_SID;
+        if (!apiKey || !apiSecret || !appSid) {
+            return res.status(503).json({ success: false, message: 'Voice SDK not configured' });
+        }
+        const token = new AccessToken(accountSid, apiKey, apiSecret, { identity: userId, ttl: 3600 });
+        const voiceGrant = new VoiceGrant({ outgoingApplicationSid: appSid, incomingAllow: false });
+        token.addGrant(voiceGrant);
+        res.json({ success: true, token: token.toJwt() });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
 // ── PSTN Call API ─────────────────────────────────────────────────────────
 
 app.post('/api/pstn/call', async (req, res) => {
@@ -2266,11 +2286,15 @@ app.post('/api/pstn/call', async (req, res) => {
         const rate = (PSTN_RATES[countryCode] || PSTN_RATES['default']).rate;
         if (!credits || credits.balance < rate) return res.status(400).json({ success: false, message: 'Insufficient call credits' });
         // Initiate call via Twilio
+        // Twilio Voice SDK handles the actual call from browser
+        // This endpoint just validates credits and returns confirmation
         const twimlUrl = `${process.env.SERVER_URL || 'https://project-50s.onrender.com'}/api/pstn/twiml?to=${encodeURIComponent(to)}`;
         const call = await twilioClient.calls.create({
             url: twimlUrl,
             to: to,
             from: process.env.TWILIO_PHONE_NUMBER,
+            statusCallback: `${process.env.SERVER_URL || 'https://project-50s.onrender.com'}/api/pstn/status`,
+            statusCallbackMethod: 'POST',
         });
         // Deduct 1 minute upfront, refund unused later via webhook
         credits.balance -= rate;

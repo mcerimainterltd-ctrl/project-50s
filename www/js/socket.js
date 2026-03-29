@@ -221,7 +221,13 @@ function connectSocket() {
     document.addEventListener('xame:answer-call', () => {
       const pending = window.__pendingCall__;
       if (pending && typeof handleIncomingCall === 'function') {
+        // Dismiss incoming overlay first
+        const overlay = document.getElementById('incomingCallOverlay');
+        if (overlay) overlay.classList.add('hidden');
+        document.getElementById('quickReplyPanel')?.classList.add('hidden');
+        stopCallRing();
         handleIncomingCall(pending.offer, pending.callerId);
+        socket?.emit('call-accepted', { recipientId: pending.callerId, callId: pending.callId });
       }
     }, { once: true });
 
