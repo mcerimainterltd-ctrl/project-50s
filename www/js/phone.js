@@ -333,7 +333,6 @@ const phoneModule = (() => {
         if (!_dialInput) return showNotification('Enter a number first');
         _showSmsComposer(_selectedCountry.dialCode + _dialInput);
       }
-    };
     });
   }
 
