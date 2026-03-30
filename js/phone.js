@@ -180,11 +180,12 @@ const phoneModule = (() => {
   async function _loadDeviceContacts() {
     if (_deviceContacts.length) return;
     try {
-      if (window.Capacitor?.Plugins?.Contacts) {
-        const Contacts = window.Capacitor.Plugins.Contacts;
+      const ContactsPlugin = window.Capacitor?.Plugins?.Contacts || window.Contacts;
+      if (ContactsPlugin) {
+        const Contacts = ContactsPlugin;
         // Request permission first
-        const perm = await Contacts.requestPermissions().catch(() => ({ contacts: 'denied' }));
-        if (perm.contacts !== 'granted') {
+        const perm = await Contacts.requestPermissions().catch(() => ({ contacts: 'granted' }));
+        if (perm?.contacts === 'denied') {
           showNotification('Contacts permission denied');
           return;
         }
