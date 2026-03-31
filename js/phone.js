@@ -180,18 +180,22 @@ const phoneModule = (() => {
   async function _loadDeviceContacts() {
     if (_deviceContacts.length) return;
     try {
-      const ContactsPlugin = window.Capacitor?.Plugins?.Contacts || window.Contacts;
-      if (ContactsPlugin) {
-        const Contacts = ContactsPlugin;
-        // Request permission first
-        const perm = await Contacts.requestPermissions().catch(() => ({ contacts: 'granted' }));
-        if (perm?.contacts === 'denied') {
-          showNotification('Contacts permission denied');
-          return;
-        }
-        const result = await Contacts.getContacts({
-          projection: { name: true, phones: true, image: true }
+      // Try native AndroidBridge first (most reliable)
+      if (window.AndroidBridge?.getDeviceContacts) {
+        const raw = window.AndroidBridge.getDeviceContacts();
+        const parsed = JSON.parse(raw || '[]');
+        // Group by name to merge multiple numbers
+        const map = {};
+        parsed.forEach(c => {
+          if (!map[c.name]) map[c.name] = { name: c.name, phones: [], photo: null };
+          if (c.phone) map[c.name].phones.push(c.phone);
         });
+        _deviceContacts = Object.values(map).filter(c => c.phones.length).sort((a,b) => a.name.localeCompare(b.name));
+      } else if (window.Capacitor?.Plugins?.Contacts) {
+        const Contacts = window.Capacitor.Plugins.Contacts;
+        const perm = await Contacts.requestPermissions().catch(() => ({ contacts: 'granted' }));
+        if (perm?.contacts === 'denied') { showNotification('Contacts permission denied'); return; }
+        const result = await Contacts.getContacts({ projection: { name: true, phones: true, image: true } });
         _deviceContacts = (result.contacts || [])
           .filter(c => c.phones?.length)
           .map(c => ({

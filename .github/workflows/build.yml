@@ -41,9 +41,7 @@ jobs:
         run: |
           echo "include ':capacitor-firebase-messaging'" >> android/settings.gradle
           echo "project(':capacitor-firebase-messaging').projectDir = new File('../node_modules/@capacitor-firebase/messaging/android')" >> android/settings.gradle
-          echo "include ':capacitor-community-contacts'" >> android/settings.gradle
-          echo "project(':capacitor-community-contacts').projectDir = new File('../node_modules/@capacitor-community/contacts/android')" >> android/settings.gradle
-          sed -i "s|implementation project(':capacitor-cordova-android-plugins')|implementation project(':capacitor-cordova-android-plugins')\n    implementation project(':capacitor-firebase-messaging')\n    implementation project(':capacitor-community-contacts')|" android/app/build.gradle
+          sed -i "s|implementation project(':capacitor-cordova-android-plugins')|implementation project(':capacitor-cordova-android-plugins')\n    implementation project(':capacitor-firebase-messaging')|" android/app/build.gradle
 
 
       - name: Patch Capacitor WebChromeClient

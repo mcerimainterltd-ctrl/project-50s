@@ -189,6 +189,38 @@ public class MainActivity extends BridgeActivity {
                 });
             }
             @JavascriptInterface
+            public String getDeviceContacts() {
+                try {
+                    android.database.Cursor cursor = getContentResolver().query(
+                        android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                        new String[]{
+                            android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                            android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER
+                        },
+                        null, null,
+                        android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " ASC"
+                    );
+                    org.json.JSONArray result = new org.json.JSONArray();
+                    if (cursor != null) {
+                        while (cursor.moveToNext()) {
+                            String name = cursor.getString(0);
+                            String number = cursor.getString(1);
+                            if (name != null && number != null) {
+                                org.json.JSONObject contact = new org.json.JSONObject();
+                                contact.put("name", name);
+                                contact.put("phone", number.replaceAll("\s", ""));
+                                result.put(contact);
+                            }
+                        }
+                        cursor.close();
+                    }
+                    return result.toString();
+                } catch (Exception e) {
+                    return "[]";
+                }
+            }
+
+            @JavascriptInterface
             public void speak(String text) {
                 if (tts == null) {
                     tts = new TextToSpeech(MainActivity.this, status -> {
