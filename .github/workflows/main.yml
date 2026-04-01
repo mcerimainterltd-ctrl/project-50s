@@ -8,10 +8,14 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-      - run: flutter pub get
-      - run: flutter build apk --release
+      - name: Install dependencies
+        run: flutter pub get
+        working-directory: ./flutter_version
+      - name: Build APK
+        run: flutter build apk --release
+        working-directory: ./flutter_version
       - name: Upload APK
         uses: actions/upload-artifact@v3
         with:
           name: release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: flutter_version/build/app/outputs/flutter-apk/app-release.apk
