@@ -4,10 +4,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          cache: true
       - name: Install dependencies
         run: flutter pub get
         working-directory: ./flutter_version
@@ -15,7 +16,7 @@ jobs:
         run: flutter build apk --release
         working-directory: ./flutter_version
       - name: Upload APK
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: release-apk
           path: flutter_version/build/app/outputs/flutter-apk/app-release.apk
