@@ -1,4 +1,3 @@
-// XamePage Auth Engine v2.1.0+4 - FORCE CACHE CLEAR
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -12,7 +11,7 @@ class AuthService {
 
   Map<String, dynamic>? get currentUser => _currentUser;
 
-  // COMPILER FIX: Explicitly defined for SignupScreen
+  // COMPILER FIX: This must exist for the app to build
   bool validatePassword(String p) {
     return p.length >= 8;
   }
