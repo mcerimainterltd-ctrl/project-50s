@@ -20,36 +20,10 @@ class AuthService {
       final response = await http.post(
         Uri.parse('$serverUrl/api/login'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'xameId': xameId, 'password': password}),
-      );
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 200 && data['success'] == true) {
-        _currentUser = data['user'];
-        await _storage.write(key: 'token', value: data['token'] ?? '');
-        return true;
-      }
-    } catch (e) { print('Login error: $e'); }
-    return false;
-  }
-
-  Future<bool> register({
-    required String firstName,
-    required String lastName,
-    required String day,
-    required String month,
-    required String year,
-    required String password
-  }) async {
-    final formattedDob = "$year-${month.padLeft(2, '0')}-${day.padLeft(2, '0')}";
-    try {
-      final response = await http.post(
-        Uri.parse('$serverUrl/api/register'),
-        headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'firstName': firstName,
-          'lastName': lastName,
-          'dob': formattedDob,
-          'password': password,
+          "name": "$firstName $lastName",
+          "dob": formattedDob,
+          "password": password,
         }),
       );
       final data = jsonDecode(response.body);
