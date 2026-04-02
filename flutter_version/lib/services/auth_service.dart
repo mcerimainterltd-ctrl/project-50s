@@ -9,10 +9,8 @@ class AuthService {
 
   AuthService({required this.serverUrl});
 
-  // Getter required by Wallet and Socket services
   Map<String, dynamic>? get currentUser => _currentUser;
 
-  // Validation required by Signup screen
   bool validatePassword(String password) {
     return password.length >= 8;
   }
@@ -43,14 +41,19 @@ class AuthService {
     required String password,
   }) async {
     try {
-      final formattedDob = "$year-$month-$day";
+      // Exact padding and format from Capacitor JS
+      final d = day.padLeft(2, '0');
+      final m = month.padLeft(2, '0');
+      final formattedDob = "$year-$m-$d";
+
       final response = await http.post(
         Uri.parse('$serverUrl/api/register'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          "name": "$firstName $lastName",
-          "dob": formattedDob,
-          "password": password,
+          'firstName': firstName,
+          'lastName': lastName,
+          'dob': formattedDob,
+          'password': password,
         }),
       );
       final data = jsonDecode(response.body);
