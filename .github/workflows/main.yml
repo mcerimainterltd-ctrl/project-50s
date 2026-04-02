@@ -9,21 +9,17 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Recreate Android Project Harness
+      - name: Prepare Project
         run: |
           cd flutter_version
-          # Remove any old, broken android files
           rm -rf android
-          # Force recreate the android folder properly
           flutter create --platforms android .
-          # Clean the build cache
-          flutter clean
           flutter pub get
 
       - name: Build APK
         run: |
           cd flutter_version
-          flutter build apk --release --no-tree-shake-icons
+          flutter build apk --release --verbose --no-tree-shake-icons
         
       - name: Upload APK
         uses: actions/upload-artifact@v4

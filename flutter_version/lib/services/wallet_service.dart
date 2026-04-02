@@ -46,29 +46,4 @@ class WalletService {
       print('Wallet load failed: $e');
     }
   }
-
-  Future<bool> transfer({required String toId, required double amount}) async {
-    if (amount > _balance) return false;
-
-    try {
-      final response = await http.post(
-        Uri.parse('$serverUrl/api/wallet/transfer'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'fromId': auth.currentUser?['xameId'],
-          'toId': toId,
-          'amount': amount,
-        }),
-      );
-
-      final data = jsonDecode(response.body);
-      if (data['success'] == true) {
-        await loadWallet();
-        return true;
-      }
-    } catch (e) {
-      print('Transfer failed: $e');
-    }
-    return false;
-  }
 }
