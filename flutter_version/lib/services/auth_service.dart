@@ -9,6 +9,14 @@ class AuthService {
 
   AuthService({required this.serverUrl});
 
+  // Getter required by Wallet and Socket services
+  Map<String, dynamic>? get currentUser => _currentUser;
+
+  // Validation required by Signup screen
+  bool validatePassword(String password) {
+    return password.length >= 8;
+  }
+
   Future<bool> login(String xameId, String password) async {
     try {
       final response = await http.post(
