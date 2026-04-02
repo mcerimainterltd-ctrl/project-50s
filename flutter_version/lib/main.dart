@@ -5,7 +5,9 @@ import 'screens/login_screen.dart';
 import 'screens/wallet_screen.dart';
 
 void main() {
-  const String url = 'https://your-server-url.com'; // Add your real URL here
+  // Your live Render server URL
+  const String url = 'https://project-50s.onrender.com'; 
+  
   final authService = AuthService(serverUrl: url);
   final walletService = WalletService(serverUrl: url, auth: authService);
   
@@ -32,7 +34,12 @@ class _XamePageNativeState extends State<XamePageNative> {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(brightness: Brightness.dark, primaryColor: const Color(0xFF007AFF)),
+      title: 'XamePage',
+      theme: ThemeData(
+        brightness: Brightness.dark, 
+        primaryColor: const Color(0xFF007AFF),
+        scaffoldBackgroundColor: Colors.black,
+      ),
       home: _isLoggedIn 
         ? WalletScreen(walletService: widget.walletService)
         : LoginScreen(
