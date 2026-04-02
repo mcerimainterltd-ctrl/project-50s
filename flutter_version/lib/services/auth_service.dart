@@ -9,10 +9,8 @@ class AuthService {
 
   AuthService({required this.serverUrl});
 
-  // RESTORED: Needed by Wallet and Socket services
   Map<String, dynamic>? get currentUser => _currentUser;
 
-  // RESTORED: Needed by Signup screen
   bool validatePassword(String password) {
     return password.length >= 8;
   }
@@ -33,6 +31,7 @@ class AuthService {
       final uri = Uri.parse('$serverUrl/api/register');
       print("DEBUG: Sending to $uri");
 
+      // ADDED: .timeout() to stop the forever loop
       final response = await http.post(
         uri,
         headers: {'Content-Type': 'application/json'},
@@ -42,7 +41,7 @@ class AuthService {
           'dob': formattedDob,
           'password': password,
         }),
-      );
+      ).timeout(const Duration(seconds: 30));
 
       final data = jsonDecode(response.body);
       if (response.statusCode == 200 || response.statusCode == 201) {
@@ -62,7 +61,7 @@ class AuthService {
         Uri.parse('$serverUrl/api/login'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'xameId': xameId, 'password': password}),
-      );
+      ).timeout(const Duration(seconds: 30));
       final data = jsonDecode(response.body);
       if (response.statusCode == 200 && data['success'] == true) {
         _currentUser = data['user'];
