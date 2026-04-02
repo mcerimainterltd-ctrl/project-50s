@@ -1,52 +1,36 @@
 import 'package:flutter/material.dart';
 import 'services/auth_service.dart';
-import 'services/socket_service.dart';
+import 'screens/login_screen.dart';
 
 void main() {
-  runApp(const XamePageNative());
+  // Replace with your actual XamePage server URL
+  final authService = AuthService(serverUrl: 'https://your-server-url.com');
+  runApp(XamePageNative(authService: authService));
 }
 
-class XamePageNative extends StatelessWidget {
-  const XamePageNative({super.key});
+class XamePageNative extends StatefulWidget {
+  final AuthService authService;
+  const XamePageNative({super.key, required this.authService});
+
+  @override
+  State<XamePageNative> createState() => _XamePageNativeState();
+}
+
+class _XamePageNativeState extends State<XamePageNative> {
+  bool _isLoggedIn = false;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      debugShowCheckedModeBanner: false,
       title: 'XamePage',
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        primaryColor: const Color(0xFF007AFF),
-        scaffoldBackgroundColor: Colors.black,
-      ),
-      home: const LoadingScreen(),
-    );
-  }
-}
-
-class LoadingScreen extends StatelessWidget {
-  const LoadingScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              'XAMEPAGE',
-              style: TextStyle(
-                fontSize: 32,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 4,
-                color: Colors.white,
-              ),
-            ),
-            SizedBox(height: 20),
-            CircularProgressIndicator(color: Color(0xFF007AFF)),
-          ],
-        ),
-      ),
+      theme: ThemeData(brightness: Brightness.dark, primaryColor: const Color(0xFF007AFF)),
+      home: _isLoggedIn 
+        ? Scaffold(body: Center(child: Text("Welcome back, Gibson!", style: TextStyle(color: Colors.white, fontSize: 24))))
+        : LoginScreen(
+            authService: widget.authService,
+            onLoginSuccess: () => setState(() => _isLoggedIn = true),
+          ),
     );
   }
 }
