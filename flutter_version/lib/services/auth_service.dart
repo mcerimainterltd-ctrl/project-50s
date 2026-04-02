@@ -11,6 +11,15 @@ class AuthService {
 
   Map<String, dynamic>? get currentUser => _currentUser;
 
+  // Validation logic based on your auth.js requirements
+  bool isPasswordValid(String p) {
+    return p.length >= 8 && 
+           p.contains(RegExp(r'[A-Z]')) && 
+           p.contains(RegExp(r'[a-z]')) && 
+           p.contains(RegExp(r'[0-9]')) && 
+           p.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'));
+  }
+
   Future<bool> login(String xameId, String password) async {
     try {
       final response = await http.post(
@@ -21,28 +30,37 @@ class AuthService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         _currentUser = data['user'];
-        await _storage.write(key: 'token', value: data['token']);
+        await _storage.write(key: 'token', value: data['token'] ?? '');
         return true;
       }
     } catch (e) { print('Login error: $e'); }
     return false;
   }
 
-  Future<bool> register(String name, String email, String password) async {
+  Future<bool> register({
+    required String firstName, 
+    required String lastName, 
+    required String day, 
+    required String month, 
+    required String year, 
+    required String password
+  }) async {
+    // Format date as YYYY-MM-DD as required by your server's hidden input logic
+    final formattedDob = "$year-${month.padLeft(2, '0')}-${day.padLeft(2, '0')}";
+    
     try {
       final response = await http.post(
         Uri.parse('$serverUrl/api/auth/register'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'name': name,
-          'email': email,
+          'firstName': firstName,
+          'lastName': lastName,
+          'dob': formattedDob,
           'password': password,
         }),
       );
-      // Render usually returns 201 for "Created"
       return response.statusCode == 201 || response.statusCode == 200;
     } catch (e) {
-      print('Register error: $e');
       return false;
     }
   }
