@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import '../services/wallet_service.dart';
+import '../services/socket_service.dart';
+import 'contacts_screen.dart';
 
 class WalletScreen extends StatefulWidget {
   final WalletService walletService;
+  final SocketService socketService;
 
-  const WalletScreen({super.key, required this.walletService});
+  const WalletScreen({super.key, required this.walletService, required this.socketService});
 
   @override
   State<WalletScreen> createState() => _WalletScreenState();
@@ -16,12 +19,13 @@ class _WalletScreenState extends State<WalletScreen> {
   @override
   void initState() {
     super.initState();
-    _refreshWallet();
+    _refresh();
   }
 
-  Future<void> _refreshWallet() async {
+  Future<void> _refresh() async {
     setState(() => _isLoading = true);
     await widget.walletService.loadWallet();
+    widget.socketService.connect(); // Connect socket on login
     if (mounted) setState(() => _isLoading = false);
   }
 
@@ -30,69 +34,47 @@ class _WalletScreenState extends State<WalletScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        title: const Text('WALLET', style: TextStyle(letterSpacing: 2)),
+        title: const Text('XAMEPAGE', style: TextStyle(letterSpacing: 2)),
         backgroundColor: Colors.black,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _refreshWallet,
-          ),
-        ],
       ),
       body: RefreshIndicator(
-        onRefresh: _refreshWallet,
+        onRefresh: _refresh,
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            // Balance Card
             Container(
               padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
                 color: const Color(0xFF1C1C1E),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white10),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Total Balance', style: TextStyle(color: Colors.white.withOpacity(0.6))),
-                  const SizedBox(height: 8),
+                  const Text('Balance', style: TextStyle(color: Colors.white54)),
                   Text(
                     widget.walletService.formatAmount(widget.walletService.balance),
-                    style: const TextStyle(color: Colors.white, fontSize: 36, fontWeight: FontWeight.bold),
+                    style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 32),
-            const Text('Recent Transactions', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            
-            if (_isLoading)
-              const Center(child: CircularProgressIndicator())
-            else if (widget.walletService.transactions.isEmpty)
-              const Center(child: Text('No transactions yet.', style: TextStyle(color: Colors.white54)))
-            else
-              ...widget.walletService.transactions.map((tx) => ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: CircleAvatar(
-                  backgroundColor: tx['type'] == 'credit' ? Colors.green.withOpacity(0.2) : Colors.red.withOpacity(0.2),
-                  child: Icon(
-                    tx['type'] == 'credit' ? Icons.arrow_downward : Icons.arrow_upward,
-                    color: tx['type'] == 'credit' ? Colors.green : Colors.red,
-                  ),
-                ),
-                title: Text(tx['description'] ?? 'Transaction', style: const TextStyle(color: Colors.white)),
-                subtitle: Text(tx['date'] ?? '', style: const TextStyle(color: Colors.white54)),
-                trailing: Text(
-                  widget.walletService.formatAmount(tx['amount'] ?? 0),
-                  style: TextStyle(
-                    color: tx['type'] == 'credit' ? Colors.green : Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              )).toList(),
+            const SizedBox(height: 20),
+            const Text('Recent Activity', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            if (_isLoading) const Center(child: CircularProgressIndicator())
+            else ...widget.walletService.transactions.map((tx) => ListTile(
+              title: Text(tx['type'] ?? 'Transfer', style: const TextStyle(color: Colors.white)),
+              trailing: Text(widget.walletService.formatAmount(tx['amount'] ?? 0)),
+            )),
           ],
+        ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: const Color(0xFF007AFF),
+        child: const Icon(Icons.chat_bubble_outline, color: Colors.white),
+        onPressed: () => Navigator.push(
+          context, 
+          MaterialPageRoute(builder: (context) => ContactsScreen(socket: widget.socketService))
         ),
       ),
     );
