@@ -16,15 +16,27 @@ class _SignupScreenState extends State<SignupScreen> {
   final _mController = TextEditingController();
   final _yController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
   bool _isLoading = false;
 
   void _showError(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), backgroundColor: Colors.red)
+    );
   }
 
   Future<void> _handleSignup() async {
     final p = _passwordController.text;
-    if (!widget.authService.isPasswordValid(p)) {
+    final cp = _confirmPasswordController.text;
+
+    // 1. Check if passwords match (Matching the logic seen in auth.js)
+    if (p != cp) {
+      _showError('Passwords do not match');
+      return;
+    }
+
+    // 2. Validate complexity (Requirement from auth.js)
+    if (!widget.authService.validatePassword(p)) {
       _showError('Password must have: 8+ chars, Uppercase, Lowercase, Number, and Special Char');
       return;
     }
@@ -42,9 +54,11 @@ class _SignupScreenState extends State<SignupScreen> {
 
     if (success) {
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Account Created! Please Login.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Account Created! Please Login.'))
+      );
     } else {
-      _showError('Registration Failed. Check your details.');
+      _showError('Registration Failed. Check your connection or details.');
     }
   }
 
@@ -70,14 +84,21 @@ class _SignupScreenState extends State<SignupScreen> {
                 Expanded(child: _field(_yController, 'YYYY', type: TextInputType.number)),
               ],
             ),
-            _field(_passwordController, 'Password (Secure)', obscure: true),
+            _field(_passwordController, 'Password (min 8 characters)', obscure: true),
+            _field(_confirmPasswordController, 'Confirm password', obscure: true),
             const SizedBox(height: 20),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
                 onPressed: _isLoading ? null : _handleSignup,
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF007AFF), padding: const EdgeInsets.symmetric(vertical: 16)),
-                child: _isLoading ? const CircularProgressIndicator(color: Colors.white) : const Text('Create Account'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF007AFF), 
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))
+                ),
+                child: _isLoading 
+                  ? const CircularProgressIndicator(color: Colors.white) 
+                  : const Text('Create account', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
               ),
             ),
           ],

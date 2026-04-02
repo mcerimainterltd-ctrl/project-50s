@@ -11,13 +11,13 @@ class AuthService {
 
   Map<String, dynamic>? get currentUser => _currentUser;
 
-  // Validation logic based on your auth.js requirements
-  bool isPasswordValid(String p) {
-    return p.length >= 8 && 
-           p.contains(RegExp(r'[A-Z]')) && 
-           p.contains(RegExp(r'[a-z]')) && 
-           p.contains(RegExp(r'[0-9]')) && 
-           p.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'));
+  // Password must match the requirements in your auth.js
+  bool validatePassword(String p) {
+    bool hasUppercase = p.contains(RegExp(r'[A-Z]'));
+    bool hasDigits = p.contains(RegExp(r'[0-9]'));
+    bool hasSpecialCharacters = p.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'));
+    bool hasLowercase = p.contains(RegExp(r'[a-z]'));
+    return p.length >= 8 && hasUppercase && hasDigits && hasSpecialCharacters && hasLowercase;
   }
 
   Future<bool> login(String xameId, String password) async {
@@ -33,7 +33,7 @@ class AuthService {
         await _storage.write(key: 'token', value: data['token'] ?? '');
         return true;
       }
-    } catch (e) { print('Login error: $e'); }
+    } catch (e) { print('Login Exception: $e'); }
     return false;
   }
 
@@ -45,7 +45,7 @@ class AuthService {
     required String year, 
     required String password
   }) async {
-    // Format date as YYYY-MM-DD as required by your server's hidden input logic
+    // Format to YYYY-MM-DD as required by updateHiddenDOB in auth.js
     final formattedDob = "$year-${month.padLeft(2, '0')}-${day.padLeft(2, '0')}";
     
     try {
@@ -59,9 +59,8 @@ class AuthService {
           'password': password,
         }),
       );
+      print('Register Status: ${response.statusCode}');
       return response.statusCode == 201 || response.statusCode == 200;
-    } catch (e) {
-      return false;
-    }
+    } catch (e) { return false; }
   }
 }
