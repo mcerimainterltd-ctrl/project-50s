@@ -11,7 +11,15 @@ class AuthService {
 
   Map<String, dynamic>? get currentUser => _currentUser;
 
-  // Login matched to server.js
+  // This matches the call in signup_screen.dart
+  bool validatePassword(String p) {
+    return p.length >= 8 && 
+           p.contains(RegExp(r'[A-Z]')) && 
+           p.contains(RegExp(r'[a-z]')) && 
+           p.contains(RegExp(r'[0-9]')) && 
+           p.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'));
+  }
+
   Future<bool> login(String xameId, String password) async {
     try {
       final response = await http.post(
@@ -19,22 +27,16 @@ class AuthService {
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'xameId': xameId, 'password': password}),
       );
-
       final data = jsonDecode(response.body);
-      // Checking the 'success' flag from your server
       if (response.statusCode == 200 && data['success'] == true) {
         _currentUser = data['user'];
         await _storage.write(key: 'token', value: data['token'] ?? '');
         return true;
       }
-      print("Login Failed: ${data['message']}");
-    } catch (e) {
-      print('Login Exception: $e');
-    }
+    } catch (e) { print('Login error: $e'); }
     return false;
   }
 
-  // Register matched to server.js
   Future<bool> register({
     required String firstName, 
     required String lastName, 
@@ -43,7 +45,7 @@ class AuthService {
     required String year, 
     required String password
   }) async {
-    // CRITICAL: Padding months/days with 0 to pass server-side date validation
+    // Exact padding for express-validator in server.js
     final formattedDay = day.padLeft(2, '0');
     final formattedMonth = month.padLeft(2, '0');
     final formattedDob = "$year-$formattedMonth-$formattedDay";
@@ -59,17 +61,8 @@ class AuthService {
           'password': password,
         }),
       );
-
       final data = jsonDecode(response.body);
-      if (response.statusCode == 200 && data['success'] == true) {
-        print("Success! Assigned XameID: ${data['user']['xameId']}");
-        return true;
-      }
-      print("Server rejected: ${data['message']}");
-      return false;
-    } catch (e) {
-      print("Network error: $e");
-      return false;
-    }
+      return (response.statusCode == 200 || response.statusCode == 201) && data['success'] == true;
+    } catch (e) { return false; }
   }
 }
