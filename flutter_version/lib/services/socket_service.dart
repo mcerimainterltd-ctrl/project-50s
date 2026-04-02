@@ -22,11 +22,7 @@ class SocketService {
 
     socket!.onConnect((_) {
       print('Connected to Socket Server');
-      
-      // Fixed: Use the local xameId variable instead of socket!.query
       socket!.emit('user-online', {'userId': xameId});
-      
-      // Initialize lists
       socket!.emit('get_contacts', xameId);
       socket!.emit('get_chat_history', {'userId': xameId});
     });
