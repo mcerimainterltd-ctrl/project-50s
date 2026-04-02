@@ -11,7 +11,6 @@ class AuthService {
 
   Map<String, dynamic>? get currentUser => _currentUser;
 
-  // COMPILER FIX: This must exist for the app to build
   bool validatePassword(String p) {
     return p.length >= 8;
   }
@@ -34,11 +33,11 @@ class AuthService {
   }
 
   Future<bool> register({
-    required String firstName, 
-    required String lastName, 
-    required String day, 
-    required String month, 
-    required String year, 
+    required String firstName,
+    required String lastName,
+    required String day,
+    required String month,
+    required String year,
     required String password
   }) async {
     final formattedDob = "$year-${month.padLeft(2, '0')}-${day.padLeft(2, '0')}";
