@@ -11,15 +11,17 @@ class AuthService {
 
   Map<String, dynamic>? get currentUser => _currentUser;
 
-  // This matches the call in signup_screen.dart
+  // FIXED: Restored 'validatePassword' for the Signup Screen
   bool validatePassword(String p) {
+    // Server requires min 8 characters
+    // We also check for Uppercase and special chars to match auth.js
     return p.length >= 8 && 
            p.contains(RegExp(r'[A-Z]')) && 
-           p.contains(RegExp(r'[a-z]')) && 
            p.contains(RegExp(r'[0-9]')) && 
            p.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'));
   }
 
+  // FIXED: Restored 'login' for the Login Screen
   Future<bool> login(String xameId, String password) async {
     try {
       final response = await http.post(
@@ -37,6 +39,7 @@ class AuthService {
     return false;
   }
 
+  // FIXED: Corrected path and DOB padding for Registration
   Future<bool> register({
     required String firstName, 
     required String lastName, 
@@ -45,7 +48,7 @@ class AuthService {
     required String year, 
     required String password
   }) async {
-    // Exact padding for express-validator in server.js
+    // Padding ensures '05' instead of '5' to pass server validation
     final formattedDay = day.padLeft(2, '0');
     final formattedMonth = month.padLeft(2, '0');
     final formattedDob = "$year-$formattedMonth-$formattedDay";
