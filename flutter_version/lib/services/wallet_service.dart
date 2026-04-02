@@ -10,11 +10,10 @@ class WalletService {
   String _currency = 'NGN';
   List<dynamic> _transactions = [];
 
-  // Fixed: Escaped the dollar signs with $
   static const Map<String, String> SYM = {
     'NGN': '\u20a6', 'GHS': 'GH\u20b5', 'KES': 'KSh', 'ZAR': 'R',
-    'USD': '$', 'EUR': '\u20ac', 'GBP': '\u00a3', 'INR': '\u20b9',
-    'AED': 'AED', 'CAD': 'CA$', 'AUD': 'A$', 'JPY': '\u00a5',
+    'USD': r'$', 'EUR': '\u20ac', 'GBP': '\u00a3', 'INR': '\u20b9',
+    'AED': 'AED', 'CAD': r'CA$', 'AUD': r'A$', 'JPY': '\u00a5',
   };
 
   WalletService({required this.serverUrl, required this.auth});
