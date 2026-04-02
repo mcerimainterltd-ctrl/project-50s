@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
+import 'signup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   final AuthService authService;
@@ -16,26 +17,6 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController();
   bool _isLoading = false;
 
-  Future<void> _handleLogin() async {
-    if (_xameIdController.text.isEmpty || _passwordController.text.isEmpty) return;
-    
-    setState(() => _isLoading = true);
-    final success = await widget.authService.login(
-      _xameIdController.text,
-      _passwordController.text,
-    );
-    
-    if (mounted) setState(() => _isLoading = false);
-
-    if (success) {
-      widget.onLoginSuccess();
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Login Failed. Check your credentials.')),
-      );
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -46,47 +27,26 @@ class _LoginScreenState extends State<LoginScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
-              'XAMEPAGE',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 32,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 8,
-              ),
-            ),
+            const Text('XAMEPAGE', textAlign: TextAlign.center, style: TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold, letterSpacing: 8)),
             const SizedBox(height: 48),
-            TextField(
-              controller: _xameIdController,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                hintText: 'XameID',
-                hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
-                enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
-              ),
-            ),
+            TextField(controller: _xameIdController, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(hintText: 'XameID', enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)))),
             const SizedBox(height: 16),
-            TextField(
-              controller: _passwordController,
-              obscureText: true,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                hintText: 'Password',
-                hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
-                enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
-              ),
-            ),
+            TextField(controller: _passwordController, obscureText: true, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(hintText: 'Password', enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)))),
             const SizedBox(height: 32),
             ElevatedButton(
-              onPressed: _isLoading ? null : _handleLogin,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF007AFF),
-                padding: const EdgeInsets.symmetric(vertical: 16),
-              ),
-              child: _isLoading 
-                ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) 
-                : const Text('Login', style: TextStyle(fontSize: 18, color: Colors.white)),
+              onPressed: _isLoading ? null : () async {
+                setState(() => _isLoading = true);
+                final success = await widget.authService.login(_xameIdController.text, _passwordController.text);
+                setState(() => _isLoading = false);
+                if (success) widget.onLoginSuccess();
+                else ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Login Failed.')));
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF007AFF), padding: const EdgeInsets.symmetric(vertical: 16)),
+              child: _isLoading ? const CircularProgressIndicator(color: Colors.white) : const Text('Login', style: TextStyle(color: Colors.white)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => SignupScreen(authService: widget.authService))),
+              child: const Text('Don\'t have an account? Sign Up', style: TextStyle(color: Colors.white54)),
             ),
           ],
         ),

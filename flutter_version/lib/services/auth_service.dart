@@ -18,16 +18,32 @@ class AuthService {
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'xameId': xameId, 'password': password}),
       );
-
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         _currentUser = data['user'];
         await _storage.write(key: 'token', value: data['token']);
         return true;
       }
-    } catch (e) {
-      print('Login error: $e');
-    }
+    } catch (e) { print('Login error: $e'); }
     return false;
+  }
+
+  Future<bool> register(String name, String email, String password) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$serverUrl/api/auth/register'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'name': name,
+          'email': email,
+          'password': password,
+        }),
+      );
+      // Render usually returns 201 for "Created"
+      return response.statusCode == 201 || response.statusCode == 200;
+    } catch (e) {
+      print('Register error: $e');
+      return false;
+    }
   }
 }
