@@ -1,8 +1,11 @@
 name: xamepage_flutter
-description: 100% Native XamePage Mobile App.
+description: 100% Native XamePage Mobile App by Gibson Agbor.
 version: 1.0.0+1
+publish_to: 'none'
+
 environment:
   sdk: ">=3.0.0 <4.0.0"
+
 dependencies:
   flutter:
     sdk: flutter
@@ -10,5 +13,6 @@ dependencies:
   socket_io_client: ^2.0.3
   flutter_webrtc: ^0.9.48
   flutter_secure_storage: ^9.0.0
+
 flutter:
   uses-material-design: true
