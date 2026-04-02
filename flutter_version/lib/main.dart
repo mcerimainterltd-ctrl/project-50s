@@ -1,16 +1,25 @@
 import 'package:flutter/material.dart';
 import 'services/auth_service.dart';
+import 'services/wallet_service.dart';
 import 'screens/login_screen.dart';
+import 'screens/wallet_screen.dart';
 
 void main() {
-  // Replace with your actual XamePage server URL
-  final authService = AuthService(serverUrl: 'https://your-server-url.com');
-  runApp(XamePageNative(authService: authService));
+  const String url = 'https://your-server-url.com'; // Add your real URL here
+  final authService = AuthService(serverUrl: url);
+  final walletService = WalletService(serverUrl: url, auth: authService);
+  
+  runApp(XamePageNative(
+    authService: authService, 
+    walletService: walletService
+  ));
 }
 
 class XamePageNative extends StatefulWidget {
   final AuthService authService;
-  const XamePageNative({super.key, required this.authService});
+  final WalletService walletService;
+  
+  const XamePageNative({super.key, required this.authService, required this.walletService});
 
   @override
   State<XamePageNative> createState() => _XamePageNativeState();
@@ -23,10 +32,9 @@ class _XamePageNativeState extends State<XamePageNative> {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'XamePage',
       theme: ThemeData(brightness: Brightness.dark, primaryColor: const Color(0xFF007AFF)),
       home: _isLoggedIn 
-        ? Scaffold(body: Center(child: Text("Welcome back, Gibson!", style: TextStyle(color: Colors.white, fontSize: 24))))
+        ? WalletScreen(walletService: widget.walletService)
         : LoginScreen(
             authService: widget.authService,
             onLoginSuccess: () => setState(() => _isLoggedIn = true),
