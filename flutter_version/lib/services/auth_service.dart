@@ -9,6 +9,14 @@ class AuthService {
 
   AuthService({required this.serverUrl});
 
+  // RESTORED: Needed by Wallet and Socket services
+  Map<String, dynamic>? get currentUser => _currentUser;
+
+  // RESTORED: Needed by Signup screen
+  bool validatePassword(String password) {
+    return password.length >= 8;
+  }
+
   Future<bool> register({
     required String firstName,
     required String lastName,
@@ -22,7 +30,6 @@ class AuthService {
       final m = month.padLeft(2, '0');
       final formattedDob = "$year-$m-$d";
       
-      // FIXED URL: Only one /api/
       final uri = Uri.parse('$serverUrl/api/register');
       print("DEBUG: Sending to $uri");
 
@@ -41,16 +48,14 @@ class AuthService {
       if (response.statusCode == 200 || response.statusCode == 201) {
         return data['success'] == true;
       } else {
-        // This throws the error message so the Red Band can see it
         throw data['message'] ?? 'Server Error ${response.statusCode}';
       }
     } catch (e) {
       print('Register error: $e');
-      rethrow; // This sends the error to the UI Red Band
+      rethrow;
     }
   }
 
-  // Keeping a simplified login for now to ensure compilation
   Future<bool> login(String xameId, String password) async {
     try {
       final response = await http.post(
@@ -58,7 +63,13 @@ class AuthService {
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'xameId': xameId, 'password': password}),
       );
-      return response.statusCode == 200;
-    } catch (e) { return false; }
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200 && data['success'] == true) {
+        _currentUser = data['user'];
+        await _storage.write(key: 'token', value: data['token'] ?? '');
+        return true;
+      }
+    } catch (e) { print('Login error: $e'); }
+    return false;
   }
 }
