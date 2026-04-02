@@ -9,29 +9,6 @@ class AuthService {
 
   AuthService({required this.serverUrl});
 
-  Map<String, dynamic>? get currentUser => _currentUser;
-
-  bool validatePassword(String password) {
-    return password.length >= 8;
-  }
-
-  Future<bool> login(String xameId, String password) async {
-    try { print("DEBUG: Target: $serverUrl");
-      final response = await http.post(
-        Uri.parse('$serverUrl/api/login'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'xameId': xameId, 'password': password}),
-      );
-      final data = jsonDecode(response.body); print("DEBUG: Server response: $data"); print("SERVER RESPONSE: $data");
-      if (response.statusCode == 200 && data['success'] == true) {
-        _currentUser = data['user'];
-        await _storage.write(key: 'token', value: data['token'] ?? '');
-        return true;
-      }
-    } catch (e) { print('Login error: $e'); }
-    return false;
-  }
-
   Future<bool> register({
     required String firstName,
     required String lastName,
@@ -40,14 +17,17 @@ class AuthService {
     required String year,
     required String password,
   }) async {
-    try { print("DEBUG: Target: $serverUrl");
-      // Exact padding and format from Capacitor JS
+    try {
       final d = day.padLeft(2, '0');
       final m = month.padLeft(2, '0');
       final formattedDob = "$year-$m-$d";
+      
+      // FIXED URL: Only one /api/
+      final uri = Uri.parse('$serverUrl/api/register');
+      print("DEBUG: Sending to $uri");
 
       final response = await http.post(
-        Uri.parse('$serverUrl/api/api/api/register'),
+        uri,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'firstName': firstName,
@@ -56,11 +36,29 @@ class AuthService {
           'password': password,
         }),
       );
-      final data = jsonDecode(response.body); print("DEBUG: Server response: $data"); print("SERVER RESPONSE: $data");
-      return data['success'] == true;
-    } catch (e) { 
+
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return data['success'] == true;
+      } else {
+        // This throws the error message so the Red Band can see it
+        throw data['message'] ?? 'Server Error ${response.statusCode}';
+      }
+    } catch (e) {
       print('Register error: $e');
-      return false; 
+      rethrow; // This sends the error to the UI Red Band
     }
+  }
+
+  // Keeping a simplified login for now to ensure compilation
+  Future<bool> login(String xameId, String password) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$serverUrl/api/login'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'xameId': xameId, 'password': password}),
+      );
+      return response.statusCode == 200;
+    } catch (e) { return false; }
   }
 }
