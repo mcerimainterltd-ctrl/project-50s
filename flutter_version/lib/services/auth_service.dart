@@ -22,7 +22,7 @@ class AuthService {
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'xameId': xameId, 'password': password}),
       );
-      final data = jsonDecode(response.body); print("SERVER RESPONSE: $data");
+      final data = jsonDecode(response.body); print("DEBUG: Server response: $data"); print("SERVER RESPONSE: $data");
       if (response.statusCode == 200 && data['success'] == true) {
         _currentUser = data['user'];
         await _storage.write(key: 'token', value: data['token'] ?? '');
@@ -56,7 +56,7 @@ class AuthService {
           'password': password,
         }),
       );
-      final data = jsonDecode(response.body); print("SERVER RESPONSE: $data");
+      final data = jsonDecode(response.body); print("DEBUG: Server response: $data"); print("SERVER RESPONSE: $data");
       return data['success'] == true;
     } catch (e) { 
       print('Register error: $e');
