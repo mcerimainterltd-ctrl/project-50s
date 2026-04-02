@@ -47,7 +47,7 @@ class AuthService {
       final formattedDob = "$year-$m-$d";
 
       final response = await http.post(
-        Uri.parse('$serverUrl/api/api/register'),
+        Uri.parse('$serverUrl/api/api/api/register'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'firstName': firstName,
