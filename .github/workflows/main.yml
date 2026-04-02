@@ -8,13 +8,21 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-          cache: true
+      
+      # This fixes the "Unsupported Gradle project" error automatically
+      - name: Recreate Android Project Harness
+        run: |
+          cd flutter_version
+          flutter create --platforms android .
+        
       - name: Install dependencies
         run: flutter pub get
         working-directory: ./flutter_version
+        
       - name: Build APK
         run: flutter build apk --release
         working-directory: ./flutter_version
+        
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
