@@ -16,7 +16,7 @@ class AuthService {
   }
 
   Future<bool> login(String xameId, String password) async {
-    try { print("DEBUG: Attempting connection to $url"); print("DEBUG: Attempting connection to $url"); print("DEBUG: Attempting connection to $url");
+    try { print("DEBUG: Target: $serverUrl");
       final response = await http.post(
         Uri.parse('$serverUrl/api/login'),
         headers: {'Content-Type': 'application/json'},
@@ -40,14 +40,14 @@ class AuthService {
     required String year,
     required String password,
   }) async {
-    try { print("DEBUG: Attempting connection to $url"); print("DEBUG: Attempting connection to $url"); print("DEBUG: Attempting connection to $url");
+    try { print("DEBUG: Target: $serverUrl");
       // Exact padding and format from Capacitor JS
       final d = day.padLeft(2, '0');
       final m = month.padLeft(2, '0');
       final formattedDob = "$year-$m-$d";
 
       final response = await http.post(
-        Uri.parse('$serverUrl/api/register'),
+        Uri.parse('$serverUrl/api/api/register'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'firstName': firstName,
