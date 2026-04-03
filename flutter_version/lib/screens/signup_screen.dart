@@ -1,100 +1,112 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../core/services/auth_service.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key});
+
   @override
   State<SignupScreen> createState() => _SignupScreenState();
 }
 
 class _SignupScreenState extends State<SignupScreen> {
-  final firstNameController = TextEditingController();
-  final lastNameController = TextEditingController();
-  final dController = TextEditingController();
-  final mController = TextEditingController();
-  final yController = TextEditingController();
-  final passwordController = TextEditingController();
-  final confirmController = TextEditingController();
-  final authService = AuthService();
+  final AuthService _authService = AuthService();
+  
+  // Controllers for your existing fields
+  final _firstNameController = TextEditingController();
+  final _lastNameController = TextEditingController();
+  final _dController = TextEditingController();
+  final _mController = TextEditingController();
+  final _yController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _confirmController = TextEditingController();
+  
+  bool _isLoading = false;
 
-  Widget _dobField(TextEditingController controller, String hint, int limit, bool next) {
-    return Expanded(
-      child: TextField(
-        controller: controller,
-        keyboardType: TextInputType.number,
-        textAlign: TextAlign.center,
-        style: const TextStyle(color: Colors.white),
-        inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(limit)],
-        decoration: InputDecoration(
-          hintText: hint,
-          hintStyle: const TextStyle(color: Colors.grey),
-          enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.grey)),
-        ),
-        onChanged: (value) {
-          if (value.length == limit && next) FocusScope.of(context).nextFocus();
-        },
-      ),
-    );
+  void _handleRegister() async {
+    if (_passwordController.text != _confirmController.text) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Passwords do not match"))
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    
+    // Formatting the DOB string for your Node.js backend
+    final dob = "${_dController.text}-${_mController.text}-${_yController.text}";
+    
+    try {
+      final result = await _authService.register(
+        firstName: _firstNameController.text,
+        lastName: _lastNameController.text,
+        dob: dob,
+        password: _passwordController.text,
+      );
+
+      if (result != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Success! ID: ${result.xameId}"))
+        );
+        Navigator.pop(context); // Go back to login
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Registration failed. Please check your details."))
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Network error. Is the server awake?"))
+      );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0D1117), // Dark professional background
-      appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0),
+      backgroundColor: const Color(0xFF0D1117),
+      appBar: AppBar(title: const Text("Sign Up"), backgroundColor: Colors.transparent),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 30),
+        padding: const EdgeInsets.all(20),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("Sign Up", style: TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 40),
-            TextField(controller: firstNameController, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'First Name', labelStyle: TextStyle(color: Colors.grey))),
-            const SizedBox(height: 20),
-            TextField(controller: lastNameController, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Last Name', labelStyle: TextStyle(color: Colors.grey))),
-            const SizedBox(height: 20),
-            const Text("DOB", style: TextStyle(color: Colors.grey, fontSize: 16)),
+            _buildInput(_firstNameController, "First Name"),
+            _buildInput(_lastNameController, "Last Name"),
             Row(
               children: [
-                _dobField(dController, 'DD', 2, true),
-                const SizedBox(width: 20),
-                _dobField(mController, 'MM', 2, true),
-                const SizedBox(width: 20),
-                _dobField(yController, 'YYYY', 4, false),
+                Expanded(child: _buildInput(_dController, "DD", isNum: true)),
+                const SizedBox(width: 10),
+                Expanded(child: _buildInput(_mController, "MM", isNum: true)),
+                const SizedBox(width: 10),
+                Expanded(child: _buildInput(_yController, "YYYY", isNum: true)),
               ],
             ),
+            _buildInput(_passwordController, "Password", obscure: true),
+            _buildInput(_confirmController, "Confirm Password", obscure: true),
             const SizedBox(height: 20),
-            TextField(controller: passwordController, obscureText: true, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Password', labelStyle: TextStyle(color: Colors.grey))),
-            const SizedBox(height: 20),
-            TextField(controller: confirmController, obscureText: true, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Confirm Password', labelStyle: TextStyle(color: Colors.grey))),
-            const SizedBox(height: 40),
-            Center(
+            SizedBox(
+              width: double.infinity,
               child: ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.purple, padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 15)),
-                onPressed: () async {
-                  if (passwordController.text != confirmController.text) {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Passwords do not match")));
-                    return;
-                  }
-                  final dob = "${dController.text}-${mController.text}-${yController.text}";
-                  final result = await authService.register(
-                    firstName: firstNameController.text,
-                    lastName: lastNameController.text,
-                    dob: dob,
-                    password: passwordController.text,
-                  );
-                  if (result != null) {
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Account Created! Xame ID: ${result.xameId}")));
-                  }
-                },
-                child: const Text("Register", style: TextStyle(color: Colors.white)),
+                onPressed: _isLoading ? null : _handleRegister,
+                child: _isLoading 
+                  ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2)) 
+                  : const Text("Register"),
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildInput(TextEditingController controller, String label, {bool obscure = false, bool isNum = false}) {
+    return TextField(
+      controller: controller,
+      obscureText: obscure,
+      keyboardType: isNum ? TextInputType.number : TextInputType.text,
+      style: const TextStyle(color: Colors.white),
+      decoration: InputDecoration(labelText: label, labelStyle: const TextStyle(color: Colors.grey)),
     );
   }
 }
