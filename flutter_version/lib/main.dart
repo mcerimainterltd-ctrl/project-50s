@@ -50,7 +50,6 @@ class _XamePageNativeState extends State<XamePageNative> {
           )
         : LoginScreen(
             
-            onLoginSuccess: () => setState(() => _isLoggedIn = true),
           ),
     );
   }
