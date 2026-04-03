@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'services/auth_service.dart';
-import 'services/wallet_service.dart';
-import 'services/socket_service.dart';
+import 'core/services/auth_service.dart';
+// import 'core/services/wallet_service.dart';
+import 'core/services/socket_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/wallet_screen.dart';
 

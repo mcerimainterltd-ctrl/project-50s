@@ -38,7 +38,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 setState(() => _isLoading = true);
                 final success = await widget.authService.login(_xameIdController.text, _passwordController.text);
                 setState(() => _isLoading = false);
-                if (success) widget.onLoginSuccess();
+                if (success != null) widget.onLoginSuccess();
                 else ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Login Failed.')));
               },
               style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF007AFF), padding: const EdgeInsets.symmetric(vertical: 16)),
