@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import '../services/wallet_service.dart';
+// import '../services/wallet_service.dart';
 import '../core/services/socket_service.dart';
 import 'contacts_screen.dart';
 
 class WalletScreen extends StatefulWidget {
-  final WalletService walletService;
+  // final WalletService walletService;
   final SocketService socketService;
 
   const WalletScreen({super.key, required this.walletService, required this.socketService});
@@ -25,7 +25,7 @@ class _WalletScreenState extends State<WalletScreen> {
   Future<void> _refresh() async {
     setState(() => _isLoading = true);
     await widget.walletService.loadWallet();
-    widget.socketService.connect(); // Connect socket on login
+    widget.socketService.connect(AppConstants.serverUrl); // Connect socket on login
     if (mounted) setState(() => _isLoading = false);
   }
 

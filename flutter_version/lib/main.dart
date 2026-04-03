@@ -7,9 +7,9 @@ import 'screens/wallet_screen.dart';
 
 void main() {
   const String url = 'https://project-50s.onrender.com';
-  final authService = AuthService(serverUrl: url);
+  final authService = AuthService();
   final walletService = WalletService(serverUrl: url, auth: authService);
-  final socketService = SocketService(serverUrl: url, auth: authService);
+  final socketService = SocketService();
   
   runApp(XamePageNative(
     authService: authService, 
@@ -20,7 +20,7 @@ void main() {
 
 class XamePageNative extends StatefulWidget {
   final AuthService authService;
-  final WalletService walletService;
+  // final WalletService walletService;
   final SocketService socketService;
   
   const XamePageNative({

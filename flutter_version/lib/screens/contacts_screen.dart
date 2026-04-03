@@ -16,7 +16,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
   void initState() {
     super.initState();
     // Listen for the contact list from your Render server
-    widget.socketService.socket?.on('contacts_update', (data) {
+    widget.socket.socket?.on('contacts_update', (data) {
       if (mounted) setState(() => _contacts = data);
     });
   }
