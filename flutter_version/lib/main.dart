@@ -49,7 +49,7 @@ class _XamePageNativeState extends State<XamePageNative> {
             socketService: widget.socketService
           )
         : LoginScreen(
-            authService: widget.authService,
+            
             onLoginSuccess: () => setState(() => _isLoggedIn = true),
           ),
     );
