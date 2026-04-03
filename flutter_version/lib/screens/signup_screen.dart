@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../core/services/auth_service.dart';
 
 class SignupScreen extends StatefulWidget {
@@ -10,7 +9,6 @@ class SignupScreen extends StatefulWidget {
 
 class _SignupScreenState extends State<SignupScreen> {
   final AuthService _authService = AuthService();
-  
   final _fName = TextEditingController();
   final _lName = TextEditingController();
   final _d = TextEditingController();
@@ -18,16 +16,20 @@ class _SignupScreenState extends State<SignupScreen> {
   final _y = TextEditingController();
   final _pass = TextEditingController();
   final _conf = TextEditingController();
-
-  final _mFocus = FocusNode();
-  final _yFocus = FocusNode();
-  final _pFocus = FocusNode();
-  
   bool _isLoading = false;
 
   void _handleRegister() async {
+    // NEW: Validation Check
+    if (_fName.text.isEmpty || _lName.text.isEmpty || _pass.text.isEmpty) {
+      _showMsg("Please fill in all required fields");
+      return;
+    }
+    if (_d.text.length < 2 || _m.text.length < 2 || _y.text.length < 4) {
+      _showMsg("Please enter a valid Date of Birth");
+      return;
+    }
     if (_pass.text != _conf.text) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Passwords do not match")));
+      _showMsg("Passwords do not match");
       return;
     }
 
@@ -43,16 +45,20 @@ class _SignupScreenState extends State<SignupScreen> {
       );
 
       if (result != null) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Success! ID: ${result.xameId}")));
+        _showMsg("Success! Welcome ${result.firstName}");
         Navigator.pop(context);
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Registration Failed. Try a different Name/DOB.")));
+        _showMsg("Server rejected registration. Try a unique name.");
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Server Connection Error")));
+      _showMsg("Connection Error: Check internet/server");
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  void _showMsg(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
   @override
@@ -66,15 +72,14 @@ class _SignupScreenState extends State<SignupScreen> {
           children: [
             _field(_fName, "First Name"),
             _field(_lName, "Last Name"),
-            const SizedBox(height: 10),
             Row(children: [
-              Expanded(child: _dobField(_d, "DD", 2, _mFocus)),
+              Expanded(child: _field(_d, "DD", num: true)),
               const SizedBox(width: 10),
-              Expanded(child: _dobField(_m, "MM", 2, _yFocus, focusNode: _mFocus)),
+              Expanded(child: _field(_m, "MM", num: true)),
               const SizedBox(width: 10),
-              Expanded(child: _dobField(_y, "YYYY", 4, _pFocus, focusNode: _yFocus)),
+              Expanded(child: _field(_y, "YYYY", num: true)),
             ]),
-            _field(_pass, "Password", obs: true, focusNode: _pFocus),
+            _field(_pass, "Password", obs: true),
             _field(_conf, "Confirm Password", obs: true),
             const SizedBox(height: 30),
             SizedBox(
@@ -91,26 +96,11 @@ class _SignupScreenState extends State<SignupScreen> {
     );
   }
 
-  Widget _dobField(TextEditingController c, String hint, int limit, FocusNode next, {FocusNode? focusNode}) {
+  Widget _field(TextEditingController c, String l, {bool obs = false, bool num = false}) {
     return TextField(
       controller: c,
-      focusNode: focusNode,
-      keyboardType: TextInputType.number,
-      textAlign: TextAlign.center,
-      style: const TextStyle(color: Colors.white),
-      inputFormatters: [LengthLimitingTextInputFormatter(limit)],
-      onChanged: (val) {
-        if (val.length == limit) next.requestFocus();
-      },
-      decoration: InputDecoration(hintText: hint, hintStyle: const TextStyle(color: Colors.grey)),
-    );
-  }
-
-  Widget _field(TextEditingController c, String l, {bool obs = false, FocusNode? focusNode}) {
-    return TextField(
-      controller: c,
-      focusNode: focusNode,
       obscureText: obs,
+      keyboardType: num ? TextInputType.number : TextInputType.text,
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(labelText: l, labelStyle: const TextStyle(color: Colors.grey)),
     );
