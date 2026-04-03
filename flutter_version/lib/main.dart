@@ -13,7 +13,6 @@ void main() {
   
   runApp(XamePageNative(
     authService: authService, 
-    walletService: walletService,
     socketService: socketService,
   ));
 }
