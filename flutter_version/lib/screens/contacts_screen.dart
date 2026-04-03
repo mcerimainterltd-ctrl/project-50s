@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../services/socket_service.dart';
+import '../core/services/socket_service.dart';
 
 class ContactsScreen extends StatefulWidget {
   final SocketService socket;

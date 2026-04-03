@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/wallet_service.dart';
-import '../services/socket_service.dart';
+import '../core/services/socket_service.dart';
 import 'contacts_screen.dart';
 
 class WalletScreen extends StatefulWidget {
