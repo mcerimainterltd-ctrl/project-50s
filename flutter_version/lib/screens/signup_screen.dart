@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../core/services/auth_service.dart';
 
 class SignupScreen extends StatefulWidget {
@@ -19,75 +20,62 @@ class _SignupScreenState extends State<SignupScreen> {
   bool _isLoading = false;
 
   void _handleRegister() async {
-    // NEW: Validation Check
     if (_fName.text.isEmpty || _lName.text.isEmpty || _pass.text.isEmpty) {
-      _showMsg("Please fill in all required fields");
-      return;
+      _msg("Please fill all fields"); return;
     }
-    if (_d.text.length < 2 || _m.text.length < 2 || _y.text.length < 4) {
-      _showMsg("Please enter a valid Date of Birth");
-      return;
-    }
-    if (_pass.text != _conf.text) {
-      _showMsg("Passwords do not match");
-      return;
-    }
-
     setState(() => _isLoading = true);
-    final dob = "${_d.text}-${_m.text}-${_y.text}";
-
     try {
       final result = await _authService.register(
-        firstName: _fName.text,
-        lastName: _lName.text,
-        dob: dob,
-        password: _pass.text,
+        firstName: _fName.text, lastName: _lName.text,
+        dob: "${_d.text}-${_m.text}-${_y.text}", password: _pass.text,
       );
-
       if (result != null) {
-        _showMsg("Success! Welcome ${result.firstName}");
-        Navigator.pop(context);
+        _msg("Account Created!"); Navigator.pop(context);
       } else {
-        _showMsg("Server rejected registration. Try a unique name.");
+        _msg("Registration failed. Check details.");
       }
-    } catch (e) {
-      _showMsg("Connection Error: Check internet/server");
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  void _showMsg(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-  }
+  void _msg(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0),
-      backgroundColor: const Color(0xFF0D1117),
-      appBar: AppBar(title: const Text("Create Account"), backgroundColor: Colors.transparent),
+    return Scaffold(
+      backgroundColor: const Color(0xFF0D1117), // Your original Dark Theme
+      appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(25),
+        padding: const EdgeInsets.symmetric(horizontal: 30),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _field(_fName, "First Name"),
-            _field(_lName, "Last Name"),
-            Row(children: [
-              Expanded(child: _field(_d, "DD", num: true)),
-              const SizedBox(width: 10),
-              Expanded(child: _field(_m, "MM", num: true)),
-              const SizedBox(width: 10),
-              Expanded(child: _field(_y, "YYYY", num: true)),
-            ]),
-            _field(_pass, "Password", obs: true),
-            _field(_conf, "Confirm Password", obs: true),
+            const Text("Create Account", style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
             const SizedBox(height: 30),
+            _input(_fName, "First Name"),
+            _input(_lName, "Last Name"),
+            const SizedBox(height: 10),
+            Row(children: [
+              Expanded(child: _input(_d, "DD", isNum: true)),
+              const SizedBox(width: 15),
+              Expanded(child: _input(_m, "MM", isNum: true)),
+              const SizedBox(width: 15),
+              Expanded(child: _input(_y, "YYYY", isNum: true)),
+            ]),
+            _input(_pass, "Password", isPass: true),
+            _input(_conf, "Confirm Password", isPass: true),
+            const SizedBox(height: 40),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
                 onPressed: _isLoading ? null : _handleRegister,
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, padding: const EdgeInsets.symmetric(vertical: 15)),
-                child: _isLoading ? const CircularProgressIndicator(color: Colors.white) : const Text("Register"),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF238636), // GitHub-style Green
+                  padding: const EdgeInsets.symmetric(vertical: 18),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                child: _isLoading ? const CircularProgressIndicator(color: Colors.white) : const Text("Register", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ),
             ),
           ],
@@ -96,13 +84,21 @@ class _SignupScreenState extends State<SignupScreen> {
     );
   }
 
-  Widget _field(TextEditingController c, String l, {bool obs = false, bool num = false}) {
-    return TextField(
-      controller: c,
-      obscureText: obs,
-      keyboardType: num ? TextInputType.number : TextInputType.text,
-      style: const TextStyle(color: Colors.white),
-      decoration: InputDecoration(labelText: l, labelStyle: const TextStyle(color: Colors.grey)),
+  Widget _input(TextEditingController c, String l, {bool isPass = false, bool isNum = false}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: TextField(
+        controller: c,
+        obscureText: isPass,
+        keyboardType: isNum ? TextInputType.number : TextInputType.text,
+        style: const TextStyle(color: Colors.white),
+        decoration: InputDecoration(
+          labelText: l,
+          labelStyle: const TextStyle(color: Colors.grey),
+          enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.grey)),
+          focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.blue)),
+        ),
+      ),
     );
   }
 }
