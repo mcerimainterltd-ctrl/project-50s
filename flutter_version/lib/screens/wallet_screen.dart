@@ -1,3 +1,4 @@
+import '../core/config/constants.dart';
 import 'package:flutter/material.dart';
 // import '../services/wallet_service.dart';
 import '../core/services/socket_service.dart';
@@ -7,7 +8,7 @@ class WalletScreen extends StatefulWidget {
   // final WalletService walletService;
   final SocketService socketService;
 
-  const WalletScreen({super.key, required this.walletService, required this.socketService});
+  const WalletScreen({super.key, required this.socketService});
 
   @override
   State<WalletScreen> createState() => _WalletScreenState();

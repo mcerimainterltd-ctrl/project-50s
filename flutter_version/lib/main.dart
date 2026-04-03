@@ -8,7 +8,7 @@ import 'screens/wallet_screen.dart';
 void main() {
   const String url = 'https://project-50s.onrender.com';
   final authService = AuthService();
-  final walletService = WalletService(serverUrl: url, auth: authService);
+  // final walletService = WalletService(serverUrl: url, auth: authService);
   final socketService = SocketService();
   
   runApp(XamePageNative(
@@ -26,7 +26,6 @@ class XamePageNative extends StatefulWidget {
   const XamePageNative({
     super.key, 
     required this.authService, 
-    required this.walletService,
     required this.socketService
   });
 
@@ -48,7 +47,6 @@ class _XamePageNativeState extends State<XamePageNative> {
       ),
       home: _isLoggedIn 
         ? WalletScreen(
-            walletService: widget.walletService, 
             socketService: widget.socketService
           )
         : LoginScreen(
