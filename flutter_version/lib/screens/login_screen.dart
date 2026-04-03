@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../core/services/auth_service.dart';
+import 'signup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -15,19 +16,16 @@ class _LoginScreenState extends State<LoginScreen> {
 
   void _handleLogin() async {
     if (_idController.text.isEmpty || _passController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please enter ID and Password")));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Enter ID and Password")));
       return;
     }
-
     setState(() => _isLoading = true);
     final success = await _authSvc.login(_idController.text, _passController.text);
-    
     if (mounted) setState(() => _isLoading = false);
-
     if (success) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Login Successful!")));
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Invalid ID or Password")));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Invalid Credentials")));
     }
   }
 
@@ -47,6 +45,7 @@ class _LoginScreenState extends State<LoginScreen> {
               style: const TextStyle(color: Colors.white),
               decoration: const InputDecoration(labelText: "Xame ID (e.g. XP12345)", labelStyle: TextStyle(color: Colors.grey)),
             ),
+            const SizedBox(height: 15),
             TextField(
               controller: _passController,
               obscureText: true,
@@ -58,7 +57,20 @@ class _LoginScreenState extends State<LoginScreen> {
               width: double.infinity,
               child: ElevatedButton(
                 onPressed: _isLoading ? null : _handleLogin,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF21262D),
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                ),
                 child: _isLoading ? const CircularProgressIndicator() : const Text("Login"),
+              ),
+            ),
+            const SizedBox(height: 20),
+            // THIS IS THE MISSING PIECE:
+            GestureDetector(
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const SignupScreen())),
+              child: const Text(
+                "Don't have an account? Sign Up",
+                style: TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.w500),
               ),
             ),
           ],
