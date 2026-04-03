@@ -45,7 +45,7 @@ class _LoginScreenState extends State<LoginScreen> {
               child: _isLoading ? const CircularProgressIndicator(color: Colors.white) : const Text('Login', style: TextStyle(color: Colors.white)),
             ),
             TextButton(
-              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => SignupScreen(authService: widget.authService))),
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => SignupScreen())),
               child: const Text('Don\'t have an account? Sign Up', style: TextStyle(color: Colors.white54)),
             ),
           ],
