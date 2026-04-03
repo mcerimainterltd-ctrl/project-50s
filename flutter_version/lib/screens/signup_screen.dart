@@ -72,8 +72,22 @@ class _SignupScreenState extends State<SignupScreen> {
             Center(
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.purple, padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 15)),
-                onPressed: () {
-                  // Registration logic will go here to hit your Render server
+                onPressed: () async {
+                  if (passwordController.text != confirmController.text) {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Passwords do not match")));
+                    return;
+                  }
+                  final dob = "${dController.text}-${mController.text}-${yController.text}";
+                  final result = await authService.register(
+                    firstName: firstNameController.text,
+                    lastName: lastNameController.text,
+                    dob: dob,
+                    password: passwordController.text,
+                  );
+                  if (result != null) {
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Account Created! Xame ID: ${result.xameId}")));
+                  }
                 },
                 child: const Text("Register", style: TextStyle(color: Colors.white)),
               ),
