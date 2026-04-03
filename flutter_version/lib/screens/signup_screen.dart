@@ -43,7 +43,7 @@ class _SignupScreenState extends State<SignupScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return Scaffold(appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0), 
       backgroundColor: const Color(0xFF0D1117), // Your original Dark Theme
       appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0),
       body: SingleChildScrollView(
