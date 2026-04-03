@@ -1,57 +1,30 @@
 import 'package:flutter/material.dart';
-import 'core/services/auth_service.dart';
-// import 'core/services/wallet_service.dart';
-import 'core/services/socket_service.dart';
 import 'screens/login_screen.dart';
-import 'screens/wallet_screen.dart';
+import 'screens/signup_screen.dart';
 
 void main() {
-  const String url = 'https://project-50s.onrender.com';
-  final authService = AuthService();
-  // final walletService = WalletService(serverUrl: url, auth: authService);
-  final socketService = SocketService();
-  
-  runApp(XamePageNative(
-    authService: authService, 
-    socketService: socketService,
-  ));
+  runApp(const XameApp());
 }
 
-class XamePageNative extends StatefulWidget {
-  final AuthService authService;
-  // final WalletService walletService;
-  final SocketService socketService;
-  
-  const XamePageNative({
-    super.key, 
-    required this.authService, 
-    required this.socketService
-  });
-
-  @override
-  State<XamePageNative> createState() => _XamePageNativeState();
-}
-
-class _XamePageNativeState extends State<XamePageNative> {
-  bool _isLoggedIn = false;
+class XameApp extends StatelessWidget {
+  const XameApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+      title: 'XamePage',
       theme: ThemeData(
-        brightness: Brightness.dark, 
-        primaryColor: const Color(0xFF007AFF),
-        scaffoldBackgroundColor: Colors.black,
+        brightness: Brightness.dark,
+        primarySwatch: Colors.blue,
       ),
-      home: _isLoggedIn 
-        ? WalletScreen(
-            socketService: widget.socketService
-          )
-        : LoginScreen(
-            
-          ),
+      // The app starts here
+      home: const LoginScreen(),
+      // We define the "routes" so the app knows where the Sign Up screen is
+      routes: {
+        '/login': (context) => const LoginScreen(),
+        '/signup': (context) => const SignupScreen(),
+      },
     );
   }
 }
-// Build 7 - Connection Sync
