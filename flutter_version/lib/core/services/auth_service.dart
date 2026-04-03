@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import '../../shared/models/user_model.dart';
+import '../models/user_model.dart';
 
 class AuthService {
   final String baseUrl = 'https://project-50s.onrender.com';
@@ -16,15 +16,16 @@ class AuthService {
         Uri.parse('$baseUrl/api/auth/register'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'firstName': firstName,
-          'lastName': lastName,
-          'dob': dob,
+          'firstName': firstName.trim(),
+          'lastName': lastName.trim(),
+          'dob': dob.trim(),
           'password': password,
         }),
       );
-      final data = jsonDecode(response.body);
-      if (response.statusCode == 201 || data['success'] == true) {
-        return XameUser.fromJson(data['user'] ?? data);
+
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return XameUser.fromJson(data['user']);
       }
       return null;
     } catch (e) {
@@ -37,7 +38,10 @@ class AuthService {
       final response = await http.post(
         Uri.parse('$baseUrl/api/auth/login'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'xameId': xameId, 'password': password}),
+        body: jsonEncode({
+          'xameId': xameId.trim(),
+          'password': password,
+        }),
       );
       return response.statusCode == 200;
     } catch (e) {
