@@ -1,76 +1,86 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../core/services/auth_service.dart';
 
 class SignupScreen extends StatefulWidget {
-  final AuthService authService;
-  const SignupScreen({super.key, required this.authService});
-
+  const SignupScreen({super.key});
   @override
   State<SignupScreen> createState() => _SignupScreenState();
 }
 
 class _SignupScreenState extends State<SignupScreen> {
-  final _firstNameController = TextEditingController();
-  final _lastNameController = TextEditingController();
-  final _xameIdController = TextEditingController();
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
-  final _dayController = TextEditingController();
-  final _monthController = TextEditingController();
-  final _yearController = TextEditingController();
-  bool _isLoading = false;
+  final firstNameController = TextEditingController();
+  final lastNameController = TextEditingController();
+  final dController = TextEditingController();
+  final mController = TextEditingController();
+  final yController = TextEditingController();
+  final passwordController = TextEditingController();
+  final confirmController = TextEditingController();
+  final authService = AuthService();
 
-  void _handleSignup() async {
-    setState(() => _isLoading = true);
-    try {
-      final dob = "${_yearController.text}-${_monthController.text.padLeft(2, '0')}-${_dayController.text.padLeft(2, '0')}";
-      await widget.authService.register(
-        firstName: _firstNameController.text,
-        lastName: _lastNameController.text,
-        xameId: _xameIdController.text,
-        email: _emailController.text,
-        password: _passwordController.text,
-        dob: dob,
-      );
-      if (mounted) Navigator.pop(context);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
+  Widget _dobField(TextEditingController controller, String hint, int limit, bool next) {
+    return Expanded(
+      child: TextField(
+        controller: controller,
+        keyboardType: TextInputType.number,
+        textAlign: TextAlign.center,
+        style: const TextStyle(color: Colors.white),
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(limit)],
+        decoration: InputDecoration(
+          hintText: hint,
+          hintStyle: const TextStyle(color: Colors.grey),
+          enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.grey)),
+        ),
+        onChanged: (value) {
+          if (value.length == limit && next) FocusScope.of(context).nextFocus();
+        },
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Sign Up')),
-      body: _isLoading 
-        ? const Center(child: CircularProgressIndicator())
-        : SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
+      backgroundColor: const Color(0xFF0D1117), // Dark professional background
+      appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 30),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("Sign Up", style: TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 40),
+            TextField(controller: firstNameController, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'First Name', labelStyle: TextStyle(color: Colors.grey))),
+            const SizedBox(height: 20),
+            TextField(controller: lastNameController, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Last Name', labelStyle: TextStyle(color: Colors.grey))),
+            const SizedBox(height: 20),
+            const Text("DOB", style: TextStyle(color: Colors.grey, fontSize: 16)),
+            Row(
               children: [
-                TextField(controller: _firstNameController, decoration: const InputDecoration(labelText: 'First Name')),
-                TextField(controller: _lastNameController, decoration: const InputDecoration(labelText: 'Last Name')),
-                TextField(controller: _xameIdController, decoration: const InputDecoration(labelText: 'Xame ID')),
-                TextField(controller: _emailController, decoration: const InputDecoration(labelText: 'Email')),
-                TextField(controller: _passwordController, decoration: const InputDecoration(labelText: 'Password'), obscureText: true),
-                Row(
-                  children: [
-                    Expanded(child: TextField(controller: _dayController, decoration: const InputDecoration(labelText: 'DD'))),
-                    Expanded(child: TextField(controller: _monthController, decoration: const InputDecoration(labelText: 'MM'))),
-                    Expanded(child: TextField(controller: _yearController, decoration: const InputDecoration(labelText: 'YYYY'))),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                ElevatedButton(onPressed: _handleSignup, child: const Text('Register')),
+                _dobField(dController, 'DD', 2, true),
+                const SizedBox(width: 20),
+                _dobField(mController, 'MM', 2, true),
+                const SizedBox(width: 20),
+                _dobField(yController, 'YYYY', 4, false),
               ],
             ),
-          ),
+            const SizedBox(height: 20),
+            TextField(controller: passwordController, obscureText: true, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Password', labelStyle: TextStyle(color: Colors.grey))),
+            const SizedBox(height: 20),
+            TextField(controller: confirmController, obscureText: true, style: const TextStyle(color: Colors.white), decoration: const InputDecoration(labelText: 'Confirm Password', labelStyle: TextStyle(color: Colors.grey))),
+            const SizedBox(height: 40),
+            Center(
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.purple, padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 15)),
+                onPressed: () {
+                  // Registration logic will go here to hit your Render server
+                },
+                child: const Text("Register", style: TextStyle(color: Colors.white)),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
