@@ -20,60 +20,54 @@ class _SignupScreenState extends State<SignupScreen> {
 
   void _handleRegister() async {
     if (_fName.text.isEmpty || _lName.text.isEmpty || _pass.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please fill all fields")));
-      return;
+      _msg("Please fill all fields"); return;
     }
     setState(() => _isLoading = true);
     try {
-      final result = await _authService.register(
-        firstName: _fName.text,
-        lastName: _lName.text,
-        dob: "${_d.text}-${_m.text}-${_y.text}",
-        password: _pass.text,
+      final res = await _authService.register(
+        firstName: _fName.text, lastName: _lName.text,
+        dob: "${_d.text}-${_m.text}-${_y.text}", password: _pass.text,
       );
-      if (result != null) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Account Created!")));
-        Navigator.pop(context);
+      if (res != null) {
+        _msg("Account Created!"); Navigator.pop(context);
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Registration failed.")));
+        _msg("Registration failed. Check details.");
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
+  void _msg(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0D1117),
-      appBar: AppBar(
-        backgroundColor: Colors.transparent, 
-        elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white),
-      ),
+      appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0, iconTheme: const IconThemeData(color: Colors.white)),
       body: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 30),
         child: Column(
           children: [
             const Text("Create Account", style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
             const SizedBox(height: 30),
-            _input(_fName, "First Name"),
-            _input(_lName, "Last Name"),
+            _field(_fName, "First Name"),
+            _field(_lName, "Last Name"),
             Row(children: [
-              Expanded(child: _input(_d, "DD", isNum: true)),
+              Expanded(child: _field(_d, "DD", isNum: true)),
               const SizedBox(width: 10),
-              Expanded(child: _input(_m, "MM", isNum: true)),
+              Expanded(child: _field(_m, "MM", isNum: true)),
               const SizedBox(width: 10),
-              Expanded(child: _input(_y, "YYYY", isNum: true)),
+              Expanded(child: _field(_y, "YYYY", isNum: true)),
             ]),
-            _input(_pass, "Password", isPass: true),
-            _input(_conf, "Confirm Password", isPass: true),
+            _field(_pass, "Password", isPass: true),
+            _field(_conf, "Confirm Password", isPass: true),
             const SizedBox(height: 30),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
                 onPressed: _isLoading ? null : _handleRegister,
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, padding: const EdgeInsets.symmetric(vertical: 15)),
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF238636), padding: const EdgeInsets.symmetric(vertical: 15)),
                 child: _isLoading ? const CircularProgressIndicator(color: Colors.white) : const Text("Register"),
               ),
             ),
@@ -83,7 +77,7 @@ class _SignupScreenState extends State<SignupScreen> {
     );
   }
 
-  Widget _input(TextEditingController c, String l, {bool isPass = false, bool isNum = false}) {
+  Widget _field(TextEditingController c, String l, {bool isPass = false, bool isNum = false}) {
     return TextField(
       controller: c,
       obscureText: isPass,
