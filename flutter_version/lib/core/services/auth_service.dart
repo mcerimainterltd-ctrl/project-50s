@@ -1,11 +1,11 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import '../models/user_model.dart';
 
 class AuthService {
   final String baseUrl = 'https://project-50s.onrender.com';
 
-  Future<XameUser?> register({
+  // Changed return type to Map to avoid missing 'XameUser' error
+  Future<Map<String, dynamic>?> register({
     required String firstName,
     required String lastName,
     required String dob,
@@ -24,8 +24,7 @@ class AuthService {
       );
 
       if (response.statusCode == 201 || response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        return XameUser.fromJson(data['user']);
+        return jsonDecode(response.body);
       }
       return null;
     } catch (e) {
