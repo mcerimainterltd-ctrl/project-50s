@@ -3078,6 +3078,23 @@ app.post('/api/wallet/transfer', async (req, res) => {
   }
 });
 
+
+app.get('/api/ice-servers', async (req, res) => {
+    try {
+        if (!twilioClient) {
+            return res.json({ iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]});
+        }
+        const token = await twilioClient.tokens.create({ ttl: 3600 });
+        return res.json({ iceServers: token.iceServers });
+    } catch (e) {
+        console.error('ICE token error:', e);
+        return res.status(500).json({ error: 'Failed to get ICE servers' });
+    }
+});
+
 app.get('*', (req, res) => {
     if (req.path.startsWith('/api/')) {
         return res.status(404).json({ success: false, message: 'API endpoint not found' });
