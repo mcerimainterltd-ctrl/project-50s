@@ -1703,6 +1703,9 @@ io.on('connection', (socket) => {
                     caller: { xameId: fc.xameId, preferredName: fc.preferredName, profilePic: fc.profilePic, displayName: incomingName }
                 });
 
+                // Notify caller that recipient's phone is ringing
+                socket.emit('call-ringing', { recipientId, callId });
+
                 // Push notification
                 try {
                     const pushSub = await PushSubscription.findOne({ userId: recipientId });
