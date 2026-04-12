@@ -1242,7 +1242,8 @@ io.on('connection', (socket) => {
         try {
             const messages = await Message.find({
                 $or: [{ senderId: reqId }, { recipientId: reqId }]
-            }).sort('ts');
+            }).sort({ ts: -1 }).limit(500).lean();
+            messages.reverse();
 
             const history = {};
             messages.forEach(msg => {
@@ -3095,6 +3096,38 @@ app.get('/api/ice-servers', async (req, res) => {
     } catch (e) {
         console.error('ICE token error:', e);
         return res.status(500).json({ error: 'Failed to get ICE servers' });
+    }
+});
+
+
+app.get('/api/chat/:userId/:contactId', async (req, res) => {
+    try {
+        const { userId, contactId } = req.params;
+        const limit  = parseInt(req.query.limit)  || 50;
+        const before = parseInt(req.query.before) || Date.now();
+        const messages = await Message.find({
+            $or: [
+                { senderId: userId,    recipientId: contactId },
+                { senderId: contactId, recipientId: userId    }
+            ],
+            ts: { $lt: before }
+        }).sort({ ts: -1 }).limit(limit).lean();
+        messages.reverse();
+        const mapped = messages.map(msg => ({
+            id:        msg.messageId,
+            text:      msg.text,
+            file:      msg.file      || null,
+            type:      msg.senderId === userId ? 'sent' : 'received',
+            ts:        msg.ts,
+            status:    msg.status,
+            replyTo:   msg.replyTo   || null,
+            expiresAt: msg.expiresAt || null,
+            reactions: msg.reactions  || {},
+            forwarded: msg.forwarded  || false,
+        }));
+        res.json({ success: true, messages: mapped, hasMore: messages.length === limit });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
     }
 });
 
