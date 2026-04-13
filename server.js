@@ -12,7 +12,7 @@
 
 const express    = require('express');
 const { Resend }  = require('resend');
-const resend      = new Resend(process.env.RESEND_API_KEY);
+// const resend      = // new Resend(process.env.RESEND_API_KEY);
 const twilio      = require('twilio');
 const twilioClient = process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
     ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
@@ -3132,36 +3132,6 @@ app.get('/api/chat/:userId/:contactId', async (req, res) => {
 });
 
 
-app.get('/api/chat/:userId/:contactId', async (req, res) => {
-    try {
-        const { userId, contactId } = req.params;
-        const limit  = parseInt(req.query.limit)  || 50;
-        const before = parseInt(req.query.before) || Date.now();
-        const messages = await Message.find({
-            $or: [
-                { senderId: userId,    recipientId: contactId },
-                { senderId: contactId, recipientId: userId    }
-            ],
-            ts: { $lt: before }
-        }).sort({ ts: -1 }).limit(limit).lean();
-        messages.reverse();
-        const mapped = messages.map(msg => ({
-            id:        msg.messageId,
-            text:      msg.text,
-            file:      msg.file      || null,
-            type:      msg.senderId === userId ? 'sent' : 'received',
-            ts:        msg.ts,
-            status:    msg.status,
-            replyTo:   msg.replyTo   || null,
-            expiresAt: msg.expiresAt || null,
-            reactions: msg.reactions  || {},
-            forwarded: msg.forwarded  || false,
-        }));
-        res.json({ success: true, messages: mapped, hasMore: messages.length === limit });
-    } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
-    }
-});
 
 app.get('*', (req, res) => {
     if (req.path.startsWith('/api/')) {
