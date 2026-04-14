@@ -373,6 +373,15 @@ const CallHistory      = mongoose.model('CallHistory',      callHistorySchema);
 const PushSubscription = mongoose.model('PushSubscription', pushSubscriptionSchema);
 const ConferenceRoom   = mongoose.model('ConferenceRoom',   conferenceRoomSchema);
 const GalleryItem      = mongoose.model('GalleryItem',      galleryItemSchema);
+
+const galleryViewSchema = new mongoose.Schema({
+    viewerId:  { type: String, required: true },
+    ownerId:   { type: String, required: true },
+    viewedAt:  { type: Date, default: Date.now }
+});
+galleryViewSchema.index({ viewerId: 1, ownerId: 1 }, { unique: true });
+const GalleryView = mongoose.model('GalleryView', galleryViewSchema);
+
 const Group            = mongoose.model('Group',            groupSchema);
 const GroupMessage     = mongoose.model('GroupMessage',     groupMessageSchema);
 
@@ -562,7 +571,7 @@ async function getFullContactData(userId) {
         const filtered     = partner ? getPrivacyFilteredContactData(partner) : null;
         const displayName  = getContactDisplayName(xameId, filtered, saved);
 
-        const [unread, missed, interaction] = await Promise.all([
+        const [unread, missed, interaction, galleryView, latestGallery] = await Promise.all([
             Message.countDocuments({
                 senderId: xameId, recipientId: userId,
                 status: { $in: ['sent', 'delivered'] }
@@ -571,8 +580,14 @@ async function getFullContactData(userId) {
                 callerId: xameId, recipientId: userId,
                 status: { $in: ['pending', 'missed'] }
             }),
-            getLastInteractionDetails(userId, xameId)
+            getLastInteractionDetails(userId, xameId),
+            GalleryView.findOne({ viewerId: userId, ownerId: xameId }),
+            GalleryItem.findOne({ userId: xameId }).sort({ createdAt: -1 }).select('createdAt')
         ]);
+
+        const hasNewGallery = latestGallery
+            ? (!galleryView || latestGallery.createdAt > galleryView.viewedAt)
+            : false;
 
         return {
             xameId,
@@ -584,7 +599,8 @@ async function getFullContactData(userId) {
             isSaved:                !!saved,
             lastInteractionTs:      interaction.lastInteractionTs,
             lastInteractionPreview: interaction.lastInteractionPreview,
-            personalStatus:         partner?.settings?.personalStatus || null
+            personalStatus:         partner?.settings?.personalStatus || null,
+            hasNewGallery
         };
     }));
 
@@ -2392,8 +2408,15 @@ app.post('/api/gallery/upload', memoryUpload.single('file'), async (req, res) =>
 app.get('/api/gallery/:userId', async (req, res) => {
     try {
         const { userId } = req.params;
+        const { viewerId } = req.query;
         const items = await GalleryItem.find({ userId }).sort({ createdAt: -1 });
-        res.json({ success: true, items });
+        let hasNewGallery = false;
+        if (viewerId && viewerId !== userId && items.length > 0) {
+            const latest = items[0].createdAt;
+            const view = await GalleryView.findOne({ viewerId, ownerId: userId });
+            hasNewGallery = !view || latest > view.viewedAt;
+        }
+        res.json({ success: true, items, hasNewGallery });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
@@ -2413,6 +2436,23 @@ app.delete('/api/gallery/:itemId', async (req, res) => {
     }
 });
 
+
+
+app.post('/api/gallery/:userId/viewed', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const { viewerId } = req.body;
+        if (!viewerId) return res.status(400).json({ success: false });
+        await GalleryView.findOneAndUpdate(
+            { viewerId, ownerId: userId },
+            { viewedAt: new Date() },
+            { upsert: true }
+        );
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
 
 // ── Wallet API Keys (stored per user in DB or env) ───────────────────────────
 
