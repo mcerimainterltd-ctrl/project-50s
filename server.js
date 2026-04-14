@@ -2454,6 +2454,80 @@ app.post('/api/gallery/:userId/viewed', async (req, res) => {
     }
 });
 
+
+// ── Contact Management ────────────────────────────────────────────────────────
+
+app.post('/api/rename-contact', async (req, res) => {
+    try {
+        const { userId, contactId, newName } = req.body;
+        if (!userId || !contactId || !newName)
+            return res.status(400).json({ success: false, message: 'Missing fields' });
+        const contact = await User.findOne({ xameId: contactId });
+        if (!contact) return res.status(404).json({ success: false, message: 'Contact not found' });
+        await User.updateOne(
+            { xameId: userId, 'contacts.contactId': contact._id },
+            { $set: { 'contacts.$.customName': newName } }
+        );
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+app.post('/api/remove-contact', async (req, res) => {
+    try {
+        const { userId, contactId } = req.body;
+        if (!userId || !contactId)
+            return res.status(400).json({ success: false, message: 'Missing fields' });
+        const contact = await User.findOne({ xameId: contactId });
+        if (!contact) return res.status(404).json({ success: false, message: 'Contact not found' });
+        await User.updateOne(
+            { xameId: userId },
+            { $pull: { contacts: { contactId: contact._id } } }
+        );
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+app.post('/api/block-contact', async (req, res) => {
+    try {
+        const { userId, contactId } = req.body;
+        if (!userId || !contactId)
+            return res.status(400).json({ success: false, message: 'Missing fields' });
+        const contact = await User.findOne({ xameId: contactId });
+        if (!contact) return res.status(404).json({ success: false, message: 'Contact not found' });
+        await User.updateOne(
+            { xameId: userId },
+            { 
+                $pull: { contacts: { contactId: contact._id } },
+                $addToSet: { blockedUsers: contactId }
+            }
+        );
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+app.post('/api/clear-chat', async (req, res) => {
+    try {
+        const { userId, contactId } = req.body;
+        if (!userId || !contactId)
+            return res.status(400).json({ success: false, message: 'Missing fields' });
+        await Message.deleteMany({
+            $or: [
+                { senderId: userId, recipientId: contactId },
+                { senderId: contactId, recipientId: userId }
+            ]
+        });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 // ── Wallet API Keys (stored per user in DB or env) ───────────────────────────
 
 // Create Flutterwave virtual account
