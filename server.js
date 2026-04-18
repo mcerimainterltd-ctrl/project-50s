@@ -353,10 +353,15 @@ const galleryItemSchema = new mongoose.Schema({
     publicId:    { type: String, default: '' },
     type:        { type: String, enum: ['image', 'video'], default: 'image' },
     caption:     { type: String, default: '' },
-    category:    { type: String, default: 'personal' },
+    description: { type: String, default: '' },
     price:       { type: String, default: '' },
+    phone:       { type: String, default: '' },
+    email:       { type: String, default: '' },
+    category:    { type: String, default: 'personal' },
     visibility:  { type: String, enum: ['public', 'contacts', 'private'], default: 'contacts' },
     mode:        { type: String, enum: ['personal', 'business'], default: 'personal' },
+    likes:       { type: Number, default: 0 },
+    views:       { type: Number, default: 0 },
     createdAt:   { type: Date, default: Date.now }
 });
 
@@ -2376,7 +2381,7 @@ app.post('/api/phone/check-xamepage', async (req, res) => {
 // -- Gallery API --
 app.post('/api/gallery/upload', memoryUpload.single('file'), async (req, res) => {
     try {
-        const { userId, caption, price, visibility, mode } = req.body;
+        const { userId, caption, description, price, phone, email, visibility, mode } = req.body;
         if (!userId || !req.file) return res.status(400).json({ success: false, message: 'Missing data' });
         const fileType = req.file.mimetype.startsWith('video') ? 'video' : 'image';
         const cloudinaryOk = process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET;
@@ -2397,7 +2402,7 @@ app.post('/api/gallery/upload', memoryUpload.single('file'), async (req, res) =>
             fs.writeFileSync(fpath, req.file.buffer);
             url = '/uploads/' + fname;
         }
-        const item = await GalleryItem.create({ userId, url, type: fileType, caption: caption || '', price: price || '', visibility: visibility || 'contacts', mode: mode || 'personal' });
+        const item = await GalleryItem.create({ userId, url, type: fileType, caption: caption || '', description: description || '', price: price || '', phone: phone || '', email: email || '', visibility: visibility || 'contacts', mode: mode || 'personal' });
         res.json({ success: true, item });
     } catch (err) {
         console.error('Gallery upload error:', err);
