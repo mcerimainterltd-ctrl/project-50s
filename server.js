@@ -3252,6 +3252,357 @@ app.get('/api/chat/:userId/:contactId', async (req, res) => {
 
 
 
+
+// ============================================================
+// DISCOVERY — Posts, Stories, People, Likes
+// ============================================================
+
+// ── Schemas ───────────────────────────────────────────────────────────────────
+
+const discoveryPostSchema = new mongoose.Schema({
+    postId:       { type: String, required: true, unique: true },
+    authorId:     { type: String, required: true, index: true },
+    authorName:   { type: String, required: true },
+    authorAvatar: { type: String, default: '' },
+    title:        { type: String, required: true },
+    caption:      { type: String, default: '' },
+    mediaUrl:     { type: String, required: true },
+    mediaType:    { type: String, enum: ['image','video'], default: 'image' },
+    thumbnailUrl: { type: String, default: '' },
+    region:       { type: String, default: 'Global' },
+    category:     { type: String, default: 'General' },
+    isLive:       { type: Boolean, default: false },
+    viewCount:    { type: Number, default: 0 },
+    likeCount:    { type: Number, default: 0 },
+    likedBy:      [{ type: String }],
+    commentCount: { type: Number, default: 0 },
+    ts:           { type: Date, default: Date.now },
+});
+discoveryPostSchema.index({ region: 1, ts: -1 });
+const DiscoveryPost = mongoose.model('DiscoveryPost', discoveryPostSchema);
+
+const discoveryStorySchema = new mongoose.Schema({
+    storyId:      { type: String, required: true, unique: true },
+    authorId:     { type: String, required: true, index: true },
+    authorName:   { type: String, required: true },
+    authorAvatar: { type: String, default: '' },
+    mediaUrl:     { type: String, required: true },
+    mediaType:    { type: String, enum: ['image','video'], default: 'image' },
+    seen:         [{ type: String }],
+    expiresAt:    { type: Date, default: () => new Date(Date.now() + 24*60*60*1000) },
+    ts:           { type: Date, default: Date.now },
+});
+const DiscoveryStory = mongoose.model('DiscoveryStory', discoveryStorySchema);
+
+// ── GET /api/discover/feed ────────────────────────────────────────────────────
+// Returns paginated discovery posts filtered by region
+app.get('/api/discover/feed', async (req, res) => {
+    try {
+        const { region, limit = 20, page = 1 } = req.query;
+        const query = {};
+        if (region && region !== 'global' && region !== 'Global') {
+            query.region = new RegExp(region, 'i');
+        }
+        const posts = await DiscoveryPost.find(query)
+            .sort({ ts: -1 })
+            .skip((parseInt(page) - 1) * parseInt(limit))
+            .limit(parseInt(limit))
+            .lean();
+        const total = await DiscoveryPost.countDocuments(query);
+        res.json({
+            success: true,
+            posts: posts.map(p => ({
+                id:           p.postId,
+                title:        p.title,
+                caption:      p.caption,
+                mediaUrl:     p.mediaUrl,
+                mediaType:    p.mediaType,
+                thumbnailUrl: p.thumbnailUrl,
+                authorId:     p.authorId,
+                authorName:   p.authorName,
+                authorAvatar: p.authorAvatar,
+                region:       p.region,
+                category:     p.category,
+                isLive:       p.isLive,
+                viewCount:    p.viewCount,
+                likeCount:    p.likeCount,
+                commentCount: p.commentCount,
+                ts:           p.ts,
+            })),
+            total,
+            page:  parseInt(page),
+            pages: Math.ceil(total / parseInt(limit)),
+        });
+    } catch (err) {
+        console.error('Discovery feed error:', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// ── GET /api/discover/stories ─────────────────────────────────────────────────
+// Returns active stories (not expired) from all users
+app.get('/api/discover/stories', async (req, res) => {
+    try {
+        const { userId } = req.query;
+        const stories = await DiscoveryStory.find({
+            expiresAt: { $gt: new Date() }
+        }).sort({ ts: -1 }).limit(50).lean();
+
+        // Group by author
+        const grouped = {};
+        for (const s of stories) {
+            if (!grouped[s.authorId]) {
+                grouped[s.authorId] = {
+                    authorId:     s.authorId,
+                    authorName:   s.authorName,
+                    authorAvatar: s.authorAvatar,
+                    hasSeen:      userId ? s.seen.includes(userId) : false,
+                    isOnline:     false,
+                    stories:      [],
+                };
+            }
+            grouped[s.authorId].stories.push({
+                storyId:   s.storyId,
+                mediaUrl:  s.mediaUrl,
+                mediaType: s.mediaType,
+                expiresAt: s.expiresAt,
+                ts:        s.ts,
+                seen:      userId ? s.seen.includes(userId) : false,
+            });
+        }
+        res.json({ success: true, stories: Object.values(grouped) });
+    } catch (err) {
+        console.error('Stories error:', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// ── GET /api/discover/people ──────────────────────────────────────────────────
+// Returns suggested people — users not already contacts
+app.get('/api/discover/people', async (req, res) => {
+    try {
+        const { userId, limit = 20 } = req.query;
+        if (!userId) return res.json({ success: false, message: 'userId required' });
+
+        const me = await User.findOne({ xameId: userId }).lean();
+        if (!me) return res.json({ success: false, message: 'User not found' });
+
+        const myContactIds = (me.contacts || []).map(c => c.contactId?.toString());
+        myContactIds.push(userId); // exclude self
+
+        // Find users not in contacts
+        const suggestions = await User.find({
+            xameId: { $nin: myContactIds }
+        }).limit(parseInt(limit)).lean();
+
+        // Calculate mutual contacts
+        const result = await Promise.all(suggestions.map(async (u) => {
+            const theirContactIds = (u.contacts || []).map(c => c.contactId?.toString());
+            const mutualCount = myContactIds.filter(id =>
+                theirContactIds.includes(id)).length;
+            return {
+                id:           u.xameId,
+                name:         u.preferredName ||
+                              `${u.firstName} ${u.lastName}`.trim(),
+                avatarUrl:    u.hideProfilePicture ? '' : (u.profilePic || ''),
+                mutualCount,
+                isOnline:     false,
+                tagline:      '',
+            };
+        }));
+
+        res.json({ success: true, people: result });
+    } catch (err) {
+        console.error('People discovery error:', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// ── POST /api/discover/post ───────────────────────────────────────────────────
+// Create a new discovery post — upload media to Cloudinary
+app.post('/api/discover/post', memoryUpload.single('media'), async (req, res) => {
+    try {
+        const { authorId, title, caption, region, category, mediaType } = req.body;
+        if (!authorId || !title) {
+            return res.json({ success: false, message: 'authorId and title required' });
+        }
+
+        const author = await User.findOne({ xameId: authorId }).lean();
+        if (!author) return res.json({ success: false, message: 'User not found' });
+
+        let mediaUrl     = '';
+        let thumbnailUrl = '';
+
+        if (req.file) {
+            // Upload to Cloudinary
+            const uploadResult = await new Promise((resolve, reject) => {
+                const stream = cloudinary.uploader.upload_stream(
+                    {
+                        folder:        'xamepage/discovery',
+                        resource_type: (mediaType === 'video') ? 'video' : 'image',
+                        public_id:     `post_${authorId}_${Date.now()}`,
+                    },
+                    (err, result) => err ? reject(err) : resolve(result)
+                );
+                stream.end(req.file.buffer);
+            });
+            mediaUrl = uploadResult.secure_url;
+            if (mediaType === 'video') {
+                thumbnailUrl = uploadResult.secure_url.replace('/upload/', '/upload/so_0/');
+            }
+        } else if (req.body.mediaUrl) {
+            mediaUrl = req.body.mediaUrl;
+        }
+
+        if (!mediaUrl) {
+            return res.json({ success: false, message: 'Media required' });
+        }
+
+        const post = await DiscoveryPost.create({
+            postId:       uuidv4(),
+            authorId,
+            authorName:   author.preferredName ||
+                          `${author.firstName} ${author.lastName}`.trim(),
+            authorAvatar: author.hideProfilePicture ? '' : (author.profilePic || ''),
+            title,
+            caption:      caption  || '',
+            mediaUrl,
+            thumbnailUrl,
+            mediaType:    mediaType || 'image',
+            region:       region   || 'Global',
+            category:     category || 'General',
+        });
+
+        res.json({ success: true, post: { id: post.postId, mediaUrl, thumbnailUrl } });
+    } catch (err) {
+        console.error('Create post error:', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// ── POST /api/discover/story ──────────────────────────────────────────────────
+// Create a new story (24hr expiry) — upload to Cloudinary
+app.post('/api/discover/story', memoryUpload.single('media'), async (req, res) => {
+    try {
+        const { authorId, mediaType } = req.body;
+        if (!authorId) return res.json({ success: false, message: 'authorId required' });
+
+        const author = await User.findOne({ xameId: authorId }).lean();
+        if (!author) return res.json({ success: false, message: 'User not found' });
+
+        let mediaUrl = '';
+        if (req.file) {
+            const uploadResult = await new Promise((resolve, reject) => {
+                const stream = cloudinary.uploader.upload_stream(
+                    {
+                        folder:        'xamepage/stories',
+                        resource_type: (mediaType === 'video') ? 'video' : 'image',
+                        public_id:     `story_${authorId}_${Date.now()}`,
+                    },
+                    (err, result) => err ? reject(err) : resolve(result)
+                );
+                stream.end(req.file.buffer);
+            });
+            mediaUrl = uploadResult.secure_url;
+        } else if (req.body.mediaUrl) {
+            mediaUrl = req.body.mediaUrl;
+        }
+
+        if (!mediaUrl) return res.json({ success: false, message: 'Media required' });
+
+        const story = await DiscoveryStory.create({
+            storyId:      uuidv4(),
+            authorId,
+            authorName:   author.preferredName ||
+                          `${author.firstName} ${author.lastName}`.trim(),
+            authorAvatar: author.hideProfilePicture ? '' : (author.profilePic || ''),
+            mediaUrl,
+            mediaType:    mediaType || 'image',
+        });
+
+        res.json({ success: true, storyId: story.storyId, mediaUrl });
+    } catch (err) {
+        console.error('Create story error:', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// ── POST /api/discover/like ───────────────────────────────────────────────────
+// Toggle like on a discovery post
+app.post('/api/discover/like', async (req, res) => {
+    try {
+        const { userId, postId } = req.body;
+        if (!userId || !postId) {
+            return res.json({ success: false, message: 'userId and postId required' });
+        }
+        const post = await DiscoveryPost.findOne({ postId });
+        if (!post) return res.json({ success: false, message: 'Post not found' });
+
+        const hasLiked = post.likedBy.includes(userId);
+        if (hasLiked) {
+            post.likedBy.pull(userId);
+            post.likeCount = Math.max(0, post.likeCount - 1);
+        } else {
+            post.likedBy.push(userId);
+            post.likeCount += 1;
+        }
+        await post.save();
+        res.json({ success: true, liked: !hasLiked, likeCount: post.likeCount });
+    } catch (err) {
+        console.error('Like error:', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// ── POST /api/discover/view ───────────────────────────────────────────────────
+// Increment view count on a post
+app.post('/api/discover/view', async (req, res) => {
+    try {
+        const { postId } = req.body;
+        if (!postId) return res.json({ success: false, message: 'postId required' });
+        await DiscoveryPost.updateOne({ postId }, { $inc: { viewCount: 1 } });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// ── GET /api/discover/story/:storyId/seen ─────────────────────────────────────
+// Mark a story as seen by a user
+app.post('/api/discover/story/seen', async (req, res) => {
+    try {
+        const { userId, storyId } = req.body;
+        if (!userId || !storyId) {
+            return res.json({ success: false, message: 'userId and storyId required' });
+        }
+        await DiscoveryStory.updateOne(
+            { storyId },
+            { $addToSet: { seen: userId } }
+        );
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// ── DELETE /api/discover/post/:postId ─────────────────────────────────────────
+// Delete own post
+app.delete('/api/discover/post/:postId', async (req, res) => {
+    try {
+        const { postId }  = req.params;
+        const { userId }  = req.body;
+        const post = await DiscoveryPost.findOne({ postId });
+        if (!post) return res.json({ success: false, message: 'Post not found' });
+        if (post.authorId !== userId) {
+            return res.json({ success: false, message: 'Unauthorized' });
+        }
+        await DiscoveryPost.deleteOne({ postId });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 app.get('*', (req, res) => {
     if (req.path.startsWith('/api/')) {
         return res.status(404).json({ success: false, message: 'API endpoint not found' });
