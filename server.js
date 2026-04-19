@@ -2529,6 +2529,88 @@ async function getReloadlyToken() {
   return data.access_token;
 }
 
+async function getReloadlyUtilityToken() {
+  const clientId     = process.env.RELOADLY_CLIENT_ID     || '';
+  const clientSecret = process.env.RELOADLY_CLIENT_SECRET || '';
+  const mode         = process.env.RELOADLY_MODE          || 'sandbox';
+  if (!clientId || !clientSecret) throw new Error('Reloadly not configured');
+  // Utility-payments uses its own audience
+  const audience = mode === 'live'
+    ? 'https://utility-payments.reloadly.com'
+    : 'https://utility-payments-sandbox.reloadly.com';
+  const res = await fetch('https://auth.reloadly.com/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      client_id:     clientId,
+      client_secret: clientSecret,
+      grant_type:    'client_credentials',
+      audience
+    })
+  });
+  const data = await res.json();
+  if (!data.access_token) throw new Error(data.error_description || 'Reloadly utility auth failed');
+  return { token: data.access_token, mode };
+}
+
+// GET Reloadly utility billers for a country
+// Returns normalised format matching Flutterwave categories shape
+async function getReloadlyUtilityBillers(country) {
+  try {
+    const { token, mode } = await getReloadlyUtilityToken();
+    const base = mode === 'live'
+      ? 'https://utility-payments.reloadly.com'
+      : 'https://utility-payments-sandbox.reloadly.com';
+    const r = await fetch(
+      `${base}/billers?countryISOCode=${country}&page=1&size=100`,
+      { headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/com.reloadly.utilities-v1+json'
+        }
+      }
+    );
+    const data = await r.json();
+    // Reloadly returns { content: [...], totalElements, ... }
+    const billers = data.content || data || [];
+    // Normalise to same shape as Flutterwave grouped categories
+    const grouped = {};
+    for (const b of billers) {
+      const name = b.name || b.billerName || 'Unknown';
+      if (!grouped[name]) {
+        grouped[name] = {
+          name,
+          biller_code: String(b.id || b.billerId || ''),
+          country,
+          provider: 'reloadly',      // tag so Flutter knows which pay endpoint to use
+          items: [{
+            item_code:  String(b.id || b.billerId || ''),
+            label:      name,
+            label_name: b.localAmountLabel || b.internationalAmountLabel || 'Account Number',
+            amount:     b.localFixedAmounts?.[0] || b.internationalFixedAmounts?.[0] || 0,
+            fee:        b.localTransactionFee   || b.internationalTransactionFee   || 0,
+          }]
+        };
+        // If multiple fixed amounts, expand as separate items
+        const amounts = b.localFixedAmounts || b.internationalFixedAmounts || [];
+        if (amounts.length > 1) {
+          grouped[name].items = amounts.map((amt, idx) => ({
+            item_code:  String(b.id || b.billerId || '') + '-' + idx,
+            label:      String(amt),
+            label_name: b.localAmountLabel || 'Amount',
+            amount:     amt,
+            fee:        b.localTransactionFee || b.internationalTransactionFee || 0,
+          }));
+        }
+      }
+    }
+    return Object.values(grouped);
+  } catch (e) {
+    console.warn('Reloadly utility billers error:', e.message);
+    return [];
+  }
+}
+
+
 // Get operators/networks for a country
 app.get('/api/vtu/operators/:countryCode', async (req, res) => {
   try {
@@ -2684,35 +2766,103 @@ app.post('/api/wallet/resolve-account', async (req, res) => {
 
 // ── XamePay Bills Payment (Flutterwave) ──────────────────────────────────────
 
+
+// Pay utility bill via Reloadly utility-payments
+app.post('/api/wallet/utility/pay', async (req, res) => {
+  const { userId, biller_code, customer, amount, country } = req.body;
+  if (!userId || !biller_code || !customer)
+    return res.json({ success: false, message: 'Missing fields' });
+  try {
+    const wallet = await getWallet(userId);
+    const fee      = Math.round((amount || 0) * SERVICE_FEE * 100) / 100;
+    const total    = (parseFloat(amount) || 0) + fee;
+    if (wallet.balance < total)
+      return res.json({ success: false, message: 'Insufficient balance' });
+
+    await debitWallet(userId, total, 'Bill Payment', '🧾', 'util-' + Date.now());
+
+    const { token, mode } = await getReloadlyUtilityToken();
+    const base = mode === 'live'
+      ? 'https://utility-payments.reloadly.com'
+      : 'https://utility-payments-sandbox.reloadly.com';
+
+    const r = await fetch(`${base}/pay`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/com.reloadly.utilities-v1+json'
+      },
+      body: JSON.stringify({
+        billerId:       parseInt(biller_code) || biller_code,
+        subscriberAccountNumber: customer,
+        amount:         parseFloat(amount),
+        useLocalAmount: true,
+        referenceId:    'xamepay-util-' + Date.now(),
+        countryCode:    country || 'NG'
+      })
+    });
+    const data = await r.json();
+
+    if (data.status === 'SUCCESSFUL' || data.transactionId) {
+      const w = await getWallet(userId);
+      if (w.transactions[0]) w.transactions[0].label = 'Bill - ' + (data.billerName || biller_code);
+      await w.save();
+      return res.json({ success: true, fee, reference: data.transactionId, message: 'Bill paid successfully' });
+    }
+
+    // Refund on failure
+    await creditWallet(userId, total, 'Refund - Failed utility payment', '↩️', 'refund-' + Date.now());
+    res.json({ success: false, message: data.message || data.errorMessage || 'Utility payment failed' });
+  } catch (err) {
+    res.json({ success: false, message: err.message });
+  }
+});
+
 // GET bill categories by type
 app.get('/api/wallet/bills/categories', async (req, res) => {
-    const { type, country } = req.query;
+    const { country } = req.query;
     try {
-        const r = await fetch('https://api.flutterwave.com/v3/bill-categories', {
-            headers: { Authorization: `Bearer ${FLW_SECRET}` }
-        });
-        const data = await r.json();
-        if (data.status !== 'success') return res.json({ success: false, message: data.message });
-        let bills = data.data;
-        if (country) bills = bills.filter(b => b.country === country.toUpperCase());
-        if (type) {
-            const typeMap = {
-                electricity: ['ELECTRICITY', 'DISCO', 'ELECTRIC', 'KPLC', 'BEDC'],
-                tv: ['DSTV', 'GOTV', 'STARTIMES', 'MULTICHOICE'],
-                internet: ['SMILE', 'SPECTRANET', 'SWIFT', 'IPNX', 'MTN HYNET'],
-                airtime: ['AIRTEL NIGERIA', 'MTN VTU', '9MOBILE NIGERIA', 'GLO NIGERIA'],
-                data: ['DATA BUNDLE']
-            };
-            const keywords = typeMap[type] || [];
-            bills = bills.filter(b => keywords.some(k => b.name.toUpperCase().includes(k)));
+        // ── Flutterwave billers (Africa-focused) ──────────────────────────
+        let flwCategories = [];
+        try {
+            const r = await fetch('https://api.flutterwave.com/v3/bill-categories', {
+                headers: { Authorization: `Bearer ${FLW_SECRET}` }
+            });
+            const data = await r.json();
+            if (data.status === 'success') {
+                let bills = data.data;
+                if (country) bills = bills.filter(b => b.country === country.toUpperCase());
+                const grouped = {};
+                bills.forEach(b => {
+                    if (!grouped[b.name]) grouped[b.name] = {
+                        name: b.name, biller_code: b.biller_code,
+                        country: b.country, provider: 'flutterwave', items: []
+                    };
+                    grouped[b.name].items.push({
+                        item_code: b.item_code,
+                        label: b.biller_name || b.short_name,
+                        amount: b.amount, fee: b.fee, label_name: b.label_name
+                    });
+                });
+                flwCategories = Object.values(grouped);
+            }
+        } catch(e) { console.warn('Flutterwave bills error:', e.message); }
+
+        // ── Reloadly utility billers (global coverage) ────────────────────
+        let reloadlyCategories = [];
+        if (country) {
+            reloadlyCategories = await getReloadlyUtilityBillers(country);
         }
-        // Group by biller name
-        const grouped = {};
-        bills.forEach(b => {
-            if (!grouped[b.name]) grouped[b.name] = { name: b.name, biller_code: b.biller_code, country: b.country, items: [] };
-            grouped[b.name].items.push({ item_code: b.item_code, label: b.biller_name || b.short_name, amount: b.amount, fee: b.fee, label_name: b.label_name });
-        });
-        res.json({ success: true, categories: Object.values(grouped) });
+
+        // ── Merge: Flutterwave first, then Reloadly (deduplicate by name) ─
+        const seen = new Set(flwCategories.map(c => c.name.toUpperCase()));
+        const merged = [
+            ...flwCategories,
+            ...reloadlyCategories.filter(c => !seen.has(c.name.toUpperCase()))
+        ];
+
+        res.json({ success: true, categories: merged });
     } catch(err) {
         res.json({ success: false, message: err.message });
     }
