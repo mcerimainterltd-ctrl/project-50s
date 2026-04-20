@@ -2848,7 +2848,9 @@ app.get('/api/wallet/bills/categories', async (req, res) => {
                 tv: ['DSTV', 'GOTV', 'STARTIMES', 'MULTICHOICE'],
                 internet: ['SMILE', 'SPECTRANET', 'SWIFT', 'IPNX', 'MTN HYNET'],
                 airtime: ['AIRTEL NIGERIA', 'MTN VTU', '9MOBILE NIGERIA', 'GLO NIGERIA'],
-                data: ['DATA BUNDLE']
+                data: ['DATA BUNDLE'],
+                water: ['WATER', 'WATERBOARD', 'WASA', 'GWCL', 'NWSC', 'LWSC'],
+                gas: ['GAS', 'LPG', 'NNPC', 'TOTAL GAS', 'AGAS'],
             };
             const keywords = typeMap[type] || [];
             bills = bills.filter(b => keywords.some(k => b.name.toUpperCase().includes(k)));
