@@ -182,7 +182,10 @@ async function startCall(recipientId, callType) {
   window._callTimeouts = [];
   window._callTimeouts.push(setTimeout(() => {
     if (!callActive || peers.size === 0 || (peers.size === 1 && [...peers.values()][0].stream === null)) {
-      showNotification('No answer'); exitVideoCall();
+      showNotification('No answer');
+      // Emit call-unanswered so server marks it as missed for recipient
+      peers.forEach((peer, uid) => socket?.emit('call-unanswered', { recipientId: uid, callId: window._currentCallId }));
+      exitVideoCall();
     }
   }, 60000));
   // Auto-timeout if unanswered after 60 seconds
@@ -263,7 +266,7 @@ async function handleIncomingCall(offer, callerId) {
   window._callTimeouts = [];
   window._callTimeouts.push(setTimeout(() => {
     if (!callActive || peers.size === 0 || (peers.size === 1 && [...peers.values()][0].stream === null)) {
-      showNotification('No answer'); exitVideoCall();
+      showNotification('Call timed out'); exitVideoCall();
     }
   }, 60000));
   } catch (error) {
@@ -331,7 +334,15 @@ function exitVideoCall() {
   if (window._callTimeouts) { window._callTimeouts.forEach(t => clearTimeout(t)); window._callTimeouts = []; }
   window._lastCallEndedAt = Date.now();
   const _notifyIds = peers.size > 0 ? [...peers.keys()] : (ACTIVE_ID ? [ACTIVE_ID] : []);
-  _notifyIds.forEach(uid => socket?.emit('call-ended', { recipientId: uid }));
+  _notifyIds.forEach(uid => {
+    if (callActive) {
+      // Call was active — emit ended
+      socket?.emit('call-ended', { recipientId: uid });
+    } else {
+      // Call never connected — caller cancelled, emit unanswered so recipient gets missed call
+      socket?.emit('call-unanswered', { recipientId: uid, callId: window._currentCallId });
+    }
+  });
   endCall();
   videoCallOverlay?.classList.add('hidden');
   elChatHeader?.classList.remove('hidden'); composer?.classList.remove('hidden');

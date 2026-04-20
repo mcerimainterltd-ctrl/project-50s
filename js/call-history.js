@@ -66,11 +66,14 @@ const callHistoryModule = (() => {
       const contact    = CONTACTS?.find(c => c.id === contactId);
       const name       = call.callerName || contact?.name || contactId;
       const initials   = name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2);
-      const isMissed    = call.status === 'missed' || (call.status === 'pending' && isIncoming) || (isIncoming && ['rejected','ended'].includes(call.status) && !call.duration);
-      const isDeclined  = call.status === 'rejected' && isIncoming && !!call.duration;
-      const isDeclinedByMe = call.status === 'rejected' && !isIncoming;
-      const isOffline   = call.status === 'offline';
-      const icon = isMissed ? '📵' : isDeclined ? '❌' : isDeclinedByMe ? '🚫' : isOffline ? '📴' : isIncoming ? '📲' : '📤';
+      // Missed: server set status='missed' (unanswered) — shown as Missed on recipient, No Answer on caller
+      const isMissed       = call.status === 'missed';
+      // Declined: recipient actively rejected — shown as Declined on recipient side, Declined by them on caller side
+      const isDeclined     = call.status === 'rejected' && isIncoming;
+      const isDeclinedByThem = call.status === 'rejected' && !isIncoming;
+      const isOffline      = call.status === 'offline';
+      const isAnswered     = call.status === 'accepted' || call.status === 'ended';
+      const icon = isMissed ? (isIncoming ? '📵' : '📵') : isDeclined ? '❌' : isDeclinedByThem ? '🚫' : isOffline ? '📴' : isIncoming ? '📲' : '📤';
       const callIcon   = call.callType === 'video' ? '📹' : '🎙️';
       const timeStr    = _formatCallTime(call.startTime);
       return `
@@ -78,7 +81,13 @@ const callHistoryModule = (() => {
           <div class="call-history-avatar">${initials}</div>
           <div class="call-history-info">
             <div class="call-history-name">${escapeHtml(name)}</div>
-            <div class="call-history-meta">${icon} ${isMissed ? 'Missed' : isDeclined ? 'Declined' : isDeclinedByMe ? 'Declined by me' : isOffline ? 'Offline' : isIncoming ? 'Incoming' : 'Outgoing'} ${callIcon} · ${timeStr}${call.duration ? ' · ' + _formatDuration(call.duration) : ''}</div>
+            <div class="call-history-meta">${icon} ${
+              isMissed ? (isIncoming ? 'Missed' : 'No Answer') :
+              isDeclined ? 'Declined' :
+              isDeclinedByThem ? 'Declined by them' :
+              isOffline ? 'Offline' :
+              isIncoming ? 'Incoming' : 'Outgoing'
+            } ${callIcon} · ${timeStr}${call.duration ? ' · ' + _formatDuration(call.duration) : ''}</div>
           </div>
           <div class="call-history-action" data-call-contact="${contactId}" data-call-type="${call.callType || 'voice'}" title="Call back">📞</div>
         </div>`;
