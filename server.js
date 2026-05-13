@@ -935,8 +935,23 @@ app.post('/api/search-user', async (req, res) => {
     try {
         const user = await User.findOne({ xameId: xameId.trim() });
         if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
-        const f = getPrivacyFilteredContactData(user);
-        res.json({ success: true, user: { ...f, isOnline: onlineUsers.has(user.xameId) } });
+        res.json({ success: true, user: {
+            xameId:             user.xameId,
+            firstName:          user.firstName,
+            lastName:           user.lastName,
+            preferredName:      user.preferredName,
+            profilePic:         user.profilePic,
+            dob:                user.dob,
+            phone:              user.phone,
+            email:              user.email,
+            contacts:           user.contacts,
+            sessions:           user.sessions,
+            extraSecurity:      user.extraSecurity,
+            fcmToken:           user.fcmToken,
+            hideProfilePicture: user.hideProfilePicture,
+            hidePreferredName:  user.hidePreferredName,
+            isOnline:           onlineUsers.has(user.xameId),
+        }});
     } catch (err) {
         res.status(500).json({ success: false, message: 'Server error.' });
     }
