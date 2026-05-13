@@ -3634,6 +3634,133 @@ app.get('*', (req, res) => {
 const PORT = process.env.PORT || 8080;
 
 createDirectories().then(() => {
+
+// ── ADMIN ENDPOINTS ───────────────────────────────────────────────────────────
+function verifyAdminSecret(req, res) {
+    const secret = req.body.secret;
+    if (!secret || secret !== process.env.ADMIN_SECRET) {
+        res.status(403).json({ success: false, message: 'Unauthorized.' });
+        return false;
+    }
+    return true;
+}
+
+app.post('/api/admin/reset-password', async (req, res) => {
+    if (!verifyAdminSecret(req, res)) return;
+    const { xameId, newPassword } = req.body;
+    if (!xameId || !newPassword || newPassword.length < 8)
+        return res.status(400).json({ success: false, message: 'xameId and newPassword (8+ chars) required.' });
+    try {
+        const bcrypt = require('bcryptjs');
+        const hash = await bcrypt.hash(newPassword, 10);
+        const result = await User.updateOne({ xameId }, { password: hash });
+        if (result.matchedCount === 0) return res.status(404).json({ success: false, message: 'User not found.' });
+        res.json({ success: true, message: 'Password reset successfully.' });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+app.post('/api/admin/delete-account', async (req, res) => {
+    if (!verifyAdminSecret(req, res)) return;
+    const { xameId } = req.body;
+    if (!xameId) return res.status(400).json({ success: false, message: 'xameId required.' });
+    try {
+        const user = await User.findOne({ xameId });
+        if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
+        await Promise.all([
+            User.deleteOne({ xameId }),
+            Message.deleteMany({ $or: [{ senderId: xameId }, { recipientId: xameId }] }),
+        ]);
+        res.json({ success: true, message: `Account ${xameId} permanently deleted.` });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+app.post('/api/app/promote', async (req, res) => {
+    if (!verifyAdminSecret(req, res)) return;
+    const { version, buildNumber, downloadUrl, changelog, forceUpdate } = req.body;
+    if (!version || !buildNumber || !downloadUrl)
+        return res.status(400).json({ success: false, message: 'version, buildNumber and downloadUrl required.' });
+    try {
+        const users = await User.find({ fcmToken: { $ne: '' } }).select('fcmToken');
+        let sent = 0, failed = 0;
+        await Promise.all(users.map(async u => {
+            try {
+                await admin.messaging().send({
+                    token: u.fcmToken,
+                    android: { priority: 'high' },
+                    notification: {
+                        title: `XamePage v${version} is available`,
+                        body: changelog || 'A new update is ready. Tap to download.',
+                    },
+                    data: {
+                        type: 'app_update',
+                        version,
+                        buildNumber: String(buildNumber),
+                        downloadUrl,
+                        forceUpdate: forceUpdate ? 'true' : 'false',
+                    }
+                });
+                sent++;
+            } catch (e) { failed++; }
+        }));
+        res.json({ success: true, message: `Update notification sent to ${sent} users. ${failed} failed.` });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+app.post('/api/xamepage/announce', async (req, res) => {
+    if (!verifyAdminSecret(req, res)) return;
+    const { title, caption, mediaUrl, downloadUrl, version } = req.body;
+    if (!title || !mediaUrl)
+        return res.status(400).json({ success: false, message: 'title and mediaUrl required.' });
+    try {
+        const { v4: uuidv4 } = require('uuid');
+        const post = await DiscoveryPost.create({
+            postId:       uuidv4(),
+            authorId:     'xamepage_official',
+            authorName:   'XamePage',
+            authorAvatar: '',
+            title,
+            caption:      caption || '',
+            mediaUrl,
+            mediaType:    'image',
+            region:       'Global',
+            category:     'Announcement',
+        });
+        const users = await User.find({ fcmToken: { $ne: '' } }).select('fcmToken');
+        let sent = 0, failed = 0;
+        await Promise.all(users.map(async u => {
+            try {
+                await admin.messaging().send({
+                    token: u.fcmToken,
+                    android: { priority: 'high' },
+                    notification: {
+                        title: `XamePage${version ? ' v' + version : ''}: ${title}`,
+                        body: caption || 'New announcement from XamePage.',
+                    },
+                    data: {
+                        type: 'announcement',
+                        postId: post.postId,
+                        title,
+                        mediaUrl,
+                        downloadUrl: downloadUrl || '',
+                        version: version || '',
+                    }
+                });
+                sent++;
+            } catch (e) { failed++; }
+        }));
+        res.json({ success: true, message: `Announcement posted and pushed to ${sent} users. ${failed} failed.` });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+// ── END ADMIN ENDPOINTS ───────────────────────────────────────────────────────
+
     server.listen(PORT, () => {
         console.log('='.repeat(60));
         console.log('✅  XamePage Server v2.1.1');
