@@ -3633,6 +3633,19 @@ app.delete('/api/discover/post/:postId', async (req, res) => {
     }
 });
 
+// ── GET XAMEPAGE ANNOUNCEMENTS ────────────────────────────────────────────────
+app.get('/api/xamepage/announcements', async (req, res) => {
+    try {
+        const announcements = await XamePageAnnouncement.find()
+            .sort({ ts: -1 })
+            .limit(10);
+        res.json({ success: true, announcements });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+
 app.get('*', (req, res) => {
     if (req.path.startsWith('/api/')) {
         return res.status(404).json({ success: false, message: 'API endpoint not found' });
@@ -3647,19 +3660,6 @@ app.get('*', (req, res) => {
 const PORT = process.env.PORT || 8080;
 
 createDirectories().then(() => {
-
-
-// ── GET XAMEPAGE ANNOUNCEMENTS ────────────────────────────────────────────────
-app.get('/api/xamepage/announcements', async (req, res) => {
-    try {
-        const announcements = await XamePageAnnouncement.find()
-            .sort({ ts: -1 })
-            .limit(10);
-        res.json({ success: true, announcements });
-    } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
-    }
-});
 
 // ── ADMIN ENDPOINTS ───────────────────────────────────────────────────────────
 function verifyAdminSecret(req, res) {
