@@ -3276,6 +3276,19 @@ app.get('/api/chat/:userId/:contactId', async (req, res) => {
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
+
+// ── XAMEPAGE OFFICIAL ANNOUNCEMENTS ──────────────────────────────────────────
+const xamePageAnnouncementSchema = new mongoose.Schema({
+    announcementId: { type: String, required: true, unique: true },
+    title:          { type: String, required: true },
+    caption:        { type: String, default: '' },
+    mediaUrl:       { type: String, required: true },
+    downloadUrl:    { type: String, default: '' },
+    version:        { type: String, default: '' },
+    ts:             { type: Date, default: Date.now },
+});
+const XamePageAnnouncement = mongoose.model('XamePageAnnouncement', xamePageAnnouncementSchema);
+
 const discoveryPostSchema = new mongoose.Schema({
     postId:       { type: String, required: true, unique: true },
     authorId:     { type: String, required: true, index: true },
@@ -3635,6 +3648,19 @@ const PORT = process.env.PORT || 8080;
 
 createDirectories().then(() => {
 
+
+// ── GET XAMEPAGE ANNOUNCEMENTS ────────────────────────────────────────────────
+app.get('/api/xamepage/announcements', async (req, res) => {
+    try {
+        const announcements = await XamePageAnnouncement.find()
+            .sort({ ts: -1 })
+            .limit(10);
+        res.json({ success: true, announcements });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 // ── ADMIN ENDPOINTS ───────────────────────────────────────────────────────────
 function verifyAdminSecret(req, res) {
     const secret = req.body.secret;
@@ -3719,17 +3745,13 @@ app.post('/api/xamepage/announce', async (req, res) => {
         return res.status(400).json({ success: false, message: 'title and mediaUrl required.' });
     try {
         const { v4: uuidv4 } = require('uuid');
-        const post = await DiscoveryPost.create({
-            postId:       uuidv4(),
-            authorId:     'xamepage_official',
-            authorName:   'XamePage',
-            authorAvatar: '',
+        const post = await XamePageAnnouncement.create({
+            announcementId: uuidv4(),
             title,
-            caption:      caption || '',
+            caption:     caption || '',
             mediaUrl,
-            mediaType:    'image',
-            region:       'Global',
-            category:     'Announcement',
+            downloadUrl: downloadUrl || '',
+            version:     version || '',
         });
         const users = await User.find({ fcmToken: { $ne: '' } }).select('fcmToken');
         let sent = 0, failed = 0;
@@ -3744,7 +3766,7 @@ app.post('/api/xamepage/announce', async (req, res) => {
                     },
                     data: {
                         type: 'announcement',
-                        postId: post.postId,
+                        postId: post.announcementId,
                         title,
                         mediaUrl,
                         downloadUrl: downloadUrl || '',
@@ -3759,6 +3781,19 @@ app.post('/api/xamepage/announce', async (req, res) => {
         res.status(500).json({ success: false, message: err.message });
     }
 });
+
+app.post('/api/admin/delete-discovery-post', async (req, res) => {
+    if (!verifyAdminSecret(req, res)) return;
+    const { postId } = req.body;
+    if (!postId) return res.status(400).json({ success: false, message: 'postId required.' });
+    try {
+        await DiscoveryPost.deleteOne({ postId });
+        res.json({ success: true, message: 'Post deleted.' });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 // ── END ADMIN ENDPOINTS ───────────────────────────────────────────────────────
 
     server.listen(PORT, () => {
