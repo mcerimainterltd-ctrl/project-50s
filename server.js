@@ -3301,7 +3301,9 @@ const xamePageAnnouncementSchema = new mongoose.Schema({
     title:          { type: String, required: true },
     caption:        { type: String, default: '' },
     mediaUrl:       { type: String, required: true },
-    downloadUrl:    { type: String, default: '' },
+    mediaType:      { type: String, default: 'image' },
+    actionUrl:      { type: String, default: '' },
+    actionLabel:    { type: String, default: '' },
     version:        { type: String, default: '' },
     ts:             { type: Date, default: Date.now },
 });
@@ -3780,7 +3782,7 @@ app.post('/api/app/promote', async (req, res) => {
 
 app.post('/api/xamepage/announce', async (req, res) => {
     if (!verifyAdminSecret(req, res)) return;
-    const { title, caption, mediaUrl, downloadUrl, version } = req.body;
+    const { title, caption, mediaUrl, mediaType, downloadUrl, actionLabel, version } = req.body;
     if (!title || !mediaUrl)
         return res.status(400).json({ success: false, message: 'title and mediaUrl required.' });
     try {
@@ -3788,10 +3790,12 @@ app.post('/api/xamepage/announce', async (req, res) => {
         const post = await XamePageAnnouncement.create({
             announcementId: uuidv4(),
             title,
-            caption:     caption || '',
+            caption:     caption     || '',
             mediaUrl,
-            downloadUrl: downloadUrl || '',
-            version:     version || '',
+            mediaType:   mediaType   || 'image',
+            actionUrl:   downloadUrl || '',
+            actionLabel: actionLabel || '',
+            version:     version     || '',
         });
         const users = await User.find({ fcmToken: { $ne: '' } }).select('fcmToken');
         let sent = 0, failed = 0;
