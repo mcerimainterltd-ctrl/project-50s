@@ -3284,7 +3284,18 @@ app.get('/api/chat/:userId/:contactId', async (req, res) => {
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
 
-// ── XAMEPAGE OFFICIAL ANNOUNCEMENTS ──────────────────────────────────────────
+// ── APP VERSION SCHEMA ───────────────────────────────────────────────────────
+const appVersionSchema = new mongoose.Schema({
+    version:     { type: String, required: true },
+    buildNumber: { type: Number, required: true },
+    downloadUrl: { type: String, default: '' },
+    forceUpdate: { type: Boolean, default: false },
+    changelog:   { type: String, default: '' },
+    updatedAt:   { type: Date, default: Date.now },
+});
+const AppVersion = mongoose.model('AppVersion', appVersionSchema);
+
+// ── XAMEPAGE OFFICIAL ANNOUNCEMENTS ───────────────────────────────────────────
 const xamePageAnnouncementSchema = new mongoose.Schema({
     announcementId: { type: String, required: true, unique: true },
     title:          { type: String, required: true },
@@ -3643,13 +3654,19 @@ app.delete('/api/discover/post/:postId', async (req, res) => {
 // ── GET APP VERSION ──────────────────────────────────────────────────────────
 app.get('/api/app/version', async (req, res) => {
     try {
+        const v = await AppVersion.findOne().sort({ updatedAt: -1 });
+        if (!v) return res.json({
+            success: true, version: '2.1.1', buildNumber: 478,
+            downloadUrl: 'https://github.com/mcerimainterltd-ctrl/Project-50s-flutter/releases/latest',
+            forceUpdate: false, changelog: 'Latest improvements and bug fixes.',
+        });
         res.json({
             success:     true,
-            version:     process.env.APP_VERSION     || '2.1.1',
-            buildNumber: parseInt(process.env.APP_BUILD || '478'),
-            downloadUrl: 'https://github.com/mcerimainterltd-ctrl/Project-50s-flutter/releases/latest',
-            forceUpdate: process.env.FORCE_UPDATE === 'true',
-            changelog:   process.env.APP_CHANGELOG   || 'Latest improvements and bug fixes.',
+            version:     v.version,
+            buildNumber: v.buildNumber,
+            downloadUrl: v.downloadUrl,
+            forceUpdate: v.forceUpdate,
+            changelog:   v.changelog,
         });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
@@ -3827,6 +3844,27 @@ app.post('/api/admin/suspend-account', async (req, res) => {
         if (result.matchedCount === 0) return res.status(404).json({ success: false, message: 'User not found.' });
         const action = suspend !== false ? 'suspended' : 'unsuspended';
         res.json({ success: true, message: `Account ${xameId} ${action}.` });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+
+app.post('/api/admin/set-version', async (req, res) => {
+    if (!verifyAdminSecret(req, res)) return;
+    const { version, buildNumber, downloadUrl, forceUpdate, changelog } = req.body;
+    if (!version || !buildNumber)
+        return res.status(400).json({ success: false, message: 'version and buildNumber required.' });
+    try {
+        await AppVersion.deleteMany({});
+        await AppVersion.create({
+            version, buildNumber: parseInt(buildNumber),
+            downloadUrl: downloadUrl || 'https://github.com/mcerimainterltd-ctrl/Project-50s-flutter/releases/latest',
+            forceUpdate: forceUpdate === true || forceUpdate === 'true',
+            changelog:   changelog || 'Latest improvements and bug fixes.',
+            updatedAt:   new Date(),
+        });
+        res.json({ success: true, message: `Version set to ${version} (build ${buildNumber}).` });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
