@@ -3640,6 +3640,22 @@ app.delete('/api/discover/post/:postId', async (req, res) => {
     }
 });
 
+// ── GET APP VERSION ──────────────────────────────────────────────────────────
+app.get('/api/app/version', async (req, res) => {
+    try {
+        res.json({
+            success:     true,
+            version:     process.env.APP_VERSION     || '2.1.1',
+            buildNumber: parseInt(process.env.APP_BUILD || '478'),
+            downloadUrl: 'https://github.com/mcerimainterltd-ctrl/Project-50s-flutter/releases/latest',
+            forceUpdate: process.env.FORCE_UPDATE === 'true',
+            changelog:   process.env.APP_CHANGELOG   || 'Latest improvements and bug fixes.',
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 // ── GET XAMEPAGE ANNOUNCEMENTS ────────────────────────────────────────────────
 app.get('/api/xamepage/announcements', async (req, res) => {
     try {
