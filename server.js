@@ -257,7 +257,8 @@ const userSchema = new mongoose.Schema({
         createdAt: { type: Date, default: Date.now },
         lastSeen:  { type: Date, default: Date.now }
     }],
-    createdAt:          { type: Date, default: Date.now }
+    createdAt:          { type: Date, default: Date.now },
+    suspended:          { type: Boolean, default: false },
 });
 
 const messageSchema = new mongoose.Schema({
@@ -310,7 +311,6 @@ const callHistorySchema = new mongoose.Schema({
         type: String, required: true,
         enum: ['pending', 'accepted', 'rejected', 'ended', 'missed', 'offline']
     }
-    suspended:          { type: Boolean, default: false },
 }, { timestamps: true });
 
 const pushSubscriptionSchema = new mongoose.Schema({
