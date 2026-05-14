@@ -310,6 +310,7 @@ const callHistorySchema = new mongoose.Schema({
         type: String, required: true,
         enum: ['pending', 'accepted', 'rejected', 'ended', 'missed', 'offline']
     }
+    suspended:          { type: Boolean, default: false },
 }, { timestamps: true });
 
 const pushSubscriptionSchema = new mongoose.Schema({
@@ -677,6 +678,10 @@ app.post('/api/login', async (req, res) => {
         const user = await User.findOne({ xameId });
         if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
 
+        if (user.suspended) {
+            return res.status(403).json({ success: false, message: 'Your account has been suspended. Please contact support.' });
+        }
+
         if (!user.password) {
             return res.status(403).json({
                 success: false,
@@ -950,6 +955,8 @@ app.post('/api/search-user', async (req, res) => {
             fcmToken:           user.fcmToken,
             hideProfilePicture: user.hideProfilePicture,
             hidePreferredName:  user.hidePreferredName,
+            createdAt:          user.createdAt,
+            suspended:          user.suspended || false,
             isOnline:           onlineUsers.has(user.xameId),
         }});
     } catch (err) {
@@ -3789,6 +3796,21 @@ app.post('/api/admin/delete-discovery-post', async (req, res) => {
     try {
         await DiscoveryPost.deleteOne({ postId });
         res.json({ success: true, message: 'Post deleted.' });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+
+app.post('/api/admin/suspend-account', async (req, res) => {
+    if (!verifyAdminSecret(req, res)) return;
+    const { xameId, suspend } = req.body;
+    if (!xameId) return res.status(400).json({ success: false, message: 'xameId required.' });
+    try {
+        const result = await User.updateOne({ xameId }, { suspended: suspend !== false });
+        if (result.matchedCount === 0) return res.status(404).json({ success: false, message: 'User not found.' });
+        const action = suspend !== false ? 'suspended' : 'unsuspended';
+        res.json({ success: true, message: `Account ${xameId} ${action}.` });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
