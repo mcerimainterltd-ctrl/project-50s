@@ -663,13 +663,17 @@ function updateAnnPreview() {
   var ytId = getYouTubeId(url);
   if (ytId) {
     img.style.display = 'none'; vid.style.display = 'none';
-    var frame = document.createElement('iframe');
-    frame.id = 'ann-preview-frame';
-    frame.src = 'https://www.youtube.com/embed/' + ytId;
-    frame.width = '100%'; frame.height = '200';
-    frame.style.border = 'none'; frame.allowFullscreen = true;
-    frame.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
-    wrap.querySelector('div').appendChild(frame);
+    var oldFrame = document.getElementById('ann-preview-frame');
+    if (oldFrame) oldFrame.remove();
+    var thumb = document.createElement('div');
+    thumb.id = 'ann-preview-frame';
+    thumb.style.cssText = 'position:relative;width:100%;height:200px;cursor:pointer;';
+    thumb.innerHTML = '<img src="https://img.youtube.com/vi/' + ytId + '/hqdefault.jpg" style="width:100%;height:200px;object-fit:cover;">'
+      + '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:56px;height:56px;background:rgba(255,0,0,0.9);border-radius:50%;display:flex;align-items:center;justify-content:center;">'
+      + '<div style="width:0;height:0;border-top:10px solid transparent;border-bottom:10px solid transparent;border-left:18px solid white;margin-left:4px;"></div></div>'
+      + '<div style="position:absolute;bottom:8px;left:8px;background:rgba(0,0,0,0.7);color:white;font-size:11px;padding:3px 8px;border-radius:4px;">Tap to open in YouTube</div>';
+    thumb.onclick = function() { window.open(url, '_blank'); };
+    wrap.querySelector('div').appendChild(thumb);
   } else if (type === 'video') {
     img.style.display = 'none'; vid.style.display = 'block'; vid.src = url;
   } else {
