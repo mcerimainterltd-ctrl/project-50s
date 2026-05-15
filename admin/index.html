@@ -644,17 +644,38 @@ async function deleteAccount() {
 }
 
 // ── Announce ──────────────────────────────────────────────────────────────────
-async function updateAnnPreview() {
-  var url=document.getElementById('ann-media').value.trim();
-  var type=document.getElementById('ann-media-type').value;
-  var wrap=document.getElementById('ann-preview-wrap');
-  var img=document.getElementById('ann-preview-img');
-  var vid=document.getElementById('ann-preview-vid');
-  var err=document.getElementById('ann-preview-err');
-  if(!url){wrap.style.display='none';return;}
-  wrap.style.display='block';err.style.display='none';
-  if(type==='video'){img.style.display='none';vid.style.display='block';vid.src=url;}
-  else{vid.style.display='none';vid.src='';img.style.display='block';img.src=url;}
+async function getYouTubeId(url) {
+  var m = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([\w-]{11})/);
+  return m ? m[1] : null;
+}
+
+function updateAnnPreview() {
+  var url  = document.getElementById('ann-media').value.trim();
+  var type = document.getElementById('ann-media-type').value;
+  var wrap = document.getElementById('ann-preview-wrap');
+  var img  = document.getElementById('ann-preview-img');
+  var vid  = document.getElementById('ann-preview-vid');
+  var err  = document.getElementById('ann-preview-err');
+  if (!url) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'block'; err.style.display = 'none';
+  var oldFrame = document.getElementById('ann-preview-frame');
+  if (oldFrame) oldFrame.remove();
+  var ytId = getYouTubeId(url);
+  if (ytId) {
+    img.style.display = 'none'; vid.style.display = 'none';
+    var frame = document.createElement('iframe');
+    frame.id = 'ann-preview-frame';
+    frame.src = 'https://www.youtube.com/embed/' + ytId;
+    frame.width = '100%'; frame.height = '200';
+    frame.style.border = 'none'; frame.allowFullscreen = true;
+    frame.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+    wrap.querySelector('div').appendChild(frame);
+  } else if (type === 'video') {
+    img.style.display = 'none'; vid.style.display = 'block'; vid.src = url;
+  } else {
+    vid.style.display = 'none'; vid.src = '';
+    img.style.display = 'block'; img.src = url;
+  }
 }
 
 async function postAnnouncement() {
