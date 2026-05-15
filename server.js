@@ -3874,6 +3874,43 @@ app.post('/api/admin/set-version', async (req, res) => {
     }
 });
 
+
+app.post('/api/admin/ai-assist', async (req, res) => {
+    if (!verifyAdminSecret(req, res)) return;
+    const { messages, userContext } = req.body;
+    if (!messages || !Array.isArray(messages))
+        return res.status(400).json({ success: false, message: 'messages required.' });
+    try {
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
+            },
+            body: JSON.stringify({
+                model: 'llama-3.3-70b-versatile',
+                max_tokens: 1000,
+                messages: [
+                    {
+                        role: 'system',
+                        content: `You are a smart, concise admin assistant for XamePage — a modern social communication app. Help the administrator manage users, resolve issues, draft communications, and understand platform behavior.
+
+${userContext || 'No user currently loaded.'}
+
+Be direct and actionable. Keep responses under 150 words unless drafting a document. Reference available buttons: Reset Password, Kill Sessions, Suspend Account, Delete Account. You know all XamePage features: messaging, calls, Discovery, Stories, Pay, wallet, contacts, app lock, 2FA, FCM notifications.`
+                    },
+                    ...messages,
+                ],
+            }),
+        });
+        const data = await response.json();
+        const reply = data.choices && data.choices[0] ? data.choices[0].message.content : 'No response received.';
+        res.json({ success: true, reply });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 // ── END ADMIN ENDPOINTS ───────────────────────────────────────────────────────
 
     server.listen(PORT, () => {
