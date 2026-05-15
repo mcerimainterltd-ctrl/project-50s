@@ -35,6 +35,7 @@ const supabase = createClient(process.env.SUPABASE_URL || '', process.env.SUPABA
 const webpush    = require('web-push');
 require('dotenv').config();
 const admin = require('firebase-admin');
+const basicAuth = require('express-basic-auth');
 try {
   const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');
   if (serviceAccount.project_id) {
@@ -3687,6 +3688,17 @@ app.get('/api/xamepage/announcements', async (req, res) => {
     }
 });
 
+
+// ── Admin Console (HTTP Basic Auth protected) ────────────────────────────────
+const adminConsoleAuth = basicAuth({
+    users: { [process.env.ADMIN_CONSOLE_USER || 'xamepage']: process.env.ADMIN_CONSOLE_PASS || 'admin' },
+    challenge: true,
+    realm: 'XamePage Admin',
+});
+
+app.get('/admin', adminConsoleAuth, (req, res) => {
+    res.sendFile(path.join(BASE_DIR, 'admin', 'index.html'));
+});
 
 app.get('*', (req, res) => {
     if (req.path.startsWith('/api/')) {

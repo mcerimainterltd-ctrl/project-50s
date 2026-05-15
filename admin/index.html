@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>XamePage Admin Console</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#080C10;color:#F9FAFB;font-family:'DM Sans',sans-serif;min-height:100vh}
+  ::-webkit-scrollbar{width:4px}
+  ::-webkit-scrollbar-track{background:#0D1117}
+  ::-webkit-scrollbar-thumb{background:#374151;border-radius:2px}
+  input,textarea,button{font-family:'DM Sans',sans-serif;outline:none}
+  button{cursor:pointer}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  @keyframes slideIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @keyframes glow{0%,100%{box-shadow:0 0 8px rgba(0,176,160,.3)}50%{box-shadow:0 0 20px rgba(0,176,160,.3)}}
+  @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
+
+  /* Login */
+  .login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center}
+  .login-box{width:340px;animation:slideIn .4s ease}
+  .login-logo{width:64px;height:64px;background:rgba(0,176,160,.12);border:2px solid #00B0A0;border-radius:16px;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;animation:glow 2s ease-in-out infinite;font-size:28px}
+  .login-title{font-family:'Space Mono',monospace;font-size:20px;text-align:center;margin-bottom:4px}
+  .login-sub{color:#6B7280;font-size:13px;text-align:center;margin-bottom:32px}
+  .card{background:#111827;border:1px solid #1F2937;border-radius:12px;padding:20px}
+  .shake{animation:shake .4s ease}
+
+  /* Header */
+  .header{background:#0D1117;border-bottom:1px solid #1F2937;padding:14px 24px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:100}
+  .header-logo{width:36px;height:36px;background:rgba(0,176,160,.12);border:1px solid #00B0A0;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+  .header h1{font-family:'Space Mono',monospace;font-size:15px;color:#00B0A0}
+  .header p{font-size:11px;color:#6B7280}
+  .live-dot{width:8px;height:8px;border-radius:50%;background:#10B981;animation:pulse 2s infinite;margin-left:auto}
+
+  /* Tabs */
+  .tabs{border-bottom:1px solid #1F2937;padding:0 24px;display:flex;gap:4px;background:#0D1117}
+  .tab{background:none;border:none;padding:12px 16px;font-size:13px;font-weight:600;color:#6B7280;border-bottom:2px solid transparent;transition:all .15s;cursor:pointer}
+  .tab.active{color:#00B0A0;border-bottom-color:#00B0A0}
+
+  /* Content */
+  .content{max-width:720px;margin:0 auto;padding:24px;display:flex;flex-direction:column;gap:16px}
+
+  /* Form elements */
+  .label{font-size:12px;color:#6B7280;font-weight:600;letter-spacing:.5px;margin-bottom:6px;display:block}
+  .input{width:100%;background:#0D1117;border:1px solid #1F2937;border-radius:8px;padding:10px 14px;color:#F9FAFB;font-size:14px;transition:border-color .15s}
+  .input:focus{border-color:#00B0A0}
+  .input.mono{font-family:'Space Mono',monospace}
+  .field{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+
+  /* Buttons */
+  .btn{display:inline-flex;align-items:center;gap:6px;padding:10px 20px;border-radius:8px;font-size:14px;font-weight:600;border:1px solid;transition:all .15s;cursor:pointer}
+  .btn-primary{background:rgba(0,176,160,.18);color:#00B0A0;border-color:rgba(0,176,160,.4)}
+  .btn-primary:hover{background:rgba(0,176,160,.28)}
+  .btn-danger{background:rgba(239,68,68,.12);color:#EF4444;border-color:rgba(239,68,68,.4)}
+  .btn-danger:hover{background:rgba(239,68,68,.22)}
+  .btn-ghost{background:transparent;color:#6B7280;border-color:#1F2937}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn-full{width:100%;justify-content:center}
+
+  /* Badge */
+  .badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+
+  /* Grid */
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}
+  .stat-box{background:#0D1117;border-radius:8px;padding:8px 12px}
+  .stat-label{font-size:11px;color:#6B7280;margin-bottom:2px}
+  .stat-val{font-size:13px;font-weight:500;word-break:break-all}
+
+  /* Spinner */
+  .spinner{width:16px;height:16px;border:2px solid #1F2937;border-top:2px solid #00B0A0;border-radius:50%;animation:spin .8s linear infinite}
+
+  /* Log */
+  .log-entry{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid #1F2937}
+  .log-time{font-size:11px;color:#6B7280;font-family:'Space Mono',monospace;white-space:nowrap;margin-top:1px}
+  .log-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px}
+  .log-msg{font-size:13px}
+
+  /* Profile */
+  .profile-header{display:flex;align-items:center;gap:16px}
+  .avatar{width:56px;height:56px;border-radius:50%;background:rgba(0,176,160,.12);border:2px solid #00B0A0;display:flex;align-items:center;justify-content:center;font-size:22px;overflow:hidden;flex-shrink:0}
+  .avatar img{width:100%;height:100%;object-fit:cover}
+
+  /* Danger zone */
+  .danger-card{background:#111827;border:1px solid rgba(239,68,68,.3);border-radius:12px;padding:20px}
+
+  /* Search row */
+  .search-row{display:flex;gap:8px}
+  .search-row .input{flex:1}
+
+  /* Section label */
+  .sl{font-size:12px;color:#6B7280;font-weight:600;letter-spacing:.5px;margin-bottom:12px}
+
+  /* Announce form */
+  .announce-note{font-size:12px;color:#6B7280;margin-top:8px;line-height:1.5}
+
+  /* Hidden */
+  .hidden{display:none!important}
+
+  /* Error */
+  .error-msg{color:#EF4444;font-size:12px;margin-top:6px}
+  .success-msg{color:#10B981;font-size:12px;margin-top:6px}
+
+  /* AI Assistant */
+  #ai-fab{position:fixed;bottom:24px;right:24px;width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#00B0A0,#008A7D);border:none;color:#fff;font-size:22px;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 20px rgba(0,176,160,.5);cursor:pointer;z-index:1000;transition:transform .2s}
+  #ai-fab:hover{transform:scale(1.1)}
+  #ai-panel{position:fixed;bottom:88px;right:24px;width:380px;max-width:calc(100vw - 48px);height:520px;background:#111827;border:1px solid #1F2937;border-radius:16px;display:flex;flex-direction:column;z-index:999;box-shadow:0 8px 40px rgba(0,0,0,.6);animation:slideIn .25s ease}
+  #ai-panel.hidden{display:none!important}
+  .ai-header{padding:14px 16px;border-bottom:1px solid #1F2937;display:flex;align-items:center;gap:10px;flex-shrink:0}
+  .ai-header-icon{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#00B0A0,#008A7D);display:flex;align-items:center;justify-content:center;font-size:16px}
+  .ai-title{font-size:13px;font-weight:700;color:#F9FAFB}
+  .ai-sub{font-size:11px;color:#6B7280}
+  .ai-close{margin-left:auto;background:none;border:none;color:#6B7280;font-size:18px;cursor:pointer;padding:4px}
+  .ai-messages{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
+  .ai-msg{max-width:85%;padding:10px 12px;border-radius:12px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+  .ai-msg.user{background:rgba(0,176,160,.15);color:#F9FAFB;align-self:flex-end;border-bottom-right-radius:4px}
+  .ai-msg.assistant{background:#1F2937;color:#F9FAFB;align-self:flex-start;border-bottom-left-radius:4px}
+  .ai-msg.typing{color:#6B7280;font-style:italic}
+  .ai-quick{padding:8px 12px;border-top:1px solid #1F2937;display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0}
+  .ai-quick-btn{background:rgba(0,176,160,.1);color:#00B0A0;border:1px solid rgba(0,176,160,.3);border-radius:16px;padding:4px 10px;font-size:11px;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
+  .ai-quick-btn:hover{background:rgba(0,176,160,.2)}
+  .ai-input-row{padding:10px 12px;border-top:1px solid #1F2937;display:flex;gap:8px;align-items:flex-end;flex-shrink:0}
+  .ai-input{flex:1;background:#0D1117;border:1px solid #1F2937;border-radius:10px;padding:8px 12px;color:#F9FAFB;font-size:13px;resize:none;max-height:100px;min-height:36px;line-height:1.4}
+  .ai-input:focus{border-color:#00B0A0}
+  .ai-send{width:36px;height:36px;border-radius:8px;background:#00B0A0;border:none;color:#000;font-size:16px;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:opacity .15s}
+  .ai-send:disabled{opacity:.4;cursor:not-allowed}
+  .ai-context-badge{padding:6px 12px;border-top:1px solid #1F2937;font-size:11px;color:#6B7280;flex-shrink:0}
+  .ai-context-badge span{color:#00B0A0;font-weight:600}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login" class="login-wrap">
+  <div class="login-box">
+    <div class="login-logo">🛡️</div>
+    <h1 class="login-title">XamePage Admin</h1>
+    <p class="login-sub">Authorized personnel only</p>
+    <div class="card" id="login-card">
+      <div class="field">
+        <label class="label">ADMIN PIN</label>
+        <input type="password" id="pin-input" class="input mono" placeholder="••••••" onkeydown="if(event.key==='Enter')doLogin()">
+      </div>
+      <div id="pin-error" class="error-msg hidden"></div>
+      <button class="btn btn-primary btn-full" style="margin-top:12px" onclick="doLogin()">Access Console</button>
+    </div>
+  </div>
+</div>
+
+<!-- CONSOLE -->
+<div id="console" class="hidden">
+  <!-- Header -->
+  <div class="header">
+    <div class="header-logo">🛡️</div>
+    <div>
+      <h1>XamePage Admin Console</h1>
+      <p>Authorized access only · All actions logged</p>
+    </div>
+    <div class="live-dot" title="Live"></div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('users',this)">👤 Users</button>
+    <button class="tab" onclick="switchTab('announce',this)">📣 Announce</button>
+    <button class="tab" onclick="switchTab('log',this)" id="log-tab">📋 Log</button>
+  </div>
+
+  <!-- USERS TAB -->
+  <div id="tab-users" class="content">
+    <div class="card">
+      <div class="sl">SEARCH USER BY XAME-ID</div>
+      <div class="search-row">
+        <input type="text" id="search-input" class="input mono" placeholder="e.g. 058123456789" onkeydown="if(event.key==='Enter')searchUser()">
+        <button class="btn btn-primary" onclick="searchUser()" id="search-btn">Search</button>
+      </div>
+      <div id="search-error" class="error-msg hidden"></div>
+    </div>
+
+    <!-- User profile (hidden until found) -->
+    <div id="user-panel" class="hidden" style="display:flex;flex-direction:column;gap:16px;animation:slideIn .3s ease">
+
+      <!-- Profile card -->
+      <div class="card">
+        <div class="profile-header">
+          <div class="avatar" id="user-avatar">?</div>
+          <div style="flex:1">
+            <h2 id="user-name" style="font-size:16px;font-weight:700"></h2>
+            <p id="user-preferred" style="color:#00B0A0;font-size:13px;display:none"></p>
+            <div id="user-badges" style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap"></div>
+          </div>
+        </div>
+        <div class="grid2" id="user-stats"></div>
+      </div>
+
+      <!-- Admin secret -->
+      <div class="card">
+        <div class="sl">ADMIN SECRET (required for all actions below)</div>
+        <input type="password" id="admin-secret" class="input mono" placeholder="Paste ADMIN_SECRET from Render environment">
+      </div>
+
+      <!-- Reset password -->
+      <div class="card">
+        <div class="sl">RESET USER PASSWORD</div>
+        <div class="search-row">
+          <input type="password" id="new-password" class="input" placeholder="New password (8+ chars)">
+          <button class="btn btn-primary" onclick="resetPassword()" id="reset-btn">Reset</button>
+        </div>
+        <div id="reset-msg"></div>
+      </div>
+
+      <!-- Sessions -->
+      <div class="card">
+        <div class="sl">SESSION MANAGEMENT</div>
+        <button class="btn btn-danger" onclick="killSessions()" id="kill-btn">🚪 Kill All Sessions</button>
+        <div id="sessions-list" style="margin-top:12px"></div>
+        <div id="sessions-msg"></div>
+      </div>
+
+      <!-- Promote -->
+
+      <!-- Delete -->
+      <div class="danger-card">
+        <div class="sl" style="color:#EF4444">⚠️ DANGER ZONE</div>
+        <div id="delete-confirm-1">
+          <button class="btn btn-danger" id="suspend-btn" onclick="toggleSuspend()">🚫 Suspend Account</button>
+        <div id="suspend-msg" style="margin-top:8px"></div>
+        <div style="height:10px"></div>
+        <button class="btn btn-danger" onclick="showDeleteConfirm()">🗑️ Delete Account Permanently</button>
+        </div>
+        <div id="delete-confirm-2" class="hidden">
+          <p style="color:#EF4444;font-size:13px;line-height:1.6;margin-bottom:12px">
+            This will permanently delete <strong id="delete-xame-id" style="font-family:'Space Mono',monospace"></strong> and all associated data including messages, call history, and posts. <strong>Cannot be undone.</strong>
+          </p>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-danger" onclick="deleteAccount()" id="delete-btn">Confirm Delete</button>
+            <button class="btn btn-ghost" onclick="hideDeleteConfirm()">Cancel</button>
+          </div>
+        </div>
+        <div id="delete-msg"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ANNOUNCE TAB -->
+  <div id="tab-announce" class="content hidden">
+    <div class="card">
+      <div class="sl">POST OFFICIAL XAMEPAGE ANNOUNCEMENT</div>
+      <div class="field"><label class="label">ADMIN SECRET *</label><input type="password" id="ann-secret" class="input mono" placeholder="From Render environment"></div>
+      <div class="field"><label class="label">TITLE *</label><input type="text" id="ann-title" class="input" placeholder="XamePage v2.1.1 is here!"></div>
+      <div class="field"><label class="label">CAPTION</label><input type="text" id="ann-caption" class="input" placeholder="What's new in this version..."></div>
+      <div class="field"><label class="label">MEDIA URL *</label><input type="text" id="ann-media" class="input" placeholder="https://... (image or video URL)" oninput="updateAnnPreview()"></div>
+      <div class="field"><label class="label">MEDIA TYPE</label><select id="ann-media-type" class="input" onchange="updateAnnPreview()"><option value="image">Image</option><option value="video">Video</option></select></div>
+      <div id="ann-preview-wrap" style="display:none;margin:8px 0"><div class="label" style="margin-bottom:6px">MEDIA PREVIEW</div><div style="border-radius:12px;overflow:hidden;background:#0D1117;border:1px solid #1F2937"><img id="ann-preview-img" src="" alt="" style="width:100%;max-height:200px;object-fit:cover;display:block" onerror="this.style.display='none';document.getElementById('ann-preview-err').style.display='block'"><video id="ann-preview-vid" controls style="width:100%;max-height:200px;display:none"></video><div id="ann-preview-err" style="display:none;padding:20px;text-align:center;color:#6B7280;font-size:13px">Could not load media</div></div></div>
+      <div class="field"><label class="label">ACTION URL</label><input type="text" id="ann-download" class="input" placeholder="https://... (article, video, download, etc.)"></div>
+      <div class="field"><label class="label">ACTION LABEL</label><input type="text" id="ann-action-label" class="input" placeholder="e.g. Read More, Watch Now, Download"></div>
+      <div class="field"><label class="label">VERSION TAG</label><input type="text" id="ann-version" class="input" placeholder="2.1.1"></div>
+      <button class="btn btn-primary btn-full" onclick="postAnnouncement()" id="ann-btn">📣 Post to All Users</button>
+      <div id="ann-msg"></div>
+      <p class="announce-note">This will post to the XamePage Official section in Discovery and send a push notification to all users with FCM tokens.</p>
+    </div>
+
+    <!-- Version Management -->
+    <div class="card">
+      <div class="sl">VERSION MANAGEMENT</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <div style="flex:1;min-width:120px"><label class="label">VERSION</label><input type="text" id="vm-version" class="input mono" placeholder="e.g. 2.1.1"></div>
+          <div style="flex:1;min-width:100px"><label class="label">BUILD NUMBER</label><input type="number" id="vm-build" class="input mono" placeholder="e.g. 479"></div>
+        </div>
+        <div><label class="label">CHANGELOG</label><input type="text" id="vm-changelog" class="input" placeholder="What's new in this version..."></div>
+        <div><label class="label">DOWNLOAD URL</label><input type="text" id="vm-download" class="input mono" placeholder="https://github.com/.../releases/latest"></div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <input type="checkbox" id="vm-force" style="width:16px;height:16px;accent-color:#EF4444">
+          <label for="vm-force" style="font-size:13px;color:#F9FAFB">Force update (users must update to continue)</label>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary" onclick="setVersion()" id="vm-btn">Save Version</button>
+          <button class="btn btn-ghost" onclick="loadCurrentVersion()" id="vm-load-btn">Load Current</button>
+        </div>
+        <div id="vm-msg"></div>
+      </div>
+    </div>
+
+    <!-- Promote -->
+    <div class="card">
+      <div class="sl">PROMOTE STABLE APK TO ALL USERS</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="text" id="promote-version" class="input mono" placeholder="Version e.g. 2.1.1" style="width:140px">
+        <input type="number" id="promote-build" class="input mono" placeholder="Build e.g. 479" style="width:120px">
+        <button class="btn btn-primary" onclick="promoteVersion()" id="promote-btn">🚀 Promote</button>
+      </div>
+      <div id="promote-msg"></div>
+    </div>
+  </div>
+
+  <!-- LOG TAB -->
+  <div id="tab-log" class="content hidden">
+    <div class="card">
+      <div class="sl">ACTION LOG</div>
+      <div id="log-list"><p style="color:#6B7280;font-size:13px">No actions recorded yet.</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- AI ASSISTANT FAB -->
+<button id="ai-fab" onclick="toggleAI()" title="AI Assistant">🤖</button>
+
+<!-- AI ASSISTANT PANEL -->
+<div id="ai-panel" class="hidden">
+  <div class="ai-header">
+    <div class="ai-header-icon">🤖</div>
+    <div>
+      <div class="ai-title">AI Assistant</div>
+      <div class="ai-sub">Powered by Claude</div>
+    </div>
+    <button class="ai-close" onclick="toggleAI()">×</button>
+  </div>
+  <div id="ai-context-badge" class="ai-context-badge hidden">Context: <span id="ai-context-name"></span></div>
+  <div style="padding:8px 12px;border-bottom:1px solid #1F2937"><input type="password" id="ai-secret" placeholder="Paste admin secret here..." style="width:100%;background:#1F2937;border:1px solid #374151;border-radius:6px;padding:6px 10px;color:#F9FAFB;font-size:12px;outline:none;font-family:monospace"></div>
+  <div id="ai-messages" class="ai-messages">
+    <div class="ai-msg assistant">👋 Hi! I'm your XamePage support assistant. Load a user profile and I'll have full context to help you assist them effectively.</div>
+  </div>
+  <div class="ai-quick">
+    <button class="ai-quick-btn" onclick="quickAction('Summarize this user profile and flag any concerns.')">📋 Summarize User</button>
+    <button class="ai-quick-btn" onclick="quickAction('What actions do you suggest for this user based on their profile?')">💡 Suggest Actions</button>
+    <button class="ai-quick-btn" onclick="quickAction('Draft a professional account suspension notice for this user.')">🚫 Draft Suspension Notice</button>
+    <button class="ai-quick-btn" onclick="quickAction('This user has multiple active sessions. What could this indicate and how should I handle it?')">🔒 Multiple Sessions Help</button>
+    <button class="ai-quick-btn" onclick="quickAction('The user cannot access their account. Walk me through the best troubleshooting steps.')">🔑 Account Access Help</button>
+  </div>
+  <div class="ai-input-row">
+    <textarea id="ai-input" class="ai-input" placeholder="Ask anything... (Enter to send, Shift+Enter for new line)" rows="1"
+      onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAI()}"
+      oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,100)+'px'"></textarea>
+    <button class="ai-send" id="ai-send-btn" onclick="sendAI()">➤</button>
+  </div>
+</div>
+
+<script>
+const SERVER = 'https://project-50s.onrender.com';
+const ADMIN_PIN = '061266'; // Change before distributing
+let currentUser = null;
+let logEntries = [];
+let aiHistory = [];
+let aiOpen = false;
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+function doLogin() {
+  const pin = document.getElementById('pin-input').value;
+  if (pin === ADMIN_PIN) {
+    document.getElementById('login').classList.add('hidden');
+    document.getElementById('console').classList.remove('hidden');
+  } else {
+    const card = document.getElementById('login-card');
+    const err  = document.getElementById('pin-error');
+    err.textContent = 'Invalid PIN'; err.classList.remove('hidden');
+    card.classList.add('shake');
+    setTimeout(() => card.classList.remove('shake'), 400);
+    document.getElementById('pin-input').value = '';
+  }
+}
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+function switchTab(id, btn) {
+  ['users','announce','log'].forEach(t => {
+    document.getElementById('tab-'+t).classList.add('hidden');
+  });
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-'+id).classList.remove('hidden');
+  btn.classList.add('active');
+}
+
+// ── API ───────────────────────────────────────────────────────────────────────
+async function api(method, path, body) {
+  try {
+    const res = await fetch(SERVER + path, {
+      method, headers: {'Content-Type': 'application/json'},
+      body: body ? JSON.stringify(body) : undefined
+    });
+    return res.json();
+  } catch(e) { return {success: false, message: e.message}; }
+}
+
+// ── Log ───────────────────────────────────────────────────────────────────────
+function addLog(ok, msg) {
+  const time = new Date().toLocaleTimeString();
+  logEntries.unshift({ok, msg, time});
+  if (logEntries.length > 100) logEntries.pop();
+  renderLog();
+  const logTab = document.getElementById('log-tab');
+  logTab.textContent = `📋 Log (${logEntries.length})`;
+}
+
+function renderLog() {
+  const el = document.getElementById('log-list');
+  if (!logEntries.length) { el.innerHTML = '<p style="color:#6B7280;font-size:13px">No actions yet.</p>'; return; }
+  el.innerHTML = logEntries.map(e => `
+    <div class="log-entry">
+      <span class="log-time">${e.time}</span>
+      <span class="log-dot" style="background:${e.ok?'#10B981':'#EF4444'}"></span>
+      <span class="log-msg" style="color:${e.ok?'#F9FAFB':'#EF4444'}">${e.msg}</span>
+    </div>`).join('');
+}
+
+// ── Search ────────────────────────────────────────────────────────────────────
+async function searchUser() {
+  const xameId = document.getElementById('search-input').value.trim();
+  if (!xameId) return;
+  const btn = document.getElementById('search-btn');
+  const err = document.getElementById('search-error');
+  btn.disabled = true; btn.innerHTML = '<div class="spinner"></div>';
+  err.classList.add('hidden');
+  document.getElementById('user-panel').classList.add('hidden');
+
+  const r = await api('POST', '/api/search-user', {xameId});
+  btn.disabled = false; btn.textContent = 'Search';
+
+  if (r.success && r.user) {
+    currentUser = r.user;
+    renderUserPanel(r.user);
+    updateContextBadge();
+    document.getElementById('user-panel').classList.remove('hidden');
+    document.getElementById('user-panel').style.display = 'flex';
+    addLog(true, `Loaded user: ${xameId}`);
+  } else {
+    err.textContent = 'No user found with that Xame-ID.';
+    err.classList.remove('hidden');
+    addLog(false, `Not found: ${xameId}`);
+  }
+}
+
+function renderUserPanel(u) {
+  // Avatar
+  const av = document.getElementById('user-avatar');
+  if (u.profilePic) av.innerHTML = `<img src="${u.profilePic}" alt="">`;
+  else av.textContent = (u.firstName || '?')[0];
+
+  // Name
+  document.getElementById('user-name').textContent = `${u.firstName||''} ${u.lastName||''}`.trim();
+  const pref = document.getElementById('user-preferred');
+  if (u.preferredName) { pref.textContent = `"${u.preferredName}"`; pref.style.display = 'block'; }
+  else pref.style.display = 'none';
+
+  // Badges
+  const badges = document.getElementById('user-badges');
+  badges.innerHTML = `<span class="badge" style="background:rgba(0,176,160,.2);color:#00B0A0;border:1px solid rgba(0,176,160,.4)">${u.xameId}</span>`;
+  if (u.extraSecurity?.enabled) badges.innerHTML += `<span class="badge" style="background:rgba(16,185,129,.2);color:#10B981;border:1px solid rgba(16,185,129,.4)">2FA ON</span>`;
+  if (u.fcmToken) badges.innerHTML += `<span class="badge" style="background:rgba(245,158,11,.2);color:#F59E0B;border:1px solid rgba(245,158,11,.4)">FCM ✓</span>`;
+
+  // Stats
+  const stats = document.getElementById('user-stats');
+  const joinedDate = u.createdAt
+    ? new Date(u.createdAt).toLocaleDateString('en-GB', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})
+    : '—';
+  stats.innerHTML = [
+    ['Date of Birth', u.dob || '—'],
+    ['Joined', joinedDate],
+    ['Contacts', u.contacts?.length ?? 0],
+    ['Active Sessions', u.sessions?.length ?? 0],
+    ['Recovery Email', u.extraSecurity?.email || 'Not set'],
+    ['Recovery Phone', u.extraSecurity?.phone || 'Not set'],
+    ['Profile Hidden', u.hideProfilePicture ? 'Yes' : 'No'],
+    ['Account Status', u.suspended ? '🔴 Suspended' : '🟢 Active'],
+  ].map(([k,v]) => `
+    <div class="stat-box">
+      <div class="stat-label">${k}</div>
+      <div class="stat-val">${v}</div>
+    </div>`).join('');
+
+  // Sessions list
+  const sl = document.getElementById('sessions-list');
+  sl.innerHTML = (u.sessions||[]).map((s,i) => `
+    <div style="background:#0D1117;border-radius:8px;padding:8px 12px;margin-bottom:6px;font-size:12px">
+      <span style="color:#6B7280">Session ${i+1} — </span>${s.deviceInfo||'Unknown device'}
+    </div>`).join('');
+
+  // Delete xame-id
+  document.getElementById('delete-xame-id').textContent = u.xameId;
+
+  // Suspend button state
+  const suspBtn = document.getElementById('suspend-btn');
+  if (suspBtn) {
+    suspBtn.textContent = u.suspended ? '✅ Unsuspend Account' : '🚫 Suspend Account';
+    suspBtn.className   = u.suspended ? 'btn btn-primary' : 'btn btn-danger';
+  }
+  document.getElementById('suspend-msg').innerHTML = '';
+}
+
+// ── Reset Password ────────────────────────────────────────────────────────────
+async function resetPassword() {
+  const secret = document.getElementById('admin-secret').value;
+  const newPw  = document.getElementById('new-password').value;
+  const msg    = document.getElementById('reset-msg');
+  if (!secret) { msg.innerHTML = '<span class="error-msg">Admin secret required</span>'; return; }
+  if (!newPw || newPw.length < 8) { msg.innerHTML = '<span class="error-msg">Password must be 8+ characters</span>'; return; }
+  const btn = document.getElementById('reset-btn');
+  btn.disabled = true; btn.innerHTML = '<div class="spinner"></div>';
+  const r = await api('POST', '/api/admin/reset-password', {secret, xameId: currentUser.xameId, newPassword: newPw});
+  btn.disabled = false; btn.textContent = 'Reset';
+  msg.innerHTML = r.success
+    ? `<span class="success-msg">✓ ${r.message}</span>`
+    : `<span class="error-msg">${r.message}</span>`;
+  addLog(r.success, r.success ? `✓ Password reset: ${currentUser.xameId}` : r.message);
+  if (r.success) document.getElementById('new-password').value = '';
+}
+
+// ── Kill Sessions ─────────────────────────────────────────────────────────────
+async function killSessions() {
+  const btn = document.getElementById('kill-btn');
+  const msg = document.getElementById('sessions-msg');
+  btn.disabled = true; btn.innerHTML = '<div class="spinner"></div> Killing...';
+  const r = await api('POST', '/api/sessions/kill-all', {userId: currentUser.xameId});
+  btn.disabled = false; btn.innerHTML = '🚪 Kill All Sessions';
+  msg.innerHTML = r.success
+    ? `<span class="success-msg" style="display:block;margin-top:8px">✓ All sessions killed</span>`
+    : `<span class="error-msg" style="display:block;margin-top:8px">Failed</span>`;
+  addLog(r.success, r.success ? `✓ Sessions killed: ${currentUser.xameId}` : 'Kill sessions failed');
+}
+
+// ── Suspend / Unsuspend ───────────────────────────────────────────────────────
+async function toggleSuspend() {
+  const secret = document.getElementById('admin-secret').value;
+  const msg    = document.getElementById('suspend-msg');
+  const btn    = document.getElementById('suspend-btn');
+  if (!secret) { msg.innerHTML = '<span class="error-msg">Admin secret required</span>'; return; }
+  const isSuspended = currentUser.suspended || false;
+  btn.disabled = true; btn.innerHTML = '<div class="spinner"></div>';
+  const r = await api('POST', '/api/admin/suspend-account', {
+    secret, xameId: currentUser.xameId, suspend: !isSuspended
+  });
+  btn.disabled = false;
+  if (r.success) {
+    currentUser.suspended = !isSuspended;
+    btn.textContent = currentUser.suspended ? '✅ Unsuspend Account' : '🚫 Suspend Account';
+    btn.className   = currentUser.suspended ? 'btn btn-primary' : 'btn btn-danger';
+    msg.innerHTML   = `<span class="success-msg">✓ ${r.message}</span>`;
+    addLog(true, r.message);
+    // Update status in stats grid
+    document.querySelectorAll('.stat-val').forEach(el => {
+      if (el.previousElementSibling?.textContent === 'Account Status') {
+        el.textContent = currentUser.suspended ? '🔴 Suspended' : '🟢 Active';
+      }
+    });
+  } else {
+    msg.innerHTML = `<span class="error-msg">${r.message}</span>`;
+    addLog(false, r.message);
+    btn.textContent = isSuspended ? '✅ Unsuspend Account' : '🚫 Suspend Account';
+  }
+}
+
+// ── Promote Version ───────────────────────────────────────────────────────────
+async function loadCurrentVersion() {
+  const btn = document.getElementById('vm-load-btn');
+  btn.disabled = true; btn.textContent = 'Loading...';
+  try {
+    const r = await fetch(SERVER + '/api/app/version');
+    const data = await r.json();
+    if (data.success) {
+      document.getElementById('vm-version').value   = data.version || '';
+      document.getElementById('vm-build').value     = data.buildNumber || '';
+      document.getElementById('vm-changelog').value = data.changelog || '';
+      document.getElementById('vm-download').value  = data.downloadUrl || '';
+      document.getElementById('vm-force').checked   = data.forceUpdate || false;
+      document.getElementById('vm-msg').innerHTML   = '<span class="success-msg">✓ Current version loaded</span>';
+    }
+  } catch(e) {
+    document.getElementById('vm-msg').innerHTML = '<span class="error-msg">Failed to load</span>';
+  }
+  btn.disabled = false; btn.textContent = 'Load Current';
+}
+
+async function setVersion() {
+  const secret    = document.getElementById('ann-secret').value;
+  const version   = document.getElementById('vm-version').value.trim();
+  const build     = document.getElementById('vm-build').value.trim();
+  const changelog = document.getElementById('vm-changelog').value.trim();
+  const download  = document.getElementById('vm-download').value.trim();
+  const force     = document.getElementById('vm-force').checked;
+  const msg       = document.getElementById('vm-msg');
+  if (!secret)  { msg.innerHTML = '<span class="error-msg">Admin secret required</span>'; return; }
+  if (!version) { msg.innerHTML = '<span class="error-msg">Version required</span>'; return; }
+  if (!build)   { msg.innerHTML = '<span class="error-msg">Build number required</span>'; return; }
+  const btn = document.getElementById('vm-btn');
+  btn.disabled = true; btn.innerHTML = '<div class="spinner"></div>';
+  const r = await api('POST', '/api/admin/set-version', {
+    secret, version, buildNumber: parseInt(build),
+    changelog, downloadUrl: download, forceUpdate: force,
+  });
+  btn.disabled = false; btn.textContent = 'Save Version';
+  msg.innerHTML = r.success
+    ? `<span class="success-msg">✓ ${r.message}</span>`
+    : `<span class="error-msg">${r.message}</span>`;
+  addLog(r.success, r.message);
+}
+
+async function promoteVersion() {
+  const secret  = document.getElementById('admin-secret').value;
+  const version = document.getElementById('promote-version').value.trim();
+  const build   = document.getElementById('promote-build').value.trim();
+  const msg     = document.getElementById('promote-msg');
+  if (!secret) { msg.innerHTML = '<span class="error-msg">Admin secret required</span>'; return; }
+  if (!version || !build) { msg.innerHTML = '<span class="error-msg">Version and build number required</span>'; return; }
+  const btn = document.getElementById('promote-btn');
+  btn.disabled = true; btn.innerHTML = '<div class="spinner"></div> Promoting...';
+  const r = await api('POST', '/api/app/promote', {
+    secret, version, buildNumber: parseInt(build),
+    downloadUrl: `https://github.com/mcerimainterltd-ctrl/Project-50s-flutter/releases/latest`,
+    changelog: `XamePage v${version} is now available.`, forceUpdate: false
+  });
+  btn.disabled = false; btn.innerHTML = '🚀 Promote';
+  msg.innerHTML = r.success
+    ? `<span class="success-msg" style="display:block;margin-top:8px">✓ ${r.message}</span>`
+    : `<span class="error-msg" style="display:block;margin-top:8px">${r.message}</span>`;
+  addLog(r.success, r.message || 'Promote failed');
+}
+
+// ── Delete Account ────────────────────────────────────────────────────────────
+function showDeleteConfirm() {
+  document.getElementById('delete-confirm-1').classList.add('hidden');
+  document.getElementById('delete-confirm-2').classList.remove('hidden');
+}
+function hideDeleteConfirm() {
+  document.getElementById('delete-confirm-1').classList.remove('hidden');
+  document.getElementById('delete-confirm-2').classList.add('hidden');
+}
+async function deleteAccount() {
+  const secret = document.getElementById('admin-secret').value;
+  const msg    = document.getElementById('delete-msg');
+  if (!secret) { msg.innerHTML = '<span class="error-msg">Admin secret required</span>'; return; }
+  const btn = document.getElementById('delete-btn');
+  btn.disabled = true; btn.innerHTML = '<div class="spinner"></div> Deleting...';
+  const r = await api('POST', '/api/admin/delete-account', {secret, xameId: currentUser.xameId});
+  btn.disabled = false; btn.innerHTML = 'Confirm Delete';
+  msg.innerHTML = r.success
+    ? `<span class="success-msg" style="display:block;margin-top:8px">✓ ${r.message}</span>`
+    : `<span class="error-msg" style="display:block;margin-top:8px">${r.message}</span>`;
+  addLog(r.success, r.success ? `✓ Deleted: ${currentUser.xameId}` : r.message);
+  if (r.success) {
+    setTimeout(() => { document.getElementById('user-panel').classList.add('hidden'); hideDeleteConfirm(); }, 2000);
+  } else { hideDeleteConfirm(); }
+}
+
+// ── Announce ──────────────────────────────────────────────────────────────────
+async function updateAnnPreview() {
+  var url=document.getElementById('ann-media').value.trim();
+  var type=document.getElementById('ann-media-type').value;
+  var wrap=document.getElementById('ann-preview-wrap');
+  var img=document.getElementById('ann-preview-img');
+  var vid=document.getElementById('ann-preview-vid');
+  var err=document.getElementById('ann-preview-err');
+  if(!url){wrap.style.display='none';return;}
+  wrap.style.display='block';err.style.display='none';
+  if(type==='video'){img.style.display='none';vid.style.display='block';vid.src=url;}
+  else{vid.style.display='none';vid.src='';img.style.display='block';img.src=url;}
+}
+
+async function postAnnouncement() {
+  const secret      = document.getElementById('ann-secret').value;
+  const title       = document.getElementById('ann-title').value.trim();
+  const caption     = document.getElementById('ann-caption').value.trim();
+  const mediaUrl    = document.getElementById('ann-media').value.trim();
+  const mediaType   = document.getElementById('ann-media-type').value;
+  const downloadUrl = document.getElementById('ann-download').value.trim();
+  const actionLabel = document.getElementById('ann-action-label').value.trim();
+  const version     = document.getElementById('ann-version').value.trim();
+  const msg         = document.getElementById('ann-msg');
+
+  if (!secret || !title || !mediaUrl) {
+    msg.innerHTML = '<span class="error-msg">Secret, title and media URL are required</span>'; return;
+  }
+  const btn = document.getElementById('ann-btn');
+  btn.disabled = true; btn.innerHTML = '<div class="spinner"></div> Posting...';
+  const r = await api('POST', '/api/xamepage/announce', {secret, title, caption, mediaUrl, mediaType, downloadUrl, actionLabel, version});
+  btn.disabled = false; btn.innerHTML = '📣 Post to All Users';
+  msg.innerHTML = r.success
+    ? `<span class="success-msg" style="display:block;margin-top:8px">✓ ${r.message}</span>`
+    : `<span class="error-msg" style="display:block;margin-top:8px">${r.message}</span>`;
+  addLog(r.success, r.message || 'Announce failed');
+}
+
+// ── AI Assistant ──────────────────────────────────────────────────────────────
+function toggleAI() {
+  aiOpen = !aiOpen;
+  document.getElementById('ai-panel').classList.toggle('hidden', !aiOpen);
+  if (aiOpen) document.getElementById('ai-input').focus();
+}
+
+function getUserContext() {
+  if (!currentUser) return null;
+  return {
+    xameId:         currentUser.xameId,
+    firstName:      currentUser.firstName,
+    lastName:       currentUser.lastName,
+    preferredName:  currentUser.preferredName || 'Not set',
+    dob:            currentUser.dob || 'Not provided',
+    contacts:       currentUser.contacts?.length ?? 0,
+    sessions:       currentUser.sessions?.length ?? 0,
+    recoveryEmail:  currentUser.extraSecurity?.email || 'Not set',
+    recoveryPhone:  currentUser.extraSecurity?.phone || 'Not set',
+    twoFAEnabled:   currentUser.extraSecurity?.enabled ?? false,
+    fcmToken:       currentUser.fcmToken ? 'Set' : 'Not set',
+    suspended:      currentUser.suspended ?? false,
+    profileHidden:  currentUser.hideProfilePicture ?? false,
+  };
+}
+
+function buildSystemPrompt() {
+  const ctx = getUserContext();
+  const userBlock = ctx
+    ? `You currently have a user loaded in context:\n${JSON.stringify(ctx, null, 2)}\n\nUse this to give specific, actionable advice.`
+    : 'No user is currently loaded. Advise the rep to search for a user first when relevant.';
+
+  return `You are an expert XamePage customer support AI assistant helping support representatives resolve user issues quickly and professionally.
+
+XamePage is a messaging and calling app with features including: chat, voice/video calls, wallet (XamePay), Discovery feeds, phone tab with PSTN calling, and various security features.
+
+${userBlock}
+
+Guidelines:
+- Be concise and actionable
+- When drafting notices or messages, make them professional and empathetic
+- Flag any security concerns proactively
+- Suggest the least disruptive solution first
+- Always consider user privacy and data protection`;
+}
+
+function appendMessage(role, text) {
+  const el = document.getElementById('ai-messages');
+  const div = document.createElement('div');
+  div.className = `ai-msg ${role}`;
+  div.textContent = text;
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
+  return div;
+}
+
+function updateContextBadge() {
+  const badge = document.getElementById('ai-context-badge');
+  const name  = document.getElementById('ai-context-name');
+  if (currentUser) {
+    badge.classList.remove('hidden');
+    name.textContent = `${currentUser.firstName} ${currentUser.lastName} (${currentUser.xameId})`;
+  } else {
+    badge.classList.add('hidden');
+  }
+}
+
+async function sendAI() {
+  const input = document.getElementById('ai-input');
+  const text  = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+
+  appendMessage('user', text);
+  aiHistory.push({ role: 'user', content: text });
+
+  const sendBtn = document.getElementById('ai-send-btn');
+  sendBtn.disabled = true;
+  const typing = appendMessage('assistant typing', '...');
+
+  try {
+    const response = await fetch(SERVER + '/api/admin/ai-assist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        secret: document.getElementById('ai-secret').value || (document.getElementById('admin-secret') && document.getElementById('admin-secret').value) || (document.getElementById('ann-secret') && document.getElementById('ann-secret').value) || '',
+        messages: aiHistory,
+        userContext: JSON.stringify(getUserContext()),
+      }),
+    });
+
+    const data = await response.json();
+    const reply = data.success ? data.reply : (data.message || 'Sorry, could not get a response.');
+
+    typing.remove();
+    appendMessage('assistant', reply);
+    aiHistory.push({ role: 'assistant', content: reply });
+
+    // Keep history to last 20 messages to avoid token overflow
+    if (aiHistory.length > 20) aiHistory = aiHistory.slice(-20);
+
+  } catch (e) {
+    typing.remove();
+    appendMessage('assistant', `Error: ${e.message}. Please check your connection.`);
+  }
+
+  sendBtn.disabled = false;
+  input.focus();
+}
+
+function quickAction(prompt) {
+  document.getElementById('ai-input').value = prompt;
+  sendAI();
+}
+
+// updateContextBadge is called explicitly after renderUserPanel in searchUser()
+</script>
+</body>
+</html>
