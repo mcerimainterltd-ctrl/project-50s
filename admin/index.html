@@ -93,6 +93,14 @@
   /* Section label */
   .sl{font-size:12px;color:#6B7280;font-weight:600;letter-spacing:.5px;margin-bottom:12px}
 
+  /* File upload */
+  .upload-zone{border:2px dashed #1F2937;border-radius:10px;padding:16px;text-align:center;cursor:pointer;transition:all .2s;position:relative}
+  .upload-zone:hover,.upload-zone.drag{border-color:#00B0A0;background:rgba(0,176,160,.05)}
+  .upload-zone input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+  .upload-progress{height:4px;background:#1F2937;border-radius:2px;margin-top:8px;overflow:hidden;display:none}
+  .upload-progress-bar{height:100%;background:#00B0A0;width:0;transition:width .3s;border-radius:2px}
+  .upload-status{font-size:12px;color:#6B7280;margin-top:6px;min-height:16px}
+
   /* Announce form */
   .announce-note{font-size:12px;color:#6B7280;margin-top:8px;line-height:1.5}
 
@@ -252,7 +260,28 @@
       <div class="field"><label class="label">ADMIN SECRET *</label><input type="password" id="ann-secret" class="input mono" placeholder="From Render environment"></div>
       <div class="field"><label class="label">TITLE *</label><input type="text" id="ann-title" class="input" placeholder="XamePage v2.1.1 is here!"></div>
       <div class="field"><label class="label">CAPTION</label><input type="text" id="ann-caption" class="input" placeholder="What's new in this version..."></div>
-      <div class="field"><label class="label">MEDIA URL *</label><input type="text" id="ann-media" class="input" placeholder="https://... (image or video URL)" oninput="updateAnnPreview()"></div>
+      <div class="field">
+        <label class="label">MEDIA * — Pick local file or paste URL</label>
+        <div class="upload-zone" id="upload-zone"
+          ondragover="event.preventDefault();this.classList.add('drag')"
+          ondragleave="this.classList.remove('drag')"
+          ondrop="event.preventDefault();this.classList.remove('drag');handleFileDrop(event)">
+          <input type="file" id="ann-file-input" accept="image/*,video/*" onchange="handleFileSelect(this)">
+          <div id="upload-zone-label" style="pointer-events:none">
+            <div style="font-size:24px;margin-bottom:6px">📁</div>
+            <div style="font-size:13px;color:#6B7280">Tap to pick image or video · or drag & drop</div>
+            <div style="font-size:11px;color:#374151;margin-top:3px">JPG, PNG, GIF, MP4, MOV · max 100MB</div>
+          </div>
+        </div>
+        <div class="upload-progress" id="upload-progress"><div class="upload-progress-bar" id="upload-progress-bar"></div></div>
+        <div class="upload-status" id="upload-status"></div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+          <div style="flex:1;height:1px;background:#1F2937"></div>
+          <span style="font-size:11px;color:#374151">OR PASTE URL</span>
+          <div style="flex:1;height:1px;background:#1F2937"></div>
+        </div>
+        <input type="text" id="ann-media" class="input" style="margin-top:8px" placeholder="https://res.cloudinary.com/... or any image/video URL" oninput="updateAnnPreview()">
+      </div>
       <div class="field"><label class="label">MEDIA TYPE</label><select id="ann-media-type" class="input" onchange="updateAnnPreview()"><option value="image">Image</option><option value="video">Video</option></select></div>
       <div id="ann-preview-wrap" style="display:none;margin:8px 0"><div class="label" style="margin-bottom:6px">MEDIA PREVIEW</div><div style="border-radius:12px;overflow:hidden;background:#0D1117;border:1px solid #1F2937"><img id="ann-preview-img" src="" alt="" style="width:100%;max-height:200px;object-fit:cover;display:block" onerror="this.style.display='none';document.getElementById('ann-preview-err').style.display='block'"><video id="ann-preview-vid" controls style="width:100%;max-height:200px;display:none"></video><div id="ann-preview-err" style="display:none;padding:20px;text-align:center;color:#6B7280;font-size:13px">Could not load media</div></div></div>
       <div class="field"><label class="label">ACTION URL</label><input type="text" id="ann-download" class="input" placeholder="https://... (article, video, download, etc.)"></div>
@@ -288,7 +317,8 @@
     <!-- Promote -->
     <div class="card">
       <div class="sl">PROMOTE STABLE APK TO ALL USERS</div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <div class="field"><label class="label">ADMIN SECRET</label><input type="password" id="promote-secret" class="input mono" placeholder="Paste admin secret..."></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
         <input type="text" id="promote-version" class="input mono" placeholder="Version e.g. 2.1.1" style="width:140px">
         <input type="number" id="promote-build" class="input mono" placeholder="Build e.g. 479" style="width:120px">
         <button class="btn btn-primary" onclick="promoteVersion()" id="promote-btn">🚀 Promote</button>
@@ -680,6 +710,93 @@ function updateAnnPreview() {
     vid.style.display = 'none'; vid.src = '';
     img.style.display = 'block'; img.src = url;
   }
+}
+
+// ── File upload to Cloudinary ─────────────────────────────────────────────────
+const CLOUDINARY_CLOUD  = 'dveoa6j32';
+const CLOUDINARY_PRESET = 'vsa9h8tw';
+
+function handleFileDrop(e) {
+  const file = e.dataTransfer.files[0];
+  if (file) uploadToCloudinary(file);
+}
+
+function handleFileSelect(input) {
+  const file = input.files[0];
+  if (file) uploadToCloudinary(file);
+}
+
+async function uploadToCloudinary(file) {
+  const maxMB = 100;
+  if (file.size > maxMB * 1024 * 1024) {
+    setUploadStatus(`❌ File too large (max ${maxMB}MB)`, '#EF4444'); return;
+  }
+  const isVideo = file.type.startsWith('video/');
+  document.getElementById('ann-media-type').value = isVideo ? 'video' : 'image';
+
+  const progress    = document.getElementById('upload-progress');
+  const progressBar = document.getElementById('upload-progress-bar');
+  const zone        = document.getElementById('upload-zone');
+  progress.style.display = 'block';
+  progressBar.style.width = '0%';
+  setUploadStatus('⬆️ Uploading...', '#00B0A0');
+  zone.style.pointerEvents = 'none';
+
+  const formData = new FormData();
+  formData.append('file',           file);
+  formData.append('upload_preset',  CLOUDINARY_PRESET);
+  formData.append('resource_type',  isVideo ? 'video' : 'image');
+
+  try {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/${isVideo ? 'video' : 'image'}/upload`);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const pct = Math.round((e.loaded / e.total) * 100);
+        progressBar.style.width = pct + '%';
+        setUploadStatus(`⬆️ Uploading... ${pct}%`, '#00B0A0');
+      }
+    };
+
+    xhr.onload = () => {
+      zone.style.pointerEvents = '';
+      if (xhr.status === 200) {
+        const data = JSON.parse(xhr.responseText);
+        const url  = data.secure_url;
+        document.getElementById('ann-media').value = url;
+        updateAnnPreview();
+        setUploadStatus('✅ Uploaded successfully', '#10B981');
+        progressBar.style.width = '100%';
+        // Update zone label
+        document.getElementById('upload-zone-label').innerHTML =
+          `<div style="font-size:13px;color:#10B981;font-weight:600">✅ ${file.name}</div>`
+          + `<div style="font-size:11px;color:#6B7280;margin-top:3px">${(file.size/1024/1024).toFixed(2)}MB · Tap to change</div>`;
+      } else {
+        const err = JSON.parse(xhr.responseText);
+        setUploadStatus('❌ Upload failed: ' + (err.error?.message || xhr.status), '#EF4444');
+        progress.style.display = 'none';
+      }
+    };
+
+    xhr.onerror = () => {
+      zone.style.pointerEvents = '';
+      setUploadStatus('❌ Network error during upload', '#EF4444');
+      progress.style.display = 'none';
+    };
+
+    xhr.send(formData);
+  } catch(e) {
+    zone.style.pointerEvents = '';
+    setUploadStatus('❌ ' + e.message, '#EF4444');
+    progress.style.display = 'none';
+  }
+}
+
+function setUploadStatus(msg, color) {
+  const el = document.getElementById('upload-status');
+  el.textContent = msg;
+  el.style.color = color || '#6B7280';
 }
 
 async function postAnnouncement() {
