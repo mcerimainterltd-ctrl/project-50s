@@ -446,6 +446,21 @@ async function createDirectories() {
 // Static files
 app.use(express.static(BASE_DIR, { etag: false, lastModified: false, setHeaders: (res, path) => { if (path.endsWith('.js') || path.endsWith('.css')) { res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate'); } } }));
 // Uploaded files are served via authenticated /api/file/:filename route only
+// ── Cloudinary signed upload (duplicate for reliability) ─────────────────────
+app.get('/api/cloudinary/sign', (req, res) => {
+    try {
+        const timestamp = Math.round(Date.now() / 1000);
+        const folder    = req.query.folder || 'xamepage_chat';
+        const params    = { timestamp, folder };
+        const signature = cloudinary.utils.api_sign_request(params, process.env.CLOUDINARY_API_SECRET);
+        res.json({ success: true, signature, timestamp, folder,
+            cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+            api_key:    process.env.CLOUDINARY_API_KEY });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 app.get('/api/file/:filename', (req, res) => {
     const { filename } = req.params;
     const userId = req.query.userId;
