@@ -292,6 +292,19 @@
       <p class="announce-note">This will post to the XamePage Official section in Discovery and send a push notification to all users with FCM tokens.</p>
     </div>
 
+    <!-- Delete Announcement -->
+    <div class="card">
+      <div class="sl">DELETE ANNOUNCEMENT</div>
+      <div class="field"><label class="label">ANNOUNCEMENT ID</label>
+        <input type="text" id="del-ann-id" class="input mono" placeholder="xamepage_official_...">
+      </div>
+      <div class="field"><label class="label">ADMIN SECRET</label>
+        <input type="password" id="del-ann-secret" class="input mono" placeholder="Paste admin secret...">
+      </div>
+      <button class="btn btn-danger btn-full" onclick="deleteAnnouncement()" id="del-ann-btn">🗑️ Delete Announcement</button>
+      <div id="del-ann-msg"></div>
+    </div>
+
     <!-- Version Management -->
     <div class="card">
       <div class="sl">VERSION MANAGEMENT</div>
@@ -797,6 +810,21 @@ function setUploadStatus(msg, color) {
   const el = document.getElementById('upload-status');
   el.textContent = msg;
   el.style.color = color || '#6B7280';
+}
+
+async function deleteAnnouncement() {
+  const announcementId = document.getElementById('del-ann-id').value.trim();
+  const secret         = document.getElementById('del-ann-secret').value.trim();
+  const msg            = document.getElementById('del-ann-msg');
+  if (!announcementId) { msg.innerHTML = '<span class="error-msg">Announcement ID required</span>'; return; }
+  if (!secret)         { msg.innerHTML = '<span class="error-msg">Admin secret required</span>'; return; }
+  const btn = document.getElementById('del-ann-btn');
+  btn.disabled = true; btn.innerHTML = '<div class="spinner"></div>';
+  const r = await api('POST', '/api/admin/delete-announcement', { secret, announcementId });
+  btn.disabled = false; btn.textContent = '🗑️ Delete Announcement';
+  msg.innerHTML = r.success
+    ? `<span class="success-msg">✓ ${r.message}</span>`
+    : `<span class="error-msg">${r.message}</span>`;
 }
 
 async function postAnnouncement() {
