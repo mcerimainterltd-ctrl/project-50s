@@ -292,6 +292,22 @@
       <p class="announce-note">This will post to the XamePage Official section in Discovery and send a push notification to all users with FCM tokens.</p>
     </div>
 
+    <!-- Announcements List -->
+    <div class="card">
+      <div class="sl">ANNOUNCEMENTS</div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <input type="text" id="ann-search" class="input" placeholder="Search by title..." 
+          oninput="loadAnnouncements(1)" style="flex:1">
+        <button class="btn btn-ghost" onclick="loadAnnouncements(1)" style="white-space:nowrap">🔍 Search</button>
+      </div>
+      <div id="ann-list" style="display:flex;flex-direction:column;gap:8px">
+        <div style="color:#6B7280;font-size:12px;text-align:center;padding:16px">
+          Click Search to load announcements
+        </div>
+      </div>
+      <div id="ann-pagination" style="display:flex;justify-content:center;gap:8px;margin-top:12px"></div>
+    </div>
+
     <!-- Delete Announcement -->
     <div class="card">
       <div class="sl">DELETE ANNOUNCEMENT</div>
@@ -812,6 +828,64 @@ function setUploadStatus(msg, color) {
   el.style.color = color || '#6B7280';
 }
 
+let _annPage = 1;
+
+async function loadAnnouncements(page = 1) {
+  _annPage = page;
+  const search  = document.getElementById('ann-search').value.trim();
+  const listEl  = document.getElementById('ann-list');
+  const pageEl  = document.getElementById('ann-pagination');
+  listEl.innerHTML = '<div style="color:#6B7280;font-size:12px;text-align:center;padding:16px"><div class="spinner" style="margin:0 auto"></div></div>';
+  try {
+    const url = `${SERVER}/api/xamepage/announcements?page=${page}&limit=20${search ? '&search=' + encodeURIComponent(search) : ''}`;
+    const r   = await fetch(url);
+    const data = await r.json();
+    if (!data.success || !data.announcements.length) {
+      listEl.innerHTML = '<div style="color:#6B7280;font-size:12px;text-align:center;padding:16px">No announcements found</div>';
+      pageEl.innerHTML = '';
+      return;
+    }
+    listEl.innerHTML = data.announcements.map(a => `
+      <div style="background:#111827;border:1px solid #1F2937;border-radius:10px;padding:12px;display:flex;align-items:center;gap:10px">
+        ${a.mediaUrl ? `<img src="${a.mediaUrl}" style="width:48px;height:48px;border-radius:8px;object-fit:cover;flex-shrink:0" onerror="this.style.display='none'">` : '<div style="width:48px;height:48px;border-radius:8px;background:#1F2937;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:20px">📣</div>'}
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:#F9FAFB;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${a.title || 'Untitled'}</div>
+          <div style="font-size:11px;color:#6B7280;margin-top:2px">${new Date(a.ts || a.createdAt).toLocaleDateString('en-GB', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
+          <div style="font-size:10px;color:#374151;margin-top:2px;font-family:'Space Mono',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${a.announcementId || a.postId || '—'}</div>
+        </div>
+        <button onclick="copyAndDelete('${a.announcementId || a.postId || ''}')" 
+          style="background:#EF444420;border:1px solid #EF444440;color:#EF4444;border-radius:8px;padding:6px 10px;font-size:11px;cursor:pointer;white-space:nowrap">
+          🗑️ Delete
+        </button>
+      </div>
+    `).join('');
+
+    // Pagination
+    pageEl.innerHTML = '';
+    if (data.pages > 1) {
+      for (let i = 1; i <= data.pages; i++) {
+        const btn = document.createElement('button');
+        btn.textContent = i;
+        btn.className = 'btn btn-ghost';
+        btn.style.padding = '4px 10px';
+        btn.style.fontSize = '12px';
+        if (i === page) { btn.style.background = '#00B0A020'; btn.style.borderColor = '#00B0A0'; }
+        btn.onclick = () => loadAnnouncements(i);
+        pageEl.appendChild(btn);
+      }
+    }
+  } catch(e) {
+    listEl.innerHTML = `<div style="color:#EF4444;font-size:12px;text-align:center;padding:16px">Failed to load: ${e.message}</div>`;
+  }
+}
+
+function copyAndDelete(id) {
+  if (!id) return;
+  document.getElementById('del-ann-id').value = id;
+  document.getElementById('del-ann-secret').focus();
+  document.querySelector('[onclick="deleteAnnouncement()"]').scrollIntoView({ behavior: 'smooth' });
+}
+
 async function deleteAnnouncement() {
   const announcementId = document.getElementById('del-ann-id').value.trim();
   const secret         = document.getElementById('del-ann-secret').value.trim();
@@ -825,6 +899,7 @@ async function deleteAnnouncement() {
   msg.innerHTML = r.success
     ? `<span class="success-msg">✓ ${r.message}</span>`
     : `<span class="error-msg">${r.message}</span>`;
+  if (r.success) { loadAnnouncements(_annPage); document.getElementById('del-ann-id').value = ''; }
 }
 
 async function postAnnouncement() {

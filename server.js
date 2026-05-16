@@ -3679,10 +3679,18 @@ app.get('/api/app/version', async (req, res) => {
 // ── GET XAMEPAGE ANNOUNCEMENTS ────────────────────────────────────────────────
 app.get('/api/xamepage/announcements', async (req, res) => {
     try {
-        const announcements = await XamePageAnnouncement.find()
+        const page  = parseInt(req.query.page  || '1');
+        const limit = parseInt(req.query.limit || '20');
+        const search = req.query.search || '';
+        const query = search
+            ? { title: { $regex: search, $options: 'i' } }
+            : {};
+        const total = await XamePageAnnouncement.countDocuments(query);
+        const announcements = await XamePageAnnouncement.find(query)
             .sort({ ts: -1 })
-            .limit(10);
-        res.json({ success: true, announcements });
+            .skip((page - 1) * limit)
+            .limit(limit);
+        res.json({ success: true, announcements, total, page, pages: Math.ceil(total / limit) });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
