@@ -2560,8 +2560,8 @@ app.post('/api/clear-chat', async (req, res) => {
 
 // Create Flutterwave virtual account
 app.post('/api/wallet/flw/virtual-account', async (req, res) => {
-  const { userId, email, name, currency } = req.body;
-  const flwSecret = req.headers['x-flw-secret'];
+  const { userId, email, name, currency, bvn } = req.body;
+  const flwSecret = process.env.FLW_SECRET_KEY;
   if (!flwSecret || !userId) return res.json({ success: false, message: 'Missing fields' });
   try {
     const response = await fetch('https://api.flutterwave.com/v3/virtual-account-numbers', {
@@ -2570,7 +2570,7 @@ app.post('/api/wallet/flw/virtual-account', async (req, res) => {
       body: JSON.stringify({
         email: email || userId + '@xamepage.app',
         is_permanent: true,
-        bvn: '00000000000',
+        bvn: bvn || '00000000000',
         tx_ref: 'xamepay-va-' + userId + '-' + Date.now(),
         amount: 0,
         currency: currency || 'NGN',
