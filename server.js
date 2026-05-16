@@ -3923,6 +3923,20 @@ Be direct and actionable. Keep responses under 150 words unless drafting a docum
     }
 });
 
+
+app.post('/api/admin/delete-announcement', async (req, res) => {
+    if (!verifyAdminSecret(req, res)) return;
+    const { announcementId } = req.body;
+    if (!announcementId) return res.status(400).json({ success: false, message: 'announcementId required.' });
+    try {
+        const result = await XamePageAnnouncement.deleteOne({ announcementId });
+        if (result.deletedCount === 0) return res.status(404).json({ success: false, message: 'Announcement not found.' });
+        res.json({ success: true, message: 'Announcement deleted.' });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 // ── END ADMIN ENDPOINTS ───────────────────────────────────────────────────────
 
     server.listen(PORT, () => {
