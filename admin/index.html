@@ -656,7 +656,7 @@ async function setVersion() {
 }
 
 async function promoteVersion() {
-  const secret  = document.getElementById('admin-secret').value;
+  const secret  = document.getElementById('promote-secret').value || document.getElementById('admin-secret').value;
   const version = document.getElementById('promote-version').value.trim();
   const build   = document.getElementById('promote-build').value.trim();
   const msg     = document.getElementById('promote-msg');
