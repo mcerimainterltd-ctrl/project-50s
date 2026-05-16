@@ -4061,6 +4061,25 @@ app.post('/api/admin/delete-announcement', async (req, res) => {
     }
 });
 
+// ── Cloudinary signed upload ─────────────────────────────────────────────────
+app.get('/api/cloudinary/sign', (req, res) => {
+    const folder    = req.query.folder || 'xamepage_chat';
+    const timestamp = Math.round(Date.now() / 1000);
+    try {
+        const signature = cloudinary.utils.api_sign_request(
+            { timestamp, folder },
+            process.env.CLOUDINARY_API_SECRET
+        );
+        res.json({
+            signature, timestamp, folder,
+            cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+            api_key:    process.env.CLOUDINARY_API_KEY,
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 // ── END ADMIN ENDPOINTS ───────────────────────────────────────────────────────
 
     server.listen(PORT, () => {
