@@ -3240,7 +3240,7 @@ app.post('/api/wallet/request', async (req, res) => {
         }
         const recipSocketId = findSocketId(toId);
         if (recipSocketId) {
-            io.to(recipSocketId).emit('wallet:request', { fromId, senderName, amount, currency: currency || 'NGN', note: note || '' });
+            io.to(recipSocketId).emit('wallet_request', { fromId, senderName, amount, currency: currency || 'NGN', note: note || '' });
         }
         res.json({ success: true, message: 'Request sent.' });
     } catch (err) {
