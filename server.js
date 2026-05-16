@@ -2588,6 +2588,90 @@ app.post('/api/wallet/flw/virtual-account', async (req, res) => {
   }
 });
 
+// Flutterwave card payment init
+app.post('/api/wallet/flw/init-payment', async (req, res) => {
+    const { userId, amount, currency, email, name } = req.body;
+    if (!userId || !amount) return res.json({ success: false, message: 'Missing fields.' });
+    try {
+        const txRef = 'xamepay-card-' + userId + '-' + Date.now();
+        const r = await fetch('https://api.flutterwave.com/v3/payments', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                tx_ref: txRef,
+                amount,
+                currency: currency || 'NGN',
+                redirect_url: process.env.SERVER_URL + '/api/wallet/flw/card-callback',
+                customer: { email: email || userId + '@xamepage.app', name: name || userId },
+                customizations: { title: 'XamePay', logo: '' },
+                meta: { userId },
+            }),
+        });
+        const data = await r.json();
+        if (data.status === 'success') {
+            res.json({ success: true, paymentLink: data.data.link });
+        } else {
+            res.json({ success: false, message: data.message });
+        }
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// Flutterwave card callback
+app.get('/api/wallet/flw/card-callback', async (req, res) => {
+    const { transaction_id, status } = req.query;
+    if (status !== 'successful' || !transaction_id) return res.redirect('/payment-failed');
+    try {
+        const r = await fetch(`https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`, {
+            headers: { Authorization: `Bearer ${process.env.FLW_SECRET_KEY}` },
+        });
+        const data = await r.json();
+        if (data.status === 'success' && data.data.status === 'successful') {
+            const userId = data.data.meta?.userId;
+            const amount = data.data.amount;
+            const currency = data.data.currency;
+            if (userId && amount) {
+                await creditWallet(userId, amount, 'Card Payment', '💳', transaction_id);
+            }
+        }
+        res.redirect('/payment-success');
+    } catch (err) {
+        res.redirect('/payment-failed');
+    }
+});
+
+// Flutterwave USSD payment
+app.post('/api/wallet/flw/ussd', async (req, res) => {
+    const { userId, amount, currency, phone } = req.body;
+    if (!userId || !amount) return res.json({ success: false, message: 'Missing fields.' });
+    try {
+        const txRef = 'xamepay-ussd-' + userId + '-' + Date.now();
+        const r = await fetch('https://api.flutterwave.com/v3/charges?type=ussd', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                tx_ref: txRef,
+                account_bank: '057',
+                amount,
+                currency: currency || 'NGN',
+                email: userId + '@xamepage.app',
+                phone_number: phone || userId,
+                fullname: userId,
+                meta: { userId },
+            }),
+        });
+        const data = await r.json();
+        if (data.status === 'success') {
+            res.json({ success: true, ussdCode: data.data.payment_code, note: data.data.note });
+        } else {
+            res.json({ success: false, message: data.message });
+        }
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 // Flutterwave webhook
 app.post('/api/wallet/flw/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const secretHash = process.env.FLW_SECRET_HASH || 'xamepay-flw-hash';
@@ -3129,6 +3213,38 @@ app.post('/api/wallet/airtime', async (req, res) => {
         res.json({ success: true, message: 'Airtime purchased successfully' });
     } catch(err) {
         res.json({ success: false, message: err.message });
+    }
+});
+
+// Wallet money request
+app.post('/api/wallet/request', async (req, res) => {
+    const { fromId, toId, amount, currency, note } = req.body;
+    if (!fromId || !toId || !amount) return res.json({ success: false, message: 'Missing fields.' });
+    try {
+        const [sender, recipient] = await Promise.all([
+            User.findOne({ xameId: fromId }),
+            User.findOne({ xameId: toId }),
+        ]);
+        if (!sender || !recipient) return res.json({ success: false, message: 'User not found.' });
+        const senderName = sender.preferredName || `${sender.firstName} ${sender.lastName}`.trim();
+        if (recipient.fcmToken && admin.apps.length) {
+            await admin.messaging().send({
+                token: recipient.fcmToken,
+                android: { priority: 'high' },
+                notification: {
+                    title: `Money Request from ${senderName}`,
+                    body: `${senderName} is requesting ${currency || 'NGN'} ${amount}${note ? ' — ' + note : ''}`,
+                },
+                data: { type: 'wallet_request', fromId, amount: String(amount), currency: currency || 'NGN', note: note || '' },
+            }).catch(e => console.warn('FCM wallet request failed:', e.message));
+        }
+        const recipSocketId = findSocketId(toId);
+        if (recipSocketId) {
+            io.to(recipSocketId).emit('wallet:request', { fromId, senderName, amount, currency: currency || 'NGN', note: note || '' });
+        }
+        res.json({ success: true, message: 'Request sent.' });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
     }
 });
 
