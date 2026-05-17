@@ -242,6 +242,13 @@ const userSchema = new mongoose.Schema({
     hidePreferredName:  { type: Boolean, default: false },
     hideProfilePicture: { type: Boolean, default: false },
     contacts:           [contactSchema],
+    contactRequests:    [{
+        fromId:   { type: String, required: true },
+        fromName: { type: String, default: '' },
+        fromPic:  { type: String, default: '' },
+        sentAt:   { type: Date, default: Date.now },
+        status:   { type: String, enum: ['pending','accepted','declined'], default: 'pending' }
+    }],
     // v2.1.1: per-user settings stored server-side for cross-device sync
     settings:           { type: Object, default: {} },
     fcmToken:           { type: String, default: '' },
@@ -999,6 +1006,106 @@ app.post('/api/add-contact', async (req, res) => {
         res.json({ success: true, message: 'Contact added.', contact: { xameId: contact.xameId, name, profilePic: f.profilePic, isOnline: onlineUsers.has(contact.xameId) } });
     } catch (err) {
         console.error('Add contact error:', err);
+        res.status(500).json({ success: false, message: 'Server error.' });
+    }
+});
+
+// ── Contact Request System ───────────────────────────────────────────────────
+app.post('/api/send-contact-request', async (req, res) => {
+    const { userId, contactId } = req.body;
+    if (!userId || !contactId) return res.status(400).json({ success: false, message: 'Missing fields.' });
+    if (userId === contactId) return res.status(400).json({ success: false, message: 'Cannot send request to yourself.' });
+    try {
+        const [sender, recipient] = await Promise.all([
+            User.findOne({ xameId: userId }),
+            User.findOne({ xameId: contactId })
+        ]);
+        if (!sender || !recipient) return res.status(404).json({ success: false, message: 'User not found.' });
+        if (sender.contacts.some(c => c.contactId?.toString() === recipient._id.toString()))
+            return res.status(409).json({ success: false, message: 'Already in your contacts.' });
+        if (!Array.isArray(recipient.contactRequests)) recipient.contactRequests = [];
+        const now = Date.now();
+        const sevenDays = 7 * 24 * 60 * 60 * 1000;
+        const twentyFourHours = 24 * 60 * 60 * 1000;
+        recipient.contactRequests = recipient.contactRequests.filter(r => now - new Date(r.sentAt).getTime() < sevenDays);
+        const existing = recipient.contactRequests.find(r => r.fromId === userId && r.status === 'pending');
+        if (existing) return res.status(409).json({ success: false, message: 'Request already sent.' });
+        const recentDecline = recipient.contactRequests.find(r => r.fromId === userId && r.status === 'declined' && now - new Date(r.sentAt).getTime() < twentyFourHours);
+        if (recentDecline) return res.status(429).json({ success: false, message: 'Please wait 24 hours before sending another request.' });
+        recipient.contactRequests = recipient.contactRequests.filter(r => !(r.fromId === userId && r.status === 'declined'));
+        const senderName = sender.preferredName || `${sender.firstName} ${sender.lastName}`;
+        recipient.contactRequests.push({ fromId: userId, fromName: senderName, fromPic: sender.profilePic || '', sentAt: new Date(), status: 'pending' });
+        await recipient.save();
+        const recipientSocket = userToSocketMap.get(contactId);
+        if (recipientSocket) {
+            io.to(recipientSocket).emit('contact_request', { fromId: userId, fromName: senderName, fromPic: sender.profilePic || '', sentAt: new Date().toISOString() });
+        }
+        res.json({ success: true, message: 'Contact request sent.' });
+    } catch (err) {
+        console.error('send-contact-request error:', err);
+        res.status(500).json({ success: false, message: 'Server error.' });
+    }
+});
+
+app.get('/api/contact-requests/:userId', async (req, res) => {
+    const { userId } = req.params;
+    if (!userId) return res.status(400).json({ success: false, message: 'Missing userId.' });
+    try {
+        const user = await User.findOne({ xameId: userId });
+        if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
+        const now = Date.now();
+        const sevenDays = 7 * 24 * 60 * 60 * 1000;
+        const pending = (user.contactRequests || []).filter(r => r.status === 'pending' && now - new Date(r.sentAt).getTime() < sevenDays);
+        res.json({ success: true, requests: pending });
+    } catch (err) {
+        console.error('contact-requests fetch error:', err);
+        res.status(500).json({ success: false, message: 'Server error.' });
+    }
+});
+
+app.post('/api/accept-contact-request', async (req, res) => {
+    const { userId, fromId } = req.body;
+    if (!userId || !fromId) return res.status(400).json({ success: false, message: 'Missing fields.' });
+    try {
+        const [acceptor, requester] = await Promise.all([
+            User.findOne({ xameId: userId }),
+            User.findOne({ xameId: fromId })
+        ]);
+        if (!acceptor || !requester) return res.status(404).json({ success: false, message: 'User not found.' });
+        const reqIndex = (acceptor.contactRequests || []).findIndex(r => r.fromId === fromId && r.status === 'pending');
+        if (reqIndex === -1) return res.status(404).json({ success: false, message: 'Request not found.' });
+        acceptor.contactRequests[reqIndex].status = 'accepted';
+        if (!acceptor.contacts.some(c => c.contactId?.toString() === requester._id.toString()))
+            acceptor.contacts.push({ contactId: requester._id, addedAt: new Date() });
+        if (!requester.contacts.some(c => c.contactId?.toString() === acceptor._id.toString()))
+            requester.contacts.push({ contactId: acceptor._id, addedAt: new Date() });
+        await Promise.all([acceptor.save(), requester.save()]);
+        const requesterSocket = userToSocketMap.get(fromId);
+        if (requesterSocket) {
+            const acceptorName = acceptor.preferredName || `${acceptor.firstName} ${acceptor.lastName}`;
+            io.to(requesterSocket).emit('contact_request_accepted', { byId: userId, byName: acceptorName, byPic: acceptor.profilePic || '' });
+        }
+        const f = getPrivacyFilteredContactData(requester);
+        res.json({ success: true, message: 'Contact request accepted.', contact: { xameId: requester.xameId, name: requester.preferredName || `${requester.firstName} ${requester.lastName}`, profilePic: f.profilePic, isOnline: onlineUsers.has(fromId) }});
+    } catch (err) {
+        console.error('accept-contact-request error:', err);
+        res.status(500).json({ success: false, message: 'Server error.' });
+    }
+});
+
+app.post('/api/decline-contact-request', async (req, res) => {
+    const { userId, fromId } = req.body;
+    if (!userId || !fromId) return res.status(400).json({ success: false, message: 'Missing fields.' });
+    try {
+        const user = await User.findOne({ xameId: userId });
+        if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
+        const reqIndex = (user.contactRequests || []).findIndex(r => r.fromId === fromId && r.status === 'pending');
+        if (reqIndex === -1) return res.status(404).json({ success: false, message: 'Request not found.' });
+        user.contactRequests[reqIndex].status = 'declined';
+        await user.save();
+        res.json({ success: true, message: 'Request declined.' });
+    } catch (err) {
+        console.error('decline-contact-request error:', err);
         res.status(500).json({ success: false, message: 'Server error.' });
     }
 });
