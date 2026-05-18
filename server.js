@@ -3670,7 +3670,7 @@ app.get('/api/discover/stories', async (req, res) => {
 // Returns suggested people — users not already contacts
 app.get('/api/discover/people', async (req, res) => {
     try {
-        const { userId, limit = 20 } = req.query;
+        const { userId, limit = 20, page = 1 } = req.query;
         if (!userId) return res.json({ success: false, message: 'userId required' });
 
         const me = await User.findOne({ xameId: userId }).lean();
@@ -3679,10 +3679,13 @@ app.get('/api/discover/people', async (req, res) => {
         const myContactIds = (me.contacts || []).map(c => c.contactId?.toString());
         myContactIds.push(userId); // exclude self
 
+        const skip  = (parseInt(page) - 1) * parseInt(limit);
+        const total = await User.countDocuments({ xameId: { $nin: myContactIds } });
+
         // Find users not in contacts
         const suggestions = await User.find({
             xameId: { $nin: myContactIds }
-        }).limit(parseInt(limit)).lean();
+        }).skip(skip).limit(parseInt(limit)).lean();
 
         // Calculate mutual contacts
         const result = await Promise.all(suggestions.map(async (u) => {
@@ -3700,7 +3703,7 @@ app.get('/api/discover/people', async (req, res) => {
             };
         }));
 
-        res.json({ success: true, people: result });
+        res.json({ success: true, people: result, total, page: parseInt(page), pages: Math.ceil(total / parseInt(limit)) });
     } catch (err) {
         console.error('People discovery error:', err);
         res.status(500).json({ success: false, message: err.message });
