@@ -3520,6 +3520,17 @@ app.post('/api/wallet/flw/webhook', express.raw({ type: 'application/json' }), a
     }
     // Try meta userId
     if (!userId) userId = payload.data.meta?.userId || null;
+    // Try email lookup — for payments via standalone Flutterwave payment links
+    if (!userId && payload.data.customer?.email) {
+        const email = payload.data.customer.email;
+        if (email.endsWith('@xamepage.app')) {
+            userId = email.replace('@xamepage.app', '');
+        } else {
+            const u = await User.findOne({ email: email.toLowerCase() }).lean();
+            if (u) userId = u.xameId;
+        }
+    }
+
     // Try name-based lookup from narration (e.g. "XamePay Covenant Agbor")
     if (!userId && narration.startsWith('XamePay ')) {
         const namePart = narration.replace('XamePay - ', '').replace('XamePay ', '').trim();
