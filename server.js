@@ -5350,6 +5350,50 @@ app.post('/api/discover/collab/thread/:threadId/send', async (req, res) => {
     }
 });
 
+// Authorize collab — author confirms collaboration
+app.post('/api/discover/collab/authorize', async (req, res) => {
+    try {
+        const { threadId, authorId } = req.body;
+        if (!threadId || !authorId) return res.status(400).json({ success: false, message: 'Missing fields.' });
+        const thread = await CollabThread.findOne({ threadId });
+        if (!thread) return res.status(404).json({ success: false, message: 'Thread not found.' });
+        if (thread.authorId !== authorId) return res.status(403).json({ success: false, message: 'Access denied.' });
+        thread.status = 'authorized';
+        await thread.save();
+        // Notify requester
+        const requesterSocket = userToSocketMap.get(thread.requesterId);
+        if (requesterSocket) {
+            io.to(requesterSocket).emit('collab_authorized', {
+                threadId, postId: thread.postId, postTitle: thread.postTitle });
+        }
+        res.json({ success: true, message: 'Collab authorized.' });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// Submit collab — requester submits their contribution
+app.post('/api/discover/collab/submit', async (req, res) => {
+    try {
+        const { threadId, requesterId } = req.body;
+        if (!threadId || !requesterId) return res.status(400).json({ success: false, message: 'Missing fields.' });
+        const thread = await CollabThread.findOne({ threadId });
+        if (!thread) return res.status(404).json({ success: false, message: 'Thread not found.' });
+        if (thread.requesterId !== requesterId) return res.status(403).json({ success: false, message: 'Access denied.' });
+        thread.status = 'submitted';
+        await thread.save();
+        // Notify author
+        const authorSocket = userToSocketMap.get(thread.authorId);
+        if (authorSocket) {
+            io.to(authorSocket).emit('collab_submitted', {
+                threadId, postId: thread.postId, postTitle: thread.postTitle, requesterId });
+        }
+        res.json({ success: true, message: 'Collab submitted.' });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 // ── POST /api/discover/post ───────────────────────────────────────────────────
 // Create a new discovery post — upload media to Cloudinary
 app.post('/api/discover/post', memoryUpload.array('media', 10), async (req, res) => {
