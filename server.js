@@ -3548,6 +3548,31 @@ const xamePageAnnouncementSchema = new mongoose.Schema({
 });
 const XamePageAnnouncement = mongoose.model('XamePageAnnouncement', xamePageAnnouncementSchema);
 
+// ── Collab Thread Schema ─────────────────────────────────────────────────────
+const collabMessageSchema = new mongoose.Schema({
+    messageId:  { type: String, required: true, unique: true },
+    senderId:   { type: String, required: true },
+    senderName: { type: String, default: '' },
+    text:       { type: String, default: '' },
+    ts:         { type: Date, default: Date.now },
+});
+
+const collabThreadSchema = new mongoose.Schema({
+    threadId:     { type: String, required: true, unique: true },
+    postId:       { type: String, required: true },
+    postTitle:    { type: String, default: '' },
+    postMediaUrl: { type: String, default: '' },
+    authorId:     { type: String, required: true },
+    requesterId:  { type: String, required: true },
+    status:       { type: String, enum: ['pending','active','expired'], default: 'pending' },
+    messages:     [collabMessageSchema],
+    createdAt:    { type: Date, default: Date.now },
+    expiresAt:    { type: Date, default: () => new Date(Date.now() + 7*24*60*60*1000) },
+});
+collabThreadSchema.index({ threadId: 1 });
+collabThreadSchema.index({ authorId: 1, requesterId: 1 });
+const CollabThread = mongoose.model('CollabThread', collabThreadSchema);
+
 const discoveryPostSchema = new mongoose.Schema({
     postId:       { type: String, required: true, unique: true },
     authorId:     { type: String, required: true, index: true },
@@ -3706,6 +3731,104 @@ app.get('/api/discover/people', async (req, res) => {
         res.json({ success: true, people: result, total, page: parseInt(page), pages: Math.ceil(total / parseInt(limit)) });
     } catch (err) {
         console.error('People discovery error:', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// ── Collab Endpoints ─────────────────────────────────────────────────────────
+
+// Send collab request
+app.post('/api/discover/collab/request', async (req, res) => {
+    try {
+        const { postId, requesterId, requesterName, requesterAvatar } = req.body;
+        if (!postId || !requesterId) return res.status(400).json({ success: false, message: 'Missing fields.' });
+        const post = await DiscoveryPost.findOne({ postId });
+        if (!post) return res.status(404).json({ success: false, message: 'Post not found.' });
+        if (post.authorId === requesterId) return res.status(400).json({ success: false, message: 'Cannot collab on your own post.' });
+        const authorSocket = userToSocketMap.get(post.authorId);
+        if (authorSocket) {
+            io.to(authorSocket).emit('collab_request', {
+                postId, postTitle: post.title, mediaUrl: post.mediaUrl,
+                requesterId, requesterName, requesterAvatar: requesterAvatar || '',
+            });
+        }
+        res.json({ success: true, message: 'Collab request sent.' });
+    } catch (err) {
+        console.error('collab request error:', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// Accept collab request — creates isolated thread
+app.post('/api/discover/collab/accept', async (req, res) => {
+    try {
+        const { postId, authorId } = req.body;
+        if (!postId || !authorId) return res.status(400).json({ success: false, message: 'Missing fields.' });
+        const post = await DiscoveryPost.findOne({ postId });
+        if (!post) return res.status(404).json({ success: false, message: 'Post not found.' });
+        // Get requesterId from socket context — find who requested
+        const requesterId = req.body.requesterId;
+        if (!requesterId) return res.status(400).json({ success: false, message: 'Missing requesterId.' });
+        const threadId = require('uuid').v4();
+        const thread = await CollabThread.create({
+            threadId, postId,
+            postTitle:    post.title,
+            postMediaUrl: post.mediaUrl,
+            authorId, requesterId,
+            status: 'active',
+        });
+        // Notify requester
+        const requesterSocket = userToSocketMap.get(requesterId);
+        if (requesterSocket) {
+            io.to(requesterSocket).emit('collab_accepted', {
+                threadId, postId,
+                postTitle:    post.title,
+                postMediaUrl: post.mediaUrl,
+            });
+        }
+        res.json({ success: true, threadId, message: 'Collab accepted.' });
+    } catch (err) {
+        console.error('collab accept error:', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// Fetch collab thread
+app.get('/api/discover/collab/thread/:threadId', async (req, res) => {
+    try {
+        const { threadId } = req.params;
+        const { userId } = req.query;
+        const thread = await CollabThread.findOne({ threadId });
+        if (!thread) return res.status(404).json({ success: false, message: 'Thread not found.' });
+        if (thread.authorId !== userId && thread.requesterId !== userId)
+            return res.status(403).json({ success: false, message: 'Access denied.' });
+        res.json({ success: true, thread });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// Send message in collab thread
+app.post('/api/discover/collab/thread/:threadId/send', async (req, res) => {
+    try {
+        const { threadId } = req.params;
+        const { userId, senderName, text } = req.body;
+        const thread = await CollabThread.findOne({ threadId });
+        if (!thread) return res.status(404).json({ success: false, message: 'Thread not found.' });
+        if (thread.authorId !== userId && thread.requesterId !== userId)
+            return res.status(403).json({ success: false, message: 'Access denied.' });
+        const messageId = require('uuid').v4();
+        const msg = { messageId, senderId: userId, senderName, text, ts: new Date() };
+        thread.messages.push(msg);
+        await thread.save();
+        // Emit to the other party
+        const otherId = thread.authorId === userId ? thread.requesterId : thread.authorId;
+        const otherSocket = userToSocketMap.get(otherId);
+        if (otherSocket) {
+            io.to(otherSocket).emit('collab_message', { threadId, message: msg });
+        }
+        res.json({ success: true, message: msg });
+    } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
 });
