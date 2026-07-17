@@ -5394,6 +5394,21 @@ app.post('/api/discover/collab/submit', async (req, res) => {
     }
 });
 
+// Get user's collab threads
+app.get('/api/discover/collab/my-threads', async (req, res) => {
+    try {
+        const { userId } = req.query;
+        if (!userId) return res.status(400).json({ success: false, message: 'Missing userId.' });
+        const threads = await CollabThread.find({
+            $or: [{ authorId: userId }, { requesterId: userId }],
+            status: { $in: ['active', 'authorized', 'submitted'] }
+        }).sort({ createdAt: -1 }).limit(20).lean();
+        res.json({ success: true, threads });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 // ── POST /api/discover/post ───────────────────────────────────────────────────
 // Create a new discovery post — upload media to Cloudinary
 app.post('/api/discover/post', memoryUpload.array('media', 10), async (req, res) => {
