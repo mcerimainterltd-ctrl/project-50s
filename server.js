@@ -5265,7 +5265,10 @@ app.get('/api/discover/people', async (req, res) => {
 // ── Collab Endpoints ─────────────────────────────────────────────────────────
 app.post('/api/discover/collab/request', async (req, res) => {
     try {
-        const { postId, requesterId, requesterName, requesterAvatar } = req.body;
+        const postId          = req.body.postId          || req.fields?.postId;
+        const requesterId     = req.body.requesterId     || req.fields?.requesterId;
+        const requesterName   = req.body.requesterName   || req.fields?.requesterName   || '';
+        const requesterAvatar = req.body.requesterAvatar || req.fields?.requesterAvatar || '';
         if (!postId || !requesterId) return res.status(400).json({ success: false, message: 'Missing fields.' });
         const post = await DiscoveryPost.findOne({ postId });
         if (!post) return res.status(404).json({ success: false, message: 'Post not found.' });
