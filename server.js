@@ -5263,7 +5263,7 @@ app.get('/api/discover/people', async (req, res) => {
 });
 
 // ── Collab Endpoints ─────────────────────────────────────────────────────────
-app.post('/api/discover/collab/request', async (req, res) => {
+app.post('/api/discover/collab/request', memoryUpload.single('media'), async (req, res) => {
     try {
         const postId          = req.body.postId          || req.fields?.postId;
         const requesterId     = req.body.requesterId     || req.fields?.requesterId;
