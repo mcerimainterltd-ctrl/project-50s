@@ -5267,10 +5267,15 @@ app.post('/api/discover/collab/request', memoryUpload.single('media'), async (re
     try {
         const postId          = req.body.postId          || req.fields?.postId;
         const requesterId     = req.body.requesterId     || req.fields?.requesterId;
-        const requesterName   = req.body.requesterName   || req.fields?.requesterName   || '';
+        let requesterName   = req.body.requesterName   || req.fields?.requesterName   || '';
         const requesterAvatar = req.body.requesterAvatar || req.fields?.requesterAvatar || '';
         if (!postId || !requesterId) return res.status(400).json({ success: false, message: 'Missing fields.' });
         const post = await DiscoveryPost.findOne({ postId });
+        // If requesterName is empty or looks like a XameID, look up real name
+        if (!requesterName || /^\d+$/.test(requesterName)) {
+            const requester = await User.findOne({ xameId: requesterId }).lean();
+            if (requester) requesterName = requester.preferredName || `${requester.firstName} ${requester.lastName}`.trim();
+        }
         if (!post) return res.status(404).json({ success: false, message: 'Post not found.' });
         if (post.authorId === requesterId) return res.status(400).json({ success: false, message: 'Cannot collab on your own post.' });
         const authorSocket = userToSocketMap.get(post.authorId);
