@@ -5306,6 +5306,21 @@ app.post('/api/discover/collab/accept', async (req, res) => {
             authorId, requesterId,
             status: 'active',
         });
+        // Update post collab status
+        const partner = await User.findOne({ xameId: requesterId }).lean();
+        if (partner) {
+            await DiscoveryPost.updateOne({ postId }, {
+                collabStatus:        'accepted',
+                collabPartnerId:     requesterId,
+                collabPartnerName:   partner.preferredName || `${partner.firstName} ${partner.lastName}`.trim(),
+                collabPartnerAvatar: partner.hideProfilePicture ? '' : (partner.profilePic || ''),
+                isCollabOpen:        false,
+            });
+        }
+        try {
+            await awardCoins(authorId, 50, 'collab_accepted', 'Collab post accepted');
+            await awardCoins(requesterId, 50, 'collab_accepted', 'Your collab was accepted');
+        } catch(_) {}
         const requesterSocket = userToSocketMap.get(requesterId);
         if (requesterSocket) {
             io.to(requesterSocket).emit('collab_accepted', {
@@ -5714,48 +5729,6 @@ app.post('/api/discover/collab/request', memoryUpload.single('media'), async (re
 });
 
 // POST /api/discover/collab/accept — Post author accepts collab request
-app.post('/api/discover/collab/accept', async (req, res) => {
-    try {
-        const { postId, authorId } = req.body;
-        if (!postId || !authorId) return res.json({ success: false, message: 'postId and authorId required' });
-
-        const post = await DiscoveryPost.findOne({ postId });
-        if (!post) return res.json({ success: false, message: 'Post not found' });
-        if (post.authorId !== authorId) return res.json({ success: false, message: 'Not authorized' });
-        if (post.collabStatus !== 'pending') return res.json({ success: false, message: 'No pending collab' });
-
-        const partner = await User.findOne({ xameId: post.pendingCollabBy }).lean();
-        if (!partner) return res.json({ success: false, message: 'Partner not found' });
-
-        post.collabStatus        = 'accepted';
-        post.collabPartnerId     = post.pendingCollabBy;
-        post.collabPartnerName   = partner.preferredName ||
-                                   `${partner.firstName} ${partner.lastName}`.trim();
-        post.collabPartnerAvatar = partner.hideProfilePicture ? '' : (partner.profilePic || '');
-        post.collabMediaUrl      = post.pendingCollabMedia;
-        post.collabMediaType     = post.pendingCollabType;
-        post.isCollabOpen        = false;
-        await post.save();
-
-        // Notify partner
-        const partnerSocket = findSocketId(post.collabPartnerId);
-        if (partnerSocket) {
-            io.to(partnerSocket).emit('collab_accepted', {
-                postId, postTitle: post.title, authorId,
-            });
-        }
-
-        // Award 50 coins to both parties for collab
-        try {
-            await awardCoins(authorId, 50, 'collab_accepted', 'Collab post accepted');
-            await awardCoins(post.collabPartnerId, 50, 'collab_accepted', 'Your collab was accepted');
-        } catch(_) {}
-        res.json({ success: true, message: 'Collab accepted' });
-    } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
-    }
-});
-
 // POST /api/discover/collab/toggle — Toggle collab open/closed on a post
 app.post('/api/discover/collab/toggle', async (req, res) => {
     try {
