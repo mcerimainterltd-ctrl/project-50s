@@ -30,6 +30,7 @@ const cors       = require('cors');
 const { body, validationResult } = require('express-validator');
 const bcrypt     = require('bcryptjs');
 const cloudinary = require('cloudinary').v2;
+const ImageKit   = require('@imagekit/nodejs');
 const { createClient } = require('@supabase/supabase-js');
 const supabase = createClient(process.env.SUPABASE_URL || '', process.env.SUPABASE_SERVICE_KEY || '');
 const webpush    = require('web-push');
@@ -93,6 +94,35 @@ if (!process.env.CLOUDINARY_CLOUD_NAME ||
     console.log('✅ Cloudinary configured:', process.env.CLOUDINARY_CLOUD_NAME);
 }
 
+// ── ImageKit ──────────────────────────────────────────────────────────────────
+const imagekit = new ImageKit({
+    publicKey:   process.env.IMAGEKIT_PUBLIC_KEY   || '',
+    privateKey:  process.env.IMAGEKIT_PRIVATE_KEY  || '',
+    urlEndpoint: process.env.IMAGEKIT_URL_ENDPOINT || '',
+});
+if (!process.env.IMAGEKIT_PUBLIC_KEY) {
+    console.warn('⚠️  ImageKit env vars missing — new media uploads will fail');
+} else {
+    console.log('✅ ImageKit configured:', process.env.IMAGEKIT_URL_ENDPOINT);
+}
+
+// ── ImageKit upload helper ─────────────────────────────────────────────────
+async function uploadToImageKit(buffer, fileName, folder) {
+    try {
+        const result = await imagekit.upload({
+            file:              buffer.toString('base64'),
+            fileName:          fileName,
+            folder:            `/xamepage/${folder}`,
+            useUniqueFileName: true,
+        });
+        console.log('✅ ImageKit upload:', result.url);
+        return result.url;
+    } catch (err) {
+        console.error('❌ ImageKit upload error:', err);
+        throw err;
+    }
+}
+
 // ============================================================
 // WEB PUSH
 // ============================================================
@@ -113,6 +143,9 @@ if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
 // ============================================================
 
 function uploadToCloudinary(buffer, userId) {
+    return uploadToImageKit(buffer, `profile_${userId}_${Date.now()}.jpg`, 'profile_pics');
+}
+function _unused_uploadToCloudinary_legacy(buffer, userId) {
     return new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
             {
@@ -1362,13 +1395,7 @@ app.post('/api/upload-file', memoryUpload.single('file'), async (req, res) => {
             const isImage = req.file.mimetype.startsWith('image');
             if (isVideo || isAudio || isImage) {
                 const resourceType = isVideo ? 'video' : isAudio ? 'video' : 'image';
-                const url = await new Promise((resolve, reject) => {
-                    const stream = cloudinary.uploader.upload_stream(
-                        { folder: 'xamepage_chat', resource_type: resourceType },
-                        (err, result) => { if (err) { console.error("Cloudinary upload error:", JSON.stringify(err)); reject(err); } else resolve(result.secure_url); }
-                    );
-                    stream.end(req.file.buffer);
-                });
+                const url = await uploadToImageKit(req.file.buffer, `chat_${Date.now()}_${req.file.originalname}`, 'chat');
                 res.json({ success: true, url });
             } else {
                 // Upload non-media files to Supabase
@@ -2570,13 +2597,7 @@ app.post('/api/groups/upload-avatar', memoryUpload.single('avatar'), async (req,
         let avatarUrl;
         const cloudinaryOk = process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET;
         if (cloudinaryOk) {
-            avatarUrl = await new Promise((resolve, reject) => {
-                const stream = cloudinary.uploader.upload_stream(
-                    { folder: 'xame_group_avatars', resource_type: 'image' },
-                    (err, result) => err ? reject(err) : resolve(result.secure_url)
-                );
-                stream.end(req.file.buffer);
-            });
+            avatarUrl = await uploadToImageKit(buffer, `media_${Date.now()}.jpg`, 'media');
         } else {
             const fs = require('fs');
             const ext = req.file.originalname.split('.').pop() || 'jpg';
@@ -2964,14 +2985,8 @@ app.post('/api/gallery/upload', memoryUpload.single('file'), async (req, res) =>
         const fileType = req.file.mimetype.startsWith('video') ? 'video' : 'image';
         const cloudinaryOk = process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET;
         let url;
-        if (cloudinaryOk) {
-            url = await new Promise((resolve, reject) => {
-                const stream = cloudinary.uploader.upload_stream(
-                    { folder: `xame_gallery/${userId}`, resource_type: 'auto' },
-                    (err, result) => err ? reject(err) : resolve(result.secure_url)
-                );
-                stream.end(req.file.buffer);
-            });
+        if (true) { // ImageKit handles all media types
+            url = await uploadToImageKit(req.file.buffer, `gallery_${userId}_${Date.now()}_${req.file.originalname}`, `gallery/${userId}`);
         } else {
             const fs = require('fs');
             const ext = req.file.originalname.split('.').pop() || (fileType === 'video' ? 'mp4' : 'jpg');
@@ -5147,14 +5162,8 @@ app.get('/api/discover/author/:authorId', async (req, res) => {
 app.post('/api/discover/upload-music', memoryUpload.single('audio'), async (req, res) => {
     try {
         if (!req.file) return res.json({ success: false, message: 'No audio file' });
-        const uploadResult = await new Promise((resolve, reject) => {
-            const stream = cloudinary.uploader.upload_stream(
-                { folder: 'xamepage/music', resource_type: 'video' },
-                (err, result) => err ? reject(err) : resolve(result)
-            );
-            stream.end(req.file.buffer);
-        });
-        res.json({ success: true, url: uploadResult.secure_url });
+        const musicUrl = await uploadToImageKit(req.file.buffer, `music_${Date.now()}_${req.file.originalname}`, 'music');
+        res.json({ success: true, url: musicUrl });
     } catch (err) {
         res.json({ success: false, message: err.message });
     }
@@ -5271,18 +5280,32 @@ app.post('/api/discover/collab/request', memoryUpload.single('media'), async (re
         const requesterAvatar = req.body.requesterAvatar || req.fields?.requesterAvatar || '';
         if (!postId || !requesterId) return res.status(400).json({ success: false, message: 'Missing fields.' });
         const post = await DiscoveryPost.findOne({ postId });
-        // If requesterName is empty or looks like a XameID, look up real name
-        if (!requesterName || /^\d+$/.test(requesterName)) {
-            const requester = await User.findOne({ xameId: requesterId }).lean();
-            if (requester) requesterName = requester.preferredName || `${requester.firstName} ${requester.lastName}`.trim();
-        }
         if (!post) return res.status(404).json({ success: false, message: 'Post not found.' });
         if (post.authorId === requesterId) return res.status(400).json({ success: false, message: 'Cannot collab on your own post.' });
+        if (post.isCollabOpen === false) return res.status(400).json({ success: false, message: 'Post not open for collab.' });
+        if (post.collabStatus && post.collabStatus !== 'none') return res.status(400).json({ success: false, message: 'Collab already in progress.' });
+        // If requesterName is empty or looks like a XameID, look up real name
+        const requester = await User.findOne({ xameId: requesterId }).lean();
+        if (!requester) return res.status(404).json({ success: false, message: 'Requester not found.' });
+        if (!requesterName || /^\d+$/.test(requesterName)) {
+            requesterName = requester.preferredName || `${requester.firstName} ${requester.lastName}`.trim();
+        }
+        const finalRequesterAvatar = requesterAvatar || (requester.hideProfilePicture ? '' : (requester.profilePic || ''));
+        // Handle the requester's proposed collab media upload, if provided
+        let mediaUrl = '';
+        if (req.file) {
+            mediaUrl = await uploadToImageKit(req.file.buffer, `collab_${requesterId}_${Date.now()}_${req.file.originalname}`, 'discovery/collab');
+        }
+        post.collabStatus       = 'pending';
+        post.pendingCollabBy    = requesterId;
+        post.pendingCollabMedia = mediaUrl;
+        post.pendingCollabType  = req.body.mediaType || 'image';
+        await post.save();
         const authorSocket = userToSocketMap.get(post.authorId);
         if (authorSocket) {
             io.to(authorSocket).emit('collab_request', {
-                postId, postTitle: post.title, mediaUrl: post.mediaUrl,
-                requesterId, requesterName, requesterAvatar: requesterAvatar || '',
+                postId, postTitle: post.title, mediaUrl,
+                requesterId, requesterName, requesterAvatar: finalRequesterAvatar,
             });
         }
         res.json({ success: true, message: 'Collab request sent.' });
@@ -5452,18 +5475,8 @@ app.post('/api/discover/post', memoryUpload.array('media', 10), async (req, res)
         if (files.length > 0) {
             // Upload each file to Cloudinary in order
             for (const file of files) {
-                const uploadResult = await new Promise((resolve, reject) => {
-                    const stream = cloudinary.uploader.upload_stream(
-                        {
-                            folder:        'xamepage/discovery',
-                            resource_type: (mediaType === 'video') ? 'video' : 'image',
-                            public_id:     `post_${authorId}_${Date.now()}_${mediaUrls.length}`,
-                        },
-                        (err, result) => err ? reject(err) : resolve(result)
-                    );
-                    stream.end(file.buffer);
-                });
-                mediaUrls.push({ url: uploadResult.secure_url, type: mediaType === 'video' ? 'video' : 'image' });
+                const uploadedUrl = await uploadToImageKit(file.buffer, `post_${authorId}_${Date.now()}_${mediaUrls.length}_${file.originalname}`, 'discovery');
+                mediaUrls.push({ url: uploadedUrl, type: mediaType === 'video' ? 'video' : 'image' });
             }
             mediaUrl = mediaUrls[0].url;
             if (mediaType === 'video') {
@@ -5527,17 +5540,7 @@ app.post('/api/discover/story', memoryUpload.single('media'), async (req, res) =
 
         let mediaUrl = '';
         if (req.file) {
-            const uploadResult = await new Promise((resolve, reject) => {
-                const stream = cloudinary.uploader.upload_stream(
-                    {
-                        folder:        'xamepage/stories',
-                        resource_type: (mediaType === 'video') ? 'video' : 'image',
-                        public_id:     `story_${authorId}_${Date.now()}`,
-                    },
-                    (err, result) => err ? reject(err) : resolve(result)
-                );
-                stream.end(req.file.buffer);
-            });
+            const uploadResult = { secure_url: await uploadToImageKit(req.file.buffer, `story_${authorId}_${Date.now()}_${req.file.originalname}`, 'stories') };
             mediaUrl = uploadResult.secure_url;
         } else if (req.body.mediaUrl) {
             mediaUrl = req.body.mediaUrl;
@@ -5672,63 +5675,6 @@ app.delete('/api/discover/post/:postId', async (req, res) => {
 });
 
 
-// ── COLLAB POSTS ─────────────────────────────────────────────────────────────
-
-// POST /api/discover/collab/request — User B requests to collab on User A's post
-app.post('/api/discover/collab/request', memoryUpload.single('media'), async (req, res) => {
-    try {
-        const { postId, requesterId } = req.body;
-        if (!postId || !requesterId) return res.json({ success: false, message: 'postId and requesterId required' });
-
-        const post = await DiscoveryPost.findOne({ postId });
-        if (!post) return res.json({ success: false, message: 'Post not found' });
-        if (!post.isCollabOpen) return res.json({ success: false, message: 'Post not open for collab' });
-        if (post.collabStatus !== 'none') return res.json({ success: false, message: 'Collab already in progress' });
-        if (post.authorId === requesterId) return res.json({ success: false, message: 'Cannot collab with yourself' });
-
-        const requester = await User.findOne({ xameId: requesterId }).lean();
-        if (!requester) return res.json({ success: false, message: 'User not found' });
-
-        let mediaUrl = '';
-        if (req.file) {
-            const uploadResult = await new Promise((resolve, reject) => {
-                const stream = cloudinary.uploader.upload_stream(
-                    { folder: 'xamepage/discovery/collab', resource_type: 'auto',
-                      public_id: `collab_${requesterId}_${Date.now()}` },
-                    (err, result) => err ? reject(err) : resolve(result)
-                );
-                stream.end(req.file.buffer);
-            });
-            mediaUrl = uploadResult.secure_url;
-        }
-
-        post.collabStatus       = 'pending';
-        post.pendingCollabBy    = requesterId;
-        post.pendingCollabMedia = mediaUrl;
-        post.pendingCollabType  = req.body.mediaType || 'image';
-        await post.save();
-
-        // Notify post author via socket
-        const authorSocket = findSocketId(post.authorId);
-        if (authorSocket) {
-            io.to(authorSocket).emit('collab_request', {
-                postId,
-                postTitle:     post.title,
-                requesterId,
-                requesterName: requester.preferredName ||
-                               `${requester.firstName} ${requester.lastName}`.trim(),
-                requesterAvatar: requester.hideProfilePicture ? '' : (requester.profilePic || ''),
-                mediaUrl,
-            });
-        }
-
-        res.json({ success: true, message: 'Collab request sent' });
-    } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
-    }
-});
-
-// POST /api/discover/collab/accept — Post author accepts collab request
 // POST /api/discover/collab/toggle — Toggle collab open/closed on a post
 app.post('/api/discover/collab/toggle', async (req, res) => {
     try {
