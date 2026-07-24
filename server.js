@@ -1396,32 +1396,12 @@ async function uploadToSupabase(buffer, fileName) {
 app.post('/api/upload-file', memoryUpload.single('file'), async (req, res) => {
     if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded.' });
     try {
-        const cloudinaryOk = process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET;
-        if (cloudinaryOk) {
-            const isVideo = req.file.mimetype.startsWith('video');
-            const isAudio = req.file.mimetype.startsWith('audio');
-            const isImage = req.file.mimetype.startsWith('image');
-            if (isVideo || isAudio || isImage) {
-                const resourceType = isVideo ? 'video' : isAudio ? 'video' : 'image';
-                const url = await uploadToImageKit(req.file.buffer, `chat_${Date.now()}_${req.file.originalname}`, 'chat');
-                res.json({ success: true, url });
-            } else {
-                // Upload non-media files to Supabase
-                try {
-                    const url = await uploadToSupabase(req.file.buffer, req.file.originalname);
-                    res.json({ success: true, url });
-                } catch(supaErr) {
-                    console.error('Supabase upload error:', supaErr.message);
-                    res.status(500).json({ success: false, message: supaErr.message });
-                }
-            }
-        } else {
-            const ext = path.extname(req.file.originalname);
-            const newName = `${uuidv4()}${ext}`;
-            const newPath = path.join(uploadDir, newName);
-            await fsPromises.writeFile(newPath, req.file.buffer);
-            res.json({ success: true, url: `/uploads/${newName}` });
-        }
+        const isVideo = req.file.mimetype.startsWith('video');
+        const isAudio = req.file.mimetype.startsWith('audio');
+        const isImage = req.file.mimetype.startsWith('image');
+        const folder  = (isVideo || isAudio || isImage) ? 'chat' : 'chat_documents';
+        const url = await uploadToImageKit(req.file.buffer, `chat_${Date.now()}_${req.file.originalname}`, folder);
+        res.json({ success: true, url });
     } catch (err) {
         console.error('File upload error:', err);
         res.status(500).json({ success: false, message: 'File processing failed.' });
