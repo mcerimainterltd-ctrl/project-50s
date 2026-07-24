@@ -30,7 +30,7 @@ const cors       = require('cors');
 const { body, validationResult } = require('express-validator');
 const bcrypt     = require('bcryptjs');
 const cloudinary = require('cloudinary').v2;
-const ImageKit   = require('@imagekit/nodejs');
+const ImageKit   = require('imagekit');
 const { createClient } = require('@supabase/supabase-js');
 const supabase = createClient(process.env.SUPABASE_URL || '', process.env.SUPABASE_SERVICE_KEY || '');
 const webpush    = require('web-push');
@@ -7361,3 +7361,4 @@ app.post('/api/change-password', async (req, res) => {
     console.error('❌ Failed to start:', err);
     process.exit(1);
 });
+// imagekit-1784893344
