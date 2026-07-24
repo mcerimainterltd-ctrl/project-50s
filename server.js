@@ -142,9 +142,6 @@ if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
 // CLOUDINARY HELPERS
 // ============================================================
 
-function uploadToCloudinary(buffer, userId) {
-    return uploadToImageKit(buffer, `profile_${userId}_${Date.now()}.jpg`, 'profile_pics');
-}
 function _unused_uploadToCloudinary_legacy(buffer, userId) {
     return new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
@@ -164,11 +161,22 @@ function _unused_uploadToCloudinary_legacy(buffer, userId) {
     });
 }
 
-async function deleteFromCloudinary(userId) {
+async function deleteProfilePicFromImageKit(userId) {
     try {
-        await cloudinary.uploader.destroy(`xamepage/profile_pics/user_${userId}`);
+        const files = await imagekit.listFiles({
+            path:        '/xamepage/profile_pics/',
+            searchQuery: `name:profile_${userId}_`,
+            sort:        'DESC_CREATED',
+            limit:       1
+        });
+        if (files && files.length > 0) {
+            await imagekit.deleteFile(files[0].fileId);
+            console.log('✅ ImageKit delete:', files[0].name);
+        } else {
+            console.log('ℹ️  No ImageKit profile pic found to delete for user', userId);
+        }
     } catch (err) {
-        console.error('❌ Cloudinary delete error:', err);
+        console.error('❌ ImageKit delete error:', err);
     }
 }
 
@@ -1431,10 +1439,10 @@ app.post('/api/update-profile', memoryUpload.single('profilePic'), async (req, r
         if (hideProfilePicture !== undefined) user.hideProfilePicture = hideProfilePicture === 'true';
 
         if (removeProfilePic === 'true') {
-            await deleteFromCloudinary(userId);
+            await deleteProfilePicFromImageKit(userId);
             user.profilePic = '';
         } else if (req.file?.buffer) {
-            user.profilePic = await uploadToCloudinary(req.file.buffer, userId);
+            user.profilePic = await uploadToImageKit(req.file.buffer, `profile_${userId}_${Date.now()}.jpg`, 'profile_pics');
         }
 
         await user.save();
