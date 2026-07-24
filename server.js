@@ -5480,7 +5480,7 @@ app.post('/api/discover/post', memoryUpload.array('media', 10), async (req, res)
             }
             mediaUrl = mediaUrls[0].url;
             if (mediaType === 'video') {
-                thumbnailUrl = mediaUrl.replace('/upload/', '/upload/so_0/f_jpg/').replace(/\.(mp4|mov|avi|webm)$/i, '.jpg');
+                thumbnailUrl = `${mediaUrl}/ik-thumbnail.jpg`;
             }
         } else if (req.body.mediaUrl) {
             mediaUrl = req.body.mediaUrl;
