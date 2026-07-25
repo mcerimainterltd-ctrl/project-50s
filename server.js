@@ -3226,7 +3226,10 @@ app.post('/api/wallet/monnify/virtual-account', async (req, res) => {
             // Account already exists — fetch it using the customer email
             try {
                 const customerEmail = email || userId + '@xamepage.app';
-                const fetchRes = await fetch(`${baseUrl}/api/v1/bank-transfer/reserved-accounts/query?accountReference=xamepay-mnfy-${userId}`, {
+                // Use saved accountReference from DB for accurate lookup
+                const savedWallet = await Wallet.findOne({ xameId: userId }).lean();
+                const savedRef = savedWallet?.virtualAccount?.accountReference || ('xamepay-mnfy-' + userId);
+                const fetchRes = await fetch(`${baseUrl}/api/v2/bank-transfer/reserved-accounts/${encodeURIComponent(savedRef)}`, {
                     headers: { Authorization: `Bearer ${token}` }
                 });
                 const fetchData = await fetchRes.json();
