@@ -4944,7 +4944,7 @@ const collabThreadSchema = new mongoose.Schema({
     postMediaUrl: { type: String, default: '' },
     authorId:     { type: String, required: true },
     requesterId:  { type: String, required: true },
-    status:       { type: String, enum: ['pending','active','expired'], default: 'pending' },
+    status:       { type: String, enum: ['pending','active','authorized','submitted','expired'], default: 'pending' },
     messages:     [collabMessageSchema],
     createdAt:    { type: Date, default: Date.now },
     expiresAt:    { type: Date, default: () => new Date(Date.now() + 7*24*60*60*1000) },
@@ -5672,6 +5672,7 @@ app.post('/api/discover/collab/toggle', async (req, res) => {
         if (post.authorId !== authorId) return res.json({ success: false, message: 'Not authorized' });
         post.isCollabOpen = !post.isCollabOpen;
         await post.save();
+        io.emit('collab_updated', { postId: post.postId, isCollabOpen: post.isCollabOpen });
         res.json({ success: true, isCollabOpen: post.isCollabOpen });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
