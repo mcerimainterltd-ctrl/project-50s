@@ -3178,6 +3178,18 @@ app.post('/api/wallet/monnify/virtual-account', async (req, res) => {
         if (existingWallet?.virtualAccount?.provider && existingWallet.virtualAccount.provider !== 'monnify' && existingWallet.virtualAccount.accountNumber && !confirmSwitch) {
             return res.json({ success: false, message: 'User already has a ' + existingWallet.virtualAccount.provider + ' virtual account. Pass confirmSwitch:true to replace it.', requiresConfirmation: true, currentProvider: existingWallet.virtualAccount.provider });
         }
+        // If switching back to Monnify and account already exists in DB — return it directly
+        if (confirmSwitch && existingWallet?.virtualAccount?.accountReference) {
+            const mnfyRef = existingWallet.virtualAccount.accountReference;
+            if (mnfyRef.startsWith('xamepay-mnfy-')) {
+                await Wallet.findOneAndUpdate({ xameId: userId }, { 'virtualAccount.provider': 'monnify' });
+                return res.json({ success: true, account: {
+                    account_number: existingWallet.virtualAccount.accountNumber,
+                    bank_name:      existingWallet.virtualAccount.bankName,
+                    account_name:   existingWallet.virtualAccount.accountName,
+                }});
+            }
+        }
         const baseUrl      = process.env.MONNIFY_BASE_URL || 'https://sandbox.monnify.com';
         const contractCode = process.env.MONNIFY_CONTRACT_CODE;
         if (!contractCode) return res.json({ success: false, message: 'MONNIFY_CONTRACT_CODE not configured' });
@@ -3313,6 +3325,18 @@ app.post('/api/wallet/flw/virtual-account', async (req, res) => {
     if (existingWallet?.virtualAccount?.provider && existingWallet.virtualAccount.provider !== 'flutterwave' && existingWallet.virtualAccount.accountNumber && !confirmSwitch) {
       return res.json({ success: false, message: 'User already has a ' + existingWallet.virtualAccount.provider + ' virtual account. Pass confirmSwitch:true to replace it.', requiresConfirmation: true, currentProvider: existingWallet.virtualAccount.provider });
     }
+    // If switching back to Flutterwave and account already exists in DB — return it directly
+    if (confirmSwitch && existingWallet?.virtualAccount?.accountNumber) {
+      const flwWallet = await Wallet.findOne({ xameId: userId }).lean();
+      if (flwWallet?.virtualAccount?.accountNumber) {
+        await Wallet.findOneAndUpdate({ xameId: userId }, { 'virtualAccount.provider': 'flutterwave' });
+        return res.json({ success: true, account: {
+          account_number: flwWallet.virtualAccount.accountNumber,
+          bank_name:      flwWallet.virtualAccount.bankName,
+          account_name:   flwWallet.virtualAccount.accountName || ('XamePay' + userId),
+        }});
+      }
+    }
     const vaUser = await User.findOne({ xameId: userId }).lean();
     const formalAccountName = 'XamePay - ' + (vaUser ? `${vaUser.firstName} ${vaUser.lastName}`.trim() : userId);
     const response = await fetch('https://api.flutterwave.com/v3/virtual-account-numbers', {
@@ -3321,7 +3345,7 @@ app.post('/api/wallet/flw/virtual-account', async (req, res) => {
       body: JSON.stringify({
         email: email || userId + '@xamepage.app',
         is_permanent: true,
-        bvn: bvn || user?.bvnPlain || '00000000000',
+        bvn: bvn || vaUser?.bvnPlain || '00000000000',
         tx_ref: 'xamepay-va-' + userId + '-' + Date.now(),
         amount: 0,
         currency: currency || 'NGN',
