@@ -3222,6 +3222,62 @@ app.post('/api/wallet/monnify/virtual-account', async (req, res) => {
                 bank_name:      acct.bankName,
                 account_name:   formalAccountName,
             }});
+        } else if (data.responseMessage && data.responseMessage.includes('cannot reserve more than')) {
+            // Account already exists — fetch it using the customer email
+            try {
+                const customerEmail = email || userId + '@xamepage.app';
+                const fetchRes = await fetch(`${baseUrl}/api/v1/bank-transfer/reserved-accounts/query?accountReference=xamepay-mnfy-${userId}`, {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+                const fetchData = await fetchRes.json();
+                if (fetchData.requestSuccessful && fetchData.responseBody?.accounts?.length) {
+                    const acct = fetchData.responseBody.accounts[0];
+                    const acctName = fetchData.responseBody.accountName || formalAccountName;
+                    const acctRef  = fetchData.responseBody.accountReference || accountReference;
+                    await Wallet.findOneAndUpdate({ xameId: userId }, {
+                        'virtualAccount.accountNumber':    acct.accountNumber,
+                        'virtualAccount.bankName':         acct.bankName,
+                        'virtualAccount.accountName':      acctName,
+                        'virtualAccount.provider':         'monnify',
+                        'virtualAccount.accountReference': acctRef,
+                    }, { upsert: true });
+                    await User.findOneAndUpdate({ xameId: userId }, {
+                        'virtualAccount.accountNumber': acct.accountNumber,
+                        'virtualAccount.bankName':      acct.bankName,
+                        'virtualAccount.accountName':   acctName,
+                    });
+                    res.json({ success: true, account: {
+                        account_number: acct.accountNumber,
+                        bank_name:      acct.bankName,
+                        account_name:   acctName,
+                    }});
+                } else {
+                    // Try fetching by customer email
+                    const emailRes = await fetch(`${baseUrl}/api/v1/bank-transfer/reserved-accounts?customerEmail=${encodeURIComponent(customerEmail)}`, {
+                        headers: { Authorization: `Bearer ${token}` }
+                    });
+                    const emailData = await emailRes.json();
+                    if (emailData.requestSuccessful && emailData.responseBody?.content?.length) {
+                        const acct = emailData.responseBody.content[0].accounts?.[0] || emailData.responseBody.content[0];
+                        const acctName = emailData.responseBody.content[0].accountName || formalAccountName;
+                        await Wallet.findOneAndUpdate({ xameId: userId }, {
+                            'virtualAccount.accountNumber':    acct.accountNumber,
+                            'virtualAccount.bankName':         acct.bankName,
+                            'virtualAccount.accountName':      acctName,
+                            'virtualAccount.provider':         'monnify',
+                        }, { upsert: true });
+                        res.json({ success: true, account: {
+                            account_number: acct.accountNumber,
+                            bank_name:      acct.bankName,
+                            account_name:   acctName,
+                        }});
+                    } else {
+                        res.json({ success: false, message: 'Account exists on Monnify but could not be retrieved. Please contact support.' });
+                    }
+                }
+            } catch (fetchErr) {
+                res.json({ success: false, message: 'Could not retrieve existing Monnify account: ' + fetchErr.message });
+            }
         } else {
             res.json({ success: false, message: data.responseMessage || 'Monnify VA creation failed', data });
         }
