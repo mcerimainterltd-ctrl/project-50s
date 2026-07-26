@@ -3287,7 +3287,73 @@ app.post('/api/wallet/monnify/virtual-account', async (req, res) => {
                             account_name:   acctName,
                         }});
                     } else {
-                        res.json({ success: false, message: 'Account exists on Monnify but could not be retrieved. Please contact support.' });
+                        // Last resort: list all reserved accounts and find by userId
+                        try {
+                            const listRes = await fetch(`${baseUrl}/api/v2/bank-transfer/reserved-accounts/search?page=0&size=20&customerEmail=${encodeURIComponent(customerEmail)}`, {
+                                headers: { Authorization: `Bearer ${token}` }
+                            });
+                            const listData = await listRes.json();
+                            const found = listData.responseBody?.content?.find(a => 
+                                a.customerEmail === customerEmail || 
+                                a.contractCode === process.env.MONNIFY_CONTRACT_CODE
+                            );
+                            if (found && found.accounts?.[0]) {
+                                const acct = found.accounts[0];
+                                const acctName = found.accountName || formalAccountName;
+                                await Wallet.findOneAndUpdate({ xameId: userId }, {
+                                    'virtualAccount.accountNumber':    acct.accountNumber,
+                                    'virtualAccount.bankName':         acct.bankName,
+                                    'virtualAccount.accountName':      acctName,
+                                    'virtualAccount.provider':         'monnify',
+                                    'virtualAccounts.monnify.accountNumber':    acct.accountNumber,
+                                    'virtualAccounts.monnify.bankName':         acct.bankName,
+                                    'virtualAccounts.monnify.accountName':      acctName,
+                                    'virtualAccounts.monnify.accountReference': found.reservationReference || '',
+                                }, { upsert: true });
+                                return res.json({ success: true, account: {
+                                    account_number: acct.accountNumber,
+                                    bank_name:      acct.bankName,
+                                    account_name:   acctName,
+                                }});
+                            }
+                        } catch(_) {}
+                        // All retrieval attempts failed — create a fresh account
+                        const newRes = await fetch(`${baseUrl}/api/v2/bank-transfer/reserved-accounts`, {
+                            method: 'POST',
+                            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                accountReference:    'xamepay-mnfy-' + userId + '-' + Date.now(),
+                                accountName:         formalAccountName,
+                                currencyCode:        'NGN',
+                                contractCode:        contractCode,
+                                customerEmail:       customerEmail,
+                                customerName:        formalAccountName,
+                                getAllAvailableBanks: false,
+                                preferredBanks:      ['035'],
+                            })
+                        });
+                        const newData = await newRes.json();
+                        if (newData.requestSuccessful && newData.responseBody?.accounts?.[0]) {
+                            const acct = newData.responseBody.accounts[0];
+                            const acctRef = newData.responseBody.reservationReference || '';
+                            await Wallet.findOneAndUpdate({ xameId: userId }, {
+                                'virtualAccount.accountNumber':    acct.accountNumber,
+                                'virtualAccount.bankName':         acct.bankName,
+                                'virtualAccount.accountName':      formalAccountName,
+                                'virtualAccount.provider':         'monnify',
+                                'virtualAccount.accountReference': acctRef,
+                                'virtualAccounts.monnify.accountNumber':    acct.accountNumber,
+                                'virtualAccounts.monnify.bankName':         acct.bankName,
+                                'virtualAccounts.monnify.accountName':      formalAccountName,
+                                'virtualAccounts.monnify.accountReference': acctRef,
+                            }, { upsert: true });
+                            return res.json({ success: true, account: {
+                                account_number: acct.accountNumber,
+                                bank_name:      acct.bankName,
+                                account_name:   formalAccountName,
+                            }});
+                        }
+                        res.json({ success: false, message: 'Could not set up Monnify account. Please try again.' });
                     }
                 }
             } catch (fetchErr) {
@@ -3434,65 +3500,7 @@ app.get('/api/wallet/flw/card-callback', async (req, res) => {
     }
 });
 
-app.post('/api/wallet/squad/virtual-account', async (req, res) => {
-    const { userId, bvn, address, dob } = req.body;
-    if (!userId) return res.json({ success: false, message: 'Missing userId' });
-    try {
-        if (bvn && bvn !== '00000000000' && bvn.length === 11) {
-            try { await User.findOneAndUpdate({ xameId: userId }, { bvnPlain: bvn }); } catch(_) {}
-        }
-        const existingWallet = await Wallet.findOne({ xameId: userId });
-        if (existingWallet?.virtualAccounts?.squad?.accountNumber) {
-            return res.json({ success: true, account: {
-                account_number: existingWallet.virtualAccounts.squad.accountNumber,
-                bank_name:      existingWallet.virtualAccounts.squad.bankName,
-                account_name:   existingWallet.virtualAccounts.squad.accountName,
-            }});
-        }
-        const squadKey = process.env.SQUAD_SECRET_KEY;
-        if (!squadKey) return res.json({ success: false, message: 'Squad not configured' });
-        const baseUrl = process.env.SQUAD_BASE_URL || 'https://sandbox-api-d.squadco.com';
-        const vaUser = await User.findOne({ xameId: userId }).lean();
-        const fullName = vaUser ? `${vaUser.firstName} ${vaUser.middleName ? vaUser.middleName + ' ' : ''}${vaUser.lastName}`.trim() : userId;
-        const r = await fetch(`${baseUrl}/virtual-account`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${squadKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                customer_identifier: userId,
-                first_name: vaUser?.firstName || 'XamePage',
-                last_name:  vaUser?.lastName  || userId,
-                mobile_num: userId,
-                email:      `${userId}@xamepage.app`,
-                bvn:        bvn || vaUser?.bvnPlain || existingWallet?.bvnPlain || '00000000000',
-                dob:        vaUser?.dob || '1990-01-01',
-                address:    '1 XamePage Street, Lagos, Nigeria',
-            })
-        });
-        const data = await r.json();
-        if (data.success || data.status === 200) {
-            const acct = data.data || data;
-            await Wallet.findOneAndUpdate({ xameId: userId }, {
-                $set: {
-                    'virtualAccounts.squad.accountNumber': acct.virtual_account_number || acct.accountNumber,
-                    'virtualAccounts.squad.bankName':      acct.bank_name || 'Squad',
-                    'virtualAccounts.squad.accountName':   fullName,
-                    'virtualAccount.provider':      'squad',
-                    'virtualAccount.accountNumber': acct.virtual_account_number || acct.accountNumber,
-                    'virtualAccount.bankName':      acct.bank_name || 'Squad',
-                    'virtualAccount.accountName':   fullName,
-                }
-            }, { upsert: true });
-            return res.json({ success: true, account: {
-                account_number: acct.virtual_account_number || acct.accountNumber,
-                bank_name:      acct.bank_name || 'Squad',
-                account_name:   fullName,
-            }});
-        }
-        return res.json({ success: false, message: data.message || 'Squad virtual account creation failed' });
-    } catch (err) {
-        res.json({ success: false, message: err.message });
-    }
-});
+
 
 // Squad card/bank payment init (NGN or USD)
 app.post('/api/wallet/squad/init-payment', async (req, res) => {
