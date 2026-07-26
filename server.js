@@ -5849,14 +5849,17 @@ app.delete('/api/discover/post/:postId', async (req, res) => {
 app.post('/api/discover/collab/toggle', async (req, res) => {
     try {
         const { postId, authorId } = req.body;
+        console.log('🤝 toggle request:', { postId, authorId });
         const post = await DiscoveryPost.findOne({ postId });
-        if (!post) return res.json({ success: false, message: 'Post not found' });
-        if (post.authorId !== authorId) return res.json({ success: false, message: 'Not authorized' });
+        if (!post) { console.log('🤝 toggle: post not found for postId', postId); return res.json({ success: false, message: 'Post not found' }); }
+        if (post.authorId !== authorId) { console.log('🤝 toggle: authorId mismatch — post.authorId=', post.authorId, 'req authorId=', authorId); return res.json({ success: false, message: 'Not authorized' }); }
         post.isCollabOpen = !post.isCollabOpen;
         await post.save();
         io.emit('collab_updated', { postId: post.postId, isCollabOpen: post.isCollabOpen });
+        console.log('🤝 toggle success — isCollabOpen now', post.isCollabOpen);
         res.json({ success: true, isCollabOpen: post.isCollabOpen });
     } catch (err) {
+        console.error('🤝 toggle error:', err.message);
         res.status(500).json({ success: false, message: err.message });
     }
 });
