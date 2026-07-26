@@ -174,6 +174,8 @@
     <button class="tab active" onclick="switchTab('users',this)">👤 Users</button>
     <button class="tab" onclick="switchTab('announce',this)">📣 Announce</button>
     <button class="tab" onclick="switchTab('log',this)" id="log-tab">📋 Log</button>
+    <button class="tab" onclick="switchTab('wallet',this)" id="wallet-tab">💰 Wallet</button>
+    <button class="tab" onclick="switchTab('xametel',this)" id="xametel-tab">📞 XameTel</button>
   </div>
 
   <!-- USERS TAB -->
@@ -356,6 +358,58 @@
     </div>
   </div>
 
+  <!-- WALLET TAB -->
+  <div id="tab-wallet" class="content hidden">
+    <div class="card">
+      <div class="sl">WIPE ALL VIRTUAL ACCOUNTS</div>
+      <p style="font-size:13px;color:#6B7280;margin-bottom:12px">This will clear all stored virtual accounts for all users. Users will be prompted to set up new accounts on next visit.</p>
+      <div class="field"><label class="label">ADMIN SECRET</label><input type="password" id="wipe-secret" class="input mono" placeholder="Paste admin secret..."></div>
+      <button class="btn" style="background:#EF4444;color:#fff;margin-top:8px" onclick="wipeVirtualAccounts()" id="wipe-btn">🗑️ Wipe All Virtual Accounts</button>
+      <div id="wipe-msg" style="margin-top:10px"></div>
+    </div>
+  </div>
+
+  <!-- XAMETEL TAB -->
+  <div id="tab-xametel" class="content hidden">
+    <div class="card">
+      <div class="sl">GENERATE XAMETEL RECHARGE TOKENS</div>
+      <div class="field"><label class="label">ADMIN SECRET *</label><input type="password" id="xt-secret" class="input mono" placeholder="Paste admin secret..."></div>
+      <div style="display:flex;gap:8px">
+        <div class="field" style="flex:1">
+          <label class="label">DENOMINATION (NGN) *</label>
+          <select id="xt-amount" class="input">
+            <option value="100">₦100</option>
+            <option value="200">₦200</option>
+            <option value="500" selected>₦500</option>
+            <option value="1000">₦1,000</option>
+            <option value="1500">₦1,500</option>
+            <option value="2000">₦2,000</option>
+          </select>
+        </div>
+        <div class="field" style="flex:1">
+          <label class="label">QUANTITY *</label>
+          <input type="number" id="xt-quantity" class="input" placeholder="e.g. 50" min="1" max="1000">
+        </div>
+      </div>
+      <div class="field"><label class="label">BATCH NAME (optional)</label><input type="text" id="xt-batch" class="input" placeholder="e.g. BATCH-JAN-2026"></div>
+      <button class="btn btn-primary btn-full" onclick="generateTokens()" id="xt-btn">🎟️ Generate Tokens</button>
+      <div id="xt-msg" style="margin-top:10px"></div>
+      <p style="font-size:12px;color:#6B7280;margin-top:8px">Tokens will be generated and downloaded as CSV for printing on scratch cards.</p>
+    </div>
+    <div class="card">
+      <div class="sl">TOKEN LIST</div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <select id="xt-filter-status" class="input" style="width:140px" onchange="loadTokenList()">
+          <option value="">All</option>
+          <option value="unused">Unused</option>
+          <option value="redeemed">Redeemed</option>
+        </select>
+        <button class="btn btn-primary" onclick="loadTokenList()">🔍 Load</button>
+      </div>
+      <div id="xt-list" style="color:#6B7280;font-size:12px;text-align:center;padding:16px">Enter secret and click Load</div>
+    </div>
+  </div>
+
   <!-- LOG TAB -->
   <div id="tab-log" class="content hidden">
     <div class="card">
@@ -421,6 +475,19 @@ function doLogin() {
     document.getElementById('pin-input').value = '';
   }
 }
+
+// ── Sync admin secret to all fields ─────────────────────────────────────────
+function syncSecret() {
+  const val = document.getElementById('admin-secret').value;
+  ['ann-secret','del-ann-secret','promote-secret','wipe-secret','xt-secret','ai-secret'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = val;
+  });
+}
+document.addEventListener('DOMContentLoaded', () => {
+  const master = document.getElementById('admin-secret');
+  if (master) master.addEventListener('input', syncSecret);
+});
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 function switchTab(id, btn) {
@@ -629,6 +696,58 @@ async function loadCurrentVersion() {
     document.getElementById('vm-msg').innerHTML = '<span class="error-msg">Failed to load</span>';
   }
   btn.disabled = false; btn.textContent = 'Load Current';
+}
+
+async function wipeVirtualAccounts() {
+  const secret = document.getElementById('wipe-secret').value.trim();
+  const msg = document.getElementById('wipe-msg');
+  if (!secret) { msg.innerHTML = '<span class="error-msg">Admin secret required</span>'; return; }
+  if (!confirm('Are you sure? This will wipe ALL virtual accounts for ALL users. This cannot be undone.')) return;
+  const btn = document.getElementById('wipe-btn');
+  btn.disabled = true; btn.innerHTML = 'Wiping...';
+  const r = await api('POST', '/api/admin/wipe-virtual-accounts', { secret });
+  btn.disabled = false; btn.innerHTML = '🗑️ Wipe All Virtual Accounts';
+  msg.innerHTML = r.success ? `<span class="success-msg">✓ ${r.message}</span>` : `<span class="error-msg">${r.message}</span>`;
+}
+
+async function generateTokens() {
+  const secret   = document.getElementById('xt-secret').value.trim();
+  const amount   = parseInt(document.getElementById('xt-amount').value);
+  const quantity = parseInt(document.getElementById('xt-quantity').value);
+  const batch    = document.getElementById('xt-batch').value.trim();
+  const msg      = document.getElementById('xt-msg');
+  if (!secret || !amount || !quantity) { msg.innerHTML = '<span class="error-msg">All fields required</span>'; return; }
+  const btn = document.getElementById('xt-btn');
+  btn.disabled = true; btn.innerHTML = 'Generating...';
+  const r = await api('POST', '/api/admin/xametel/generate-tokens', { secret, amount, quantity, batch });
+  btn.disabled = false; btn.innerHTML = '🎟️ Generate Tokens';
+  if (r.success) {
+    msg.innerHTML = `<span class="success-msg">✓ Generated ${r.quantity} tokens (Batch: ${r.batch})</span>`;
+    const csv = 'Token,Amount,Batch\n' + r.tokens.map(t => `${t},${r.amount},${r.batch}`).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `XameTel_${r.batch}_NGN${r.amount}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    loadTokenList();
+  } else {
+    msg.innerHTML = `<span class="error-msg">${r.message}</span>`;
+  }
+}
+
+async function loadTokenList() {
+  const secret = document.getElementById('xt-secret').value.trim();
+  const status = document.getElementById('xt-filter-status').value;
+  if (!secret) return;
+  const r = await api('GET', `/api/admin/xametel/tokens?secret=${encodeURIComponent(secret)}&status=${status}`);
+  const el = document.getElementById('xt-list');
+  if (!r.success) { el.innerHTML = '<div style="color:#6B7280;font-size:12px">Failed to load</div>'; return; }
+  el.innerHTML = `<div style="color:#6B7280;font-size:12px;margin-bottom:8px">Total: ${r.total} tokens</div>` +
+    r.tokens.map(t => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#0D1117;border-radius:8px;margin-bottom:4px;font-family:monospace;font-size:12px">
+      <span style="color:${t.status==='unused'?'#00B0A0':'#6B7280'}">${t.token}</span>
+      <span style="color:#fff">₦${t.amount}</span>
+      <span style="color:${t.status==='unused'?'#10B981':'#EF4444'}">${t.status}</span>
+    </div>`).join('');
 }
 
 async function setVersion() {
