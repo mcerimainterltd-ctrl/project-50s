@@ -3353,6 +3353,37 @@ app.post('/api/wallet/monnify/virtual-account', async (req, res) => {
                                 account_name:   formalAccountName,
                             }});
                         }
+                        // Auto-create also failed (likely "cannot reserve more than 1") — search by email one more time
+                        if (newData.responseMessage && newData.responseMessage.includes('cannot reserve more than')) {
+                            try {
+                                const retryRes = await fetch(`${baseUrl}/api/v2/bank-transfer/reserved-accounts/search?page=0&size=20&customerEmail=${encodeURIComponent(customerEmail)}`, {
+                                    headers: { Authorization: `Bearer ${token}` }
+                                });
+                                const retryData = await retryRes.json();
+                                const retryFound = retryData.responseBody?.content?.find(a => a.customerEmail === customerEmail);
+                                if (retryFound && retryFound.accounts?.[0]) {
+                                    const acct = retryFound.accounts[0];
+                                    const acctName = retryFound.accountName || formalAccountName;
+                                    const acctRef = retryFound.reservationReference || '';
+                                    await Wallet.findOneAndUpdate({ xameId: userId }, {
+                                        'virtualAccount.accountNumber':    acct.accountNumber,
+                                        'virtualAccount.bankName':         acct.bankName,
+                                        'virtualAccount.accountName':      acctName,
+                                        'virtualAccount.provider':         'monnify',
+                                        'virtualAccount.accountReference': acctRef,
+                                        'virtualAccounts.monnify.accountNumber':    acct.accountNumber,
+                                        'virtualAccounts.monnify.bankName':         acct.bankName,
+                                        'virtualAccounts.monnify.accountName':      acctName,
+                                        'virtualAccounts.monnify.accountReference': acctRef,
+                                    }, { upsert: true });
+                                    return res.json({ success: true, account: {
+                                        account_number: acct.accountNumber,
+                                        bank_name:      acct.bankName,
+                                        account_name:   acctName,
+                                    }});
+                                }
+                            } catch(_) {}
+                        }
                         res.json({ success: false, message: 'Could not set up Monnify account. Please try again.' });
                     }
                 }
