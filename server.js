@@ -2829,6 +2829,29 @@ app.post('/api/call-credits/recharge', async (req, res) => {
 });
 
 // ── Admin: Generate XameTel recharge tokens ──────────────────────────────────
+// ── Wipe All Virtual Accounts (Admin) ────────────────────────────────────────
+app.post('/api/admin/wipe-virtual-accounts', async (req, res) => {
+    try {
+        const { secret } = req.body;
+        if (secret !== process.env.ADMIN_SECRET) return res.status(401).json({ success: false, message: 'Unauthorized' });
+        const result = await Wallet.updateMany({}, {
+            $unset: {
+                'virtualAccount.accountNumber':    '',
+                'virtualAccount.bankName':         '',
+                'virtualAccount.accountName':      '',
+                'virtualAccount.accountReference': '',
+                'virtualAccount.provider':         '',
+                'virtualAccounts.monnify':         '',
+                'virtualAccounts.flutterwave':     '',
+                'virtualAccounts.squad':           '',
+            }
+        });
+        res.json({ success: true, message: `Wiped virtual accounts for ${result.modifiedCount} users` });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 app.post('/api/admin/xametel/generate-tokens', async (req, res) => {
     const { secret, amount, quantity, batch } = req.body;
     if (secret !== process.env.ADMIN_SECRET)
