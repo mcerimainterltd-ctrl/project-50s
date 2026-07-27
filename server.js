@@ -3557,6 +3557,141 @@ app.get('/api/wallet/flw/card-callback', async (req, res) => {
 
 
 // Squad card/bank payment init (NGN or USD)
+// ── Squad Virtual Account ─────────────────────────────────────────────────────
+app.post('/api/wallet/squad/virtual-account', async (req, res) => {
+    const { userId, firstName, middleName, lastName, bvn, gender, dob, address } = req.body;
+    if (!userId || !firstName || !lastName || !bvn || !dob) {
+        return res.status(400).json({ success: false, message: 'Missing required fields: firstName, lastName, bvn, dob.' });
+    }
+    if (!/^\d{11}$/.test(bvn)) {
+        return res.status(400).json({ success: false, message: 'BVN must be exactly 11 digits.' });
+    }
+    try {
+        const squadKey  = process.env.SQUAD_SECRET_KEY;
+        const baseUrl   = process.env.SQUAD_BASE_URL || 'https://api-d.squadco.com';
+        if (!squadKey) return res.status(500).json({ success: false, message: 'Squad not configured.' });
+
+        // Check if user already has a Squad VA stored
+        const existingWallet = await Wallet.findOne({ xameId: userId }).lean();
+        if (existingWallet?.virtualAccount?.provider === 'squad' &&
+            existingWallet?.virtualAccount?.accountNumber) {
+            return res.json({ success: true, account: {
+                account_number: existingWallet.virtualAccount.accountNumber,
+                bank_name:      existingWallet.virtualAccount.bankName || 'Squad MFB',
+                account_name:   existingWallet.virtualAccount.accountName || `${firstName} ${lastName}`,
+            }});
+        }
+
+        // Get user email
+        const user = await User.findOne({ xameId: userId }).lean();
+        const email = user?.email || `${userId}@xamepage.app`;
+
+        // Format DOB from DD/MM/YYYY to YYYY-MM-DD
+        let formattedDob = dob;
+        if (dob && dob.includes('/')) {
+            const parts = dob.split('/');
+            if (parts.length === 3) formattedDob = `${parts[2]}-${parts[1]}-${parts[0]}`;
+        }
+
+        // Create Squad virtual account
+        const payload = {
+            customer_identifier: `xamepay-${userId}`,
+            first_name:          firstName,
+            last_name:           lastName,
+            middle_name:         middleName || '',
+            mobile_num:          user?.phone || '08000000000',
+            email,
+            bvn,
+            dob:                 formattedDob,
+            address:             address || 'Lagos, Nigeria',
+            gender:              gender === 'F' ? '2' : '1', // Squad: 1=Male, 2=Female
+            beneficiary_account: process.env.SQUAD_BENEFICIARY_ACCOUNT || '',
+        };
+
+        console.log('Squad VA creation payload:', JSON.stringify({ ...payload, bvn: '***' }));
+
+        const r = await fetch(`${baseUrl}/virtual-account`, {
+            method:  'POST',
+            headers: {
+                Authorization:  `Bearer ${squadKey}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+        });
+
+        const contentType = r.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+            const text = await r.text();
+            console.error('Squad VA non-JSON response:', text.substring(0, 300));
+            return res.status(502).json({ success: false, message: 'Squad returned an unexpected response. Please try again.' });
+        }
+
+        const data = await r.json();
+        console.log('Squad VA response:', JSON.stringify(data));
+
+        if (data.status === 200 || data.success === true) {
+            const acctNum  = data.data?.virtual_account_number || data.data?.account_number || '';
+            const bankName = data.data?.bank_name || 'Squad MFB';
+            const acctName = data.data?.customer_identifier || `${firstName} ${lastName}`;
+
+            // Save to wallet
+            await Wallet.findOneAndUpdate({ xameId: userId }, {
+                'virtualAccount.accountNumber':    acctNum,
+                'virtualAccount.bankName':         bankName,
+                'virtualAccount.accountName':      acctName,
+                'virtualAccount.provider':         'squad',
+                'virtualAccount.accountReference': `xamepay-${userId}`,
+            }, { upsert: true });
+
+            // Save to user profile
+            await User.findOneAndUpdate({ xameId: userId }, {
+                'virtualAccount.accountNumber': acctNum,
+                'virtualAccount.bankName':      bankName,
+                'virtualAccount.accountName':   acctName,
+            });
+
+            return res.json({ success: true, account: {
+                account_number: acctNum,
+                bank_name:      bankName,
+                account_name:   acctName,
+            }});
+        } else {
+            const msg = data.message || data.data?.message || 'Squad virtual account creation failed.';
+            // Handle duplicate customer
+            if (msg.toLowerCase().includes('already exist') || msg.toLowerCase().includes('duplicate')) {
+                // Try to fetch existing
+                const fetchR = await fetch(`${baseUrl}/virtual-account/customer/xamepay-${userId}`, {
+                    headers: { Authorization: `Bearer ${squadKey}` },
+                });
+                if (fetchR.ok) {
+                    const fetchData = await fetchR.json();
+                    if (fetchData.status === 200 && fetchData.data) {
+                        const acctNum  = fetchData.data.virtual_account_number || fetchData.data.account_number || '';
+                        const bankName = fetchData.data.bank_name || 'Squad MFB';
+                        const acctName = `${firstName} ${lastName}`;
+                        await Wallet.findOneAndUpdate({ xameId: userId }, {
+                            'virtualAccount.accountNumber':    acctNum,
+                            'virtualAccount.bankName':         bankName,
+                            'virtualAccount.accountName':      acctName,
+                            'virtualAccount.provider':         'squad',
+                            'virtualAccount.accountReference': `xamepay-${userId}`,
+                        }, { upsert: true });
+                        return res.json({ success: true, account: {
+                            account_number: acctNum,
+                            bank_name:      bankName,
+                            account_name:   acctName,
+                        }});
+                    }
+                }
+            }
+            return res.json({ success: false, message: msg });
+        }
+    } catch (err) {
+        console.error('Squad VA error:', err);
+        res.status(500).json({ success: false, message: 'Server error: ' + err.message });
+    }
+});
+
 app.post('/api/wallet/squad/init-payment', async (req, res) => {
     const { userId, amount, currency, email, name } = req.body;
     if (!userId || !amount) return res.json({ success: false, message: 'Missing fields.' });
