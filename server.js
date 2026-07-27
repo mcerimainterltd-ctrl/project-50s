@@ -3586,11 +3586,11 @@ app.post('/api/wallet/squad/virtual-account', async (req, res) => {
         const user = await User.findOne({ xameId: userId }).lean();
         const email = user?.email || `${userId}@xamepage.app`;
 
-        // Format DOB from DD/MM/YYYY to YYYY-MM-DD
+        // Format DOB from DD/MM/YYYY to MM/DD/YYYY (Squad format)
         let formattedDob = dob;
         if (dob && dob.includes('/')) {
             const parts = dob.split('/');
-            if (parts.length === 3) formattedDob = `${parts[2]}-${parts[1]}-${parts[0]}`;
+            if (parts.length === 3) formattedDob = `${parts[1]}/${parts[0]}/${parts[2]}`;
         }
 
         // Create Squad virtual account
