@@ -5646,9 +5646,10 @@ app.post('/api/discover/collab/request', memoryUpload.single('media'), async (re
 app.post('/api/discover/collab/accept', async (req, res) => {
     try {
         const { postId, authorId, requesterId } = req.body;
-        if (!postId || !authorId || !requesterId) return res.status(400).json({ success: false, message: 'Missing fields.' });
+        console.log('🤝 accept request:', { postId, authorId, requesterId });
+        if (!postId || !authorId || !requesterId) { console.log('🤝 accept: missing fields'); return res.status(400).json({ success: false, message: 'Missing fields.' }); }
         const post = await DiscoveryPost.findOne({ postId });
-        if (!post) return res.status(404).json({ success: false, message: 'Post not found.' });
+        if (!post) { console.log('🤝 accept: post not found', postId); return res.status(404).json({ success: false, message: 'Post not found.' }); }
         const threadId = require('uuid').v4();
         await CollabThread.create({
             threadId, postId,
@@ -5657,6 +5658,7 @@ app.post('/api/discover/collab/accept', async (req, res) => {
             authorId, requesterId,
             status: 'active',
         });
+        console.log('🤝 accept: thread created', threadId);
         // Update post collab status
         const partner = await User.findOne({ xameId: requesterId }).lean();
         if (partner) {
