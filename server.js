@@ -6004,6 +6004,28 @@ app.delete('/api/discover/post/:postId', async (req, res) => {
 
 
 // POST /api/discover/collab/toggle — Toggle collab open/closed on a post
+
+// TEMP DEBUG — reset a post's collab status back to 'none' for testing. Remove after use.
+app.post('/api/discover/collab/debug-reset', async (req, res) => {
+    try {
+        const { postId } = req.body;
+        const post = await DiscoveryPost.findOne({ postId });
+        if (!post) return res.json({ success: false, message: 'Post not found' });
+        post.collabStatus = 'none';
+        post.pendingCollabBy = '';
+        post.pendingCollabMedia = '';
+        post.collabPartnerId = '';
+        post.collabPartnerName = '';
+        post.collabPartnerAvatar = '';
+        post.collabMediaUrl = '';
+        await post.save();
+        console.log('🤝 debug-reset:', postId, '-> collabStatus now none');
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 app.post('/api/discover/collab/toggle', async (req, res) => {
     try {
         const { postId, authorId } = req.body;
