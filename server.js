@@ -6028,6 +6028,27 @@ app.post('/api/discover/collab/debug-reset', async (req, res) => {
     }
 });
 
+// TEMP DEBUG — bulk reset every post currently stuck with a non-'none' collabStatus. Remove after use.
+app.post('/api/discover/collab/debug-reset-all', async (req, res) => {
+    try {
+        const stuck = await DiscoveryPost.find({ collabStatus: { $ne: 'none' } });
+        for (const post of stuck) {
+            post.collabStatus = 'none';
+            post.pendingCollabBy = '';
+            post.pendingCollabMedia = '';
+            post.collabPartnerId = '';
+            post.collabPartnerName = '';
+            post.collabPartnerAvatar = '';
+            post.collabMediaUrl = '';
+            await post.save();
+        }
+        console.log('🤝 debug-reset-all: reset', stuck.length, 'posts');
+        res.json({ success: true, resetCount: stuck.length });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 
 // TEMP DEBUG — one-time drop of the broken unique index on collabthreads.messages.messageId. Remove after use.
 app.post('/api/discover/collab/debug-drop-index', async (req, res) => {
