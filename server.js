@@ -5270,7 +5270,7 @@ const Reporter = mongoose.model('Reporter', reporterSchema);
 
 // ── Collab Thread Schema ─────────────────────────────────────────────────────
 const collabMessageSchema = new mongoose.Schema({
-    messageId:  { type: String, required: true, unique: true },
+    messageId:  { type: String, required: true },
     senderId:   { type: String, required: true },
     senderName: { type: String, default: '' },
     text:       { type: String, default: '' },
@@ -6024,6 +6024,19 @@ app.post('/api/discover/collab/debug-reset', async (req, res) => {
         console.log('🤝 debug-reset:', postId, '-> collabStatus now none');
         res.json({ success: true });
     } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+
+// TEMP DEBUG — one-time drop of the broken unique index on collabthreads.messages.messageId. Remove after use.
+app.post('/api/discover/collab/debug-drop-index', async (req, res) => {
+    try {
+        await mongoose.connection.collection('collabthreads').dropIndex('messages.messageId_1');
+        console.log('🤝 debug-drop-index: dropped messages.messageId_1');
+        res.json({ success: true, message: 'Index dropped.' });
+    } catch (err) {
+        console.error('🤝 debug-drop-index error:', err.message);
         res.status(500).json({ success: false, message: err.message });
     }
 });
