@@ -5284,7 +5284,7 @@ const collabThreadSchema = new mongoose.Schema({
     postMediaUrl: { type: String, default: '' },
     authorId:     { type: String, required: true },
     requesterId:  { type: String, required: true },
-    status:       { type: String, enum: ['pending','active','authorized','submitted','expired'], default: 'pending' },
+    status:       { type: String, enum: ['pending','active','authorized','submitted','cancelled','expired'], default: 'pending' },
     messages:     [collabMessageSchema],
     createdAt:    { type: Date, default: Date.now },
     expiresAt:    { type: Date, default: () => new Date(Date.now() + 7*24*60*60*1000) },
@@ -6117,6 +6117,53 @@ app.post('/api/discover/collab/set-layout', async (req, res) => {
         await post.save();
         io.emit('collab_layout_updated', { postId, layout });
         res.json({ success: true, layout });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// POST /api/discover/collab/cancel — either party can withdraw/cancel a collab
+// at any stage (pending request, accepted, authorized, or submitted), giving
+// users a real way to self-recover instead of getting permanently stuck.
+app.post('/api/discover/collab/cancel', async (req, res) => {
+    try {
+        const { postId, userId, threadId } = req.body;
+        if (!postId || !userId) return res.status(400).json({ success: false, message: 'Missing fields.' });
+        const post = await DiscoveryPost.findOne({ postId });
+        if (!post) return res.status(404).json({ success: false, message: 'Post not found.' });
+
+        const isParty = post.authorId === userId ||
+            post.pendingCollabBy === userId ||
+            post.collabPartnerId === userId;
+        if (!isParty) return res.status(403).json({ success: false, message: 'Not authorized.' });
+
+        // Figure out who to notify before we clear the partner fields
+        const otherId = userId === post.authorId
+            ? (post.collabPartnerId || post.pendingCollabBy)
+            : post.authorId;
+
+        post.collabStatus        = 'none';
+        post.pendingCollabBy     = '';
+        post.pendingCollabMedia  = '';
+        post.pendingCollabType   = 'image';
+        post.collabPartnerId     = '';
+        post.collabPartnerName   = '';
+        post.collabPartnerAvatar = '';
+        post.collabMediaUrl      = '';
+        await post.save();
+
+        if (threadId) {
+            const thread = await CollabThread.findOne({ threadId });
+            if (thread) { thread.status = 'cancelled'; await thread.save(); }
+        }
+
+        io.emit('collab_updated', { postId, isCollabOpen: post.isCollabOpen });
+        const otherSocket = otherId ? userToSocketMap.get(otherId) : null;
+        if (otherSocket) {
+            io.to(otherSocket).emit('collab_cancelled', { postId, threadId: threadId || '', cancelledBy: userId });
+        }
+
+        res.json({ success: true });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
