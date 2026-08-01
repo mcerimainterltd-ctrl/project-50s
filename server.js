@@ -5755,14 +5755,16 @@ app.post('/api/discover/collab/authorize', async (req, res) => {
 app.post('/api/discover/collab/submit', memoryUpload.single('media'), async (req, res) => {
     try {
         const { threadId, requesterId } = req.body;
+        console.log('🤝 submit request:', { threadId, requesterId, hasFile: !!req.file });
         if (!threadId || !requesterId) return res.status(400).json({ success: false, message: 'Missing fields.' });
         const thread = await CollabThread.findOne({ threadId });
-        if (!thread) return res.status(404).json({ success: false, message: 'Thread not found.' });
-        if (thread.requesterId !== requesterId) return res.status(403).json({ success: false, message: 'Access denied.' });
+        if (!thread) { console.log('🤝 submit: thread not found', threadId); return res.status(404).json({ success: false, message: 'Thread not found.' }); }
+        if (thread.requesterId !== requesterId) { console.log('🤝 submit: requesterId mismatch — thread.requesterId=', thread.requesterId, 'req=', requesterId); return res.status(403).json({ success: false, message: 'Access denied.' }); }
 
         // Finalize the collab media on the post — either a fresh upload replacing
         // the original proposal, or the media already proposed at request time.
         const post = await DiscoveryPost.findOne({ postId: thread.postId });
+        console.log('🤝 submit: found post?', !!post, 'postId=', thread.postId, 'pre-submit collabStatus=', post ? post.collabStatus : null);
         if (post) {
             if (req.file) {
                 const uploadedUrl = await uploadToImageKit(req.file.buffer,
@@ -5774,10 +5776,12 @@ app.post('/api/discover/collab/submit', memoryUpload.single('media'), async (req
                 post.collabMediaType = post.pendingCollabType  || post.collabMediaType;
             }
             await post.save();
+            console.log('🤝 submit: post saved — collabMediaUrl set?', !!post.collabMediaUrl, 'post-save collabStatus=', post.collabStatus);
         }
 
         thread.status = 'submitted';
         await thread.save();
+        console.log('🤝 submit: thread status now', thread.status);
         // Notify author
         const authorSocket = userToSocketMap.get(thread.authorId);
         if (authorSocket) {
@@ -5786,6 +5790,7 @@ app.post('/api/discover/collab/submit', memoryUpload.single('media'), async (req
         }
         res.json({ success: true, message: 'Collab submitted.' });
     } catch (err) {
+        console.error('🤝 submit error:', err.message);
         res.status(500).json({ success: false, message: err.message });
     }
 });
@@ -6128,14 +6133,16 @@ app.post('/api/discover/collab/set-layout', async (req, res) => {
 app.post('/api/discover/collab/cancel', async (req, res) => {
     try {
         const { postId, userId, threadId } = req.body;
+        console.log('🤝 cancel request:', { postId, userId, threadId });
         if (!postId || !userId) return res.status(400).json({ success: false, message: 'Missing fields.' });
         const post = await DiscoveryPost.findOne({ postId });
-        if (!post) return res.status(404).json({ success: false, message: 'Post not found.' });
+        if (!post) { console.log('🤝 cancel: post not found', postId); return res.status(404).json({ success: false, message: 'Post not found.' }); }
 
         const isParty = post.authorId === userId ||
             post.pendingCollabBy === userId ||
             post.collabPartnerId === userId;
-        if (!isParty) return res.status(403).json({ success: false, message: 'Not authorized.' });
+        if (!isParty) { console.log('🤝 cancel: not authorized — userId=', userId, 'authorId=', post.authorId, 'pendingCollabBy=', post.pendingCollabBy, 'collabPartnerId=', post.collabPartnerId); return res.status(403).json({ success: false, message: 'Not authorized.' }); }
+        console.log('🤝 cancel: authorized, resetting post', postId);
 
         // Figure out who to notify before we clear the partner fields
         const otherId = userId === post.authorId
