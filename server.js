@@ -5325,6 +5325,7 @@ const discoveryPostSchema = new mongoose.Schema({
     collabPartnerAvatar: { type: String, default: '' },
     collabMediaUrl:      { type: String, default: '' },
     collabMediaType:     { type: String, default: 'image' },
+    collabLayout:        { type: String, enum: ['side-by-side','top-bottom','picture-in-picture'], default: 'side-by-side' },
     pendingCollabBy:     { type: String, default: '' },
     pendingCollabMedia:  { type: String, default: '' },
     pendingCollabType:   { type: String, default: 'image' },
@@ -5410,6 +5411,7 @@ app.get('/api/discover/feed', async (req, res) => {
                 collabPartnerAvatar: p.collabPartnerAvatar || '',
                 collabMediaUrl:      p.collabMediaUrl || '',
                 collabMediaType:     p.collabMediaType || 'image',
+                collabLayout:        p.collabLayout || 'side-by-side',
                 mediaUrls:    (p.mediaUrls && p.mediaUrls.length > 0) ? p.mediaUrls : null,
             })),
             total,
@@ -5476,6 +5478,7 @@ app.get('/api/discover/author/:authorId', async (req, res) => {
                 collabPartnerAvatar: p.collabPartnerAvatar || '',
                 collabMediaUrl:      p.collabMediaUrl || '',
                 collabMediaType:     p.collabMediaType || 'image',
+                collabLayout:        p.collabLayout || 'side-by-side',
                 mediaUrls:    (p.mediaUrls && p.mediaUrls.length > 0) ? p.mediaUrls : null,
             })),
             total: posts.length,
@@ -5749,13 +5752,30 @@ app.post('/api/discover/collab/authorize', async (req, res) => {
 });
 
 // Submit collab — requester submits their contribution
-app.post('/api/discover/collab/submit', async (req, res) => {
+app.post('/api/discover/collab/submit', memoryUpload.single('media'), async (req, res) => {
     try {
         const { threadId, requesterId } = req.body;
         if (!threadId || !requesterId) return res.status(400).json({ success: false, message: 'Missing fields.' });
         const thread = await CollabThread.findOne({ threadId });
         if (!thread) return res.status(404).json({ success: false, message: 'Thread not found.' });
         if (thread.requesterId !== requesterId) return res.status(403).json({ success: false, message: 'Access denied.' });
+
+        // Finalize the collab media on the post — either a fresh upload replacing
+        // the original proposal, or the media already proposed at request time.
+        const post = await DiscoveryPost.findOne({ postId: thread.postId });
+        if (post) {
+            if (req.file) {
+                const uploadedUrl = await uploadToImageKit(req.file.buffer,
+                    `collab_final_${requesterId}_${Date.now()}_${req.file.originalname}`, 'discovery/collab');
+                post.collabMediaUrl  = uploadedUrl;
+                post.collabMediaType = req.file.mimetype.startsWith('video') ? 'video' : 'image';
+            } else {
+                post.collabMediaUrl  = post.pendingCollabMedia || post.collabMediaUrl;
+                post.collabMediaType = post.pendingCollabType  || post.collabMediaType;
+            }
+            await post.save();
+        }
+
         thread.status = 'submitted';
         await thread.save();
         // Notify author
@@ -6076,6 +6096,28 @@ app.post('/api/discover/collab/toggle', async (req, res) => {
         res.json({ success: true, isCollabOpen: post.isCollabOpen });
     } catch (err) {
         console.error('🤝 toggle error:', err.message);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// POST /api/discover/collab/set-layout — either the author or the accepted collab
+// partner can change how the two media items are combined for display.
+app.post('/api/discover/collab/set-layout', async (req, res) => {
+    try {
+        const { postId, userId, layout } = req.body;
+        const validLayouts = ['side-by-side', 'top-bottom', 'picture-in-picture'];
+        if (!postId || !userId || !layout) return res.status(400).json({ success: false, message: 'Missing fields.' });
+        if (!validLayouts.includes(layout)) return res.status(400).json({ success: false, message: 'Invalid layout.' });
+        const post = await DiscoveryPost.findOne({ postId });
+        if (!post) return res.status(404).json({ success: false, message: 'Post not found.' });
+        if (post.authorId !== userId && post.collabPartnerId !== userId) {
+            return res.status(403).json({ success: false, message: 'Not authorized.' });
+        }
+        post.collabLayout = layout;
+        await post.save();
+        io.emit('collab_layout_updated', { postId, layout });
+        res.json({ success: true, layout });
+    } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
 });
