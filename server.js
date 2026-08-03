@@ -5329,6 +5329,8 @@ const discoveryPostSchema = new mongoose.Schema({
     pendingCollabBy:     { type: String, default: '' },
     pendingCollabMedia:  { type: String, default: '' },
     pendingCollabType:   { type: String, default: 'image' },
+    originalPostId:      { type: String, default: '' },
+    isRemix:             { type: Boolean, default: false },
 });
 discoveryPostSchema.index({ region: 1, ts: -1 });
 // TTL index: auto-delete posts where pulseExpiresAt is set and reached
@@ -5412,6 +5414,8 @@ app.get('/api/discover/feed', async (req, res) => {
                 collabMediaUrl:      p.collabMediaUrl || '',
                 collabMediaType:     p.collabMediaType || 'image',
                 collabLayout:        p.collabLayout || 'side-by-side',
+                originalPostId:      p.originalPostId || '',
+                isRemix:             p.isRemix || false,
                 mediaUrls:    (p.mediaUrls && p.mediaUrls.length > 0) ? p.mediaUrls : null,
             })),
             total,
@@ -5479,6 +5483,8 @@ app.get('/api/discover/author/:authorId', async (req, res) => {
                 collabMediaUrl:      p.collabMediaUrl || '',
                 collabMediaType:     p.collabMediaType || 'image',
                 collabLayout:        p.collabLayout || 'side-by-side',
+                originalPostId:      p.originalPostId || '',
+                isRemix:             p.isRemix || false,
                 mediaUrls:    (p.mediaUrls && p.mediaUrls.length > 0) ? p.mediaUrls : null,
             })),
             total: posts.length,
@@ -5761,34 +5767,85 @@ app.post('/api/discover/collab/submit', memoryUpload.single('media'), async (req
         if (!thread) { console.log('🤝 submit: thread not found', threadId); return res.status(404).json({ success: false, message: 'Thread not found.' }); }
         if (thread.requesterId !== requesterId) { console.log('🤝 submit: requesterId mismatch — thread.requesterId=', thread.requesterId, 'req=', requesterId); return res.status(403).json({ success: false, message: 'Access denied.' }); }
 
-        // Finalize the collab media on the post — either a fresh upload replacing
-        // the original proposal, or the media already proposed at request time.
         const post = await DiscoveryPost.findOne({ postId: thread.postId });
-        console.log('🤝 submit: found post?', !!post, 'postId=', thread.postId, 'pre-submit collabStatus=', post ? post.collabStatus : null);
-        if (post) {
-            if (req.file) {
-                const uploadedUrl = await uploadToImageKit(req.file.buffer,
-                    `collab_final_${requesterId}_${Date.now()}_${req.file.originalname}`, 'discovery/collab');
-                post.collabMediaUrl  = uploadedUrl;
-                post.collabMediaType = req.file.mimetype.startsWith('video') ? 'video' : 'image';
-            } else {
-                post.collabMediaUrl  = post.pendingCollabMedia || post.collabMediaUrl;
-                post.collabMediaType = post.pendingCollabType  || post.collabMediaType;
-            }
-            await post.save();
-            console.log('🤝 submit: post saved — collabMediaUrl set?', !!post.collabMediaUrl, 'post-save collabStatus=', post.collabStatus);
+        console.log('🤝 submit: found original post?', !!post, 'postId=', thread.postId);
+        if (!post) return res.status(404).json({ success: false, message: 'Original post not found.' });
+
+        // Determine the requester's final contribution — either a fresh upload,
+        // or whatever they proposed at request time.
+        let finalMediaUrl, finalMediaType;
+        if (req.file) {
+            finalMediaUrl = await uploadToImageKit(req.file.buffer,
+                `collab_final_${requesterId}_${Date.now()}_${req.file.originalname}`, 'discovery/collab');
+            finalMediaType = req.file.mimetype.startsWith('video') ? 'video' : 'image';
+        } else {
+            finalMediaUrl  = post.pendingCollabMedia || '';
+            finalMediaType = post.pendingCollabType  || 'image';
         }
+
+        const requester = await User.findOne({ xameId: requesterId }).lean();
+        const requesterName = requester
+            ? (requester.preferredName || `${requester.firstName} ${requester.lastName}`.trim())
+            : '';
+        const requesterAvatar = requester && !requester.hideProfilePicture ? (requester.profilePic || '') : '';
+
+        // Create the remix — a brand new, independent post carrying both media
+        // items, so the original post stays untouched and reusable for future
+        // collabs instead of being permanently consumed by this one pairing.
+        const remixPostId = require('uuid').v4();
+        await DiscoveryPost.create({
+            postId:              remixPostId,
+            authorId:            post.authorId,
+            authorName:          post.authorName,
+            authorAvatar:        post.authorAvatar,
+            title:               post.title,
+            caption:             post.caption,
+            mediaUrl:            post.mediaUrl,
+            mediaType:           post.mediaType,
+            thumbnailUrl:        post.thumbnailUrl,
+            region:              post.region,
+            category:            post.category,
+            musicUrl:            post.musicUrl,
+            musicTitle:          post.musicTitle,
+            isImmortal:          post.isImmortal,
+            collabStatus:        'accepted',
+            collabPartnerId:     requesterId,
+            collabPartnerName:   requesterName,
+            collabPartnerAvatar: requesterAvatar,
+            collabMediaUrl:      finalMediaUrl,
+            collabMediaType:     finalMediaType,
+            collabLayout:        post.collabLayout || 'side-by-side',
+            originalPostId:      post.postId,
+            isRemix:             true,
+        });
+        console.log('🤝 submit: remix post created', remixPostId);
+
+        // Reset and reopen the original post so anyone else can collab with it too.
+        post.collabStatus        = 'none';
+        post.pendingCollabBy     = '';
+        post.pendingCollabMedia  = '';
+        post.pendingCollabType   = 'image';
+        post.collabPartnerId     = '';
+        post.collabPartnerName   = '';
+        post.collabPartnerAvatar = '';
+        post.collabMediaUrl      = '';
+        post.isCollabOpen        = true;
+        await post.save();
+        console.log('🤝 submit: original post reset and reopened for new collabs');
 
         thread.status = 'submitted';
         await thread.save();
         console.log('🤝 submit: thread status now', thread.status);
-        // Notify author
+
+        io.emit('collab_updated', { postId: post.postId, isCollabOpen: post.isCollabOpen });
+
+        // Notify author — points at the new remix post, not the reopened original
         const authorSocket = userToSocketMap.get(thread.authorId);
         if (authorSocket) {
             io.to(authorSocket).emit('collab_submitted', {
-                threadId, postId: thread.postId, postTitle: thread.postTitle, requesterId });
+                threadId, postId: remixPostId, postTitle: thread.postTitle, requesterId });
         }
-        res.json({ success: true, message: 'Collab submitted.' });
+        res.json({ success: true, message: 'Collab submitted.', remixPostId });
     } catch (err) {
         console.error('🤝 submit error:', err.message);
         res.status(500).json({ success: false, message: err.message });
