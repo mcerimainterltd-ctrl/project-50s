@@ -5792,12 +5792,15 @@ app.post('/api/discover/collab/submit', memoryUpload.single('media'), async (req
         // Create the remix — a brand new, independent post carrying both media
         // items, so the original post stays untouched and reusable for future
         // collabs instead of being permanently consumed by this one pairing.
+        // The requester (the person actively completing/submitting the collab)
+        // becomes the remix's primary author; the original post's owner is
+        // credited alongside them as the collaborator.
         const remixPostId = require('uuid').v4();
         await DiscoveryPost.create({
             postId:              remixPostId,
-            authorId:            post.authorId,
-            authorName:          post.authorName,
-            authorAvatar:        post.authorAvatar,
+            authorId:            requesterId,
+            authorName:          requesterName,
+            authorAvatar:        requesterAvatar,
             title:               post.title,
             caption:             post.caption,
             mediaUrl:            post.mediaUrl,
@@ -5809,9 +5812,9 @@ app.post('/api/discover/collab/submit', memoryUpload.single('media'), async (req
             musicTitle:          post.musicTitle,
             isImmortal:          post.isImmortal,
             collabStatus:        'accepted',
-            collabPartnerId:     requesterId,
-            collabPartnerName:   requesterName,
-            collabPartnerAvatar: requesterAvatar,
+            collabPartnerId:     post.authorId,
+            collabPartnerName:   post.authorName,
+            collabPartnerAvatar: post.authorAvatar,
             collabMediaUrl:      finalMediaUrl,
             collabMediaType:     finalMediaType,
             collabLayout:        post.collabLayout || 'side-by-side',
