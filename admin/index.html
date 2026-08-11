@@ -453,7 +453,7 @@
 </div>
 
 <script>
-const SERVER = 'https://project-50s.onrender.com';
+const SERVER = '';
 const ADMIN_PIN = '061266'; // Change before distributing
 let currentUser = null;
 let logEntries = [];
@@ -491,7 +491,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 function switchTab(id, btn) {
-  ['users','announce','log'].forEach(t => {
+  ['users','announce','log','wallet','xametel'].forEach(t => {
     document.getElementById('tab-'+t).classList.add('hidden');
   });
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
