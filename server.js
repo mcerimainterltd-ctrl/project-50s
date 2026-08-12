@@ -3258,13 +3258,17 @@ app.post('/api/wallet/monnify/virtual-account', async (req, res) => {
                 account_name:   formalAccountName,
             }});
         } else if (data.responseMessage && data.responseMessage.includes('cannot reserve more than')) {
-            // Account already exists — fetch it using the customer email
+            // Account already exists — fetch it using customer email search
             try {
                 const customerEmail = email || userId + '@xamepage.app';
-                // Use saved accountReference from DB for accurate lookup
                 const savedWallet = await Wallet.findOne({ xameId: userId }).lean();
-                const savedRef = savedWallet?.virtualAccount?.accountReference || ('xamepay-mnfy-' + userId);
-                const fetchRes = await fetch(`${baseUrl}/api/v2/bank-transfer/reserved-accounts/${encodeURIComponent(savedRef)}`, {
+                const savedRef = savedWallet?.virtualAccounts?.monnify?.accountReference
+                              || savedWallet?.virtualAccount?.accountReference
+                              || null;
+                const fetchUrl = savedRef
+                    ? `${baseUrl}/api/v2/bank-transfer/reserved-accounts/${encodeURIComponent(savedRef)}`
+                    : `${baseUrl}/api/v2/bank-transfer/reserved-accounts/search?q=${encodeURIComponent(customerEmail)}&page=0&size=10`;
+                const fetchRes = await fetch(fetchUrl, {
                     headers: { Authorization: `Bearer ${token}` }
                 });
                 const fetchData = await fetchRes.json();
