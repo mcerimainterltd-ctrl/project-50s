@@ -543,7 +543,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 function switchTab(id, btn) {
-  ['users','announce','log','wallet','xametel'].forEach(t => {
+  ['users','announce','log','wallet','xametel','official'].forEach(t => {
     document.getElementById('tab-'+t).classList.add('hidden');
   });
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));

@@ -7947,21 +7947,34 @@ app.post('/api/admin/official-account/broadcast', async (req, res) => {
     try {
         const users = await User.find({ xameId: { $ne: OFFICIAL_ID } }, { xameId: 1 }).lean();
         let sent = 0;
+        const { v4: uuidv4b } = require('uuid');
         for (const user of users) {
             try {
-                const msg = {
-                    id: require('uuid').v4(),
+                const msgId = uuidv4b();
+                const ts = Date.now();
+                const msgObj = {
+                    id:       msgId,
                     senderId: OFFICIAL_ID,
-                    receiverId: user.xameId,
-                    text: message,
-                    fileUrl: mediaUrl || '',
-                    fileMime: mediaUrl ? 'image/jpeg' : '',
-                    ts: Date.now(),
-                    status: 'delivered',
+                    text:     message,
+                    ts,
+                    status:   'delivered',
+                    ...(mediaUrl && { fileUrl: mediaUrl, fileMime: 'image/jpeg' }),
                 };
-                await saveMessage(msg);
+                // Save to DB
+                await new Message({
+                    messageId:   msgId,
+                    senderId:    OFFICIAL_ID,
+                    recipientId: user.xameId,
+                    ts,
+                    text: message,
+                    ...(mediaUrl && { file: { url: mediaUrl, mime: 'image/jpeg', name: 'media' } }),
+                }).save();
+                // Notify if online
                 const socketId = findSocketId(user.xameId);
-                if (socketId) io.to(socketId).emit('message', msg);
+                if (socketId) {
+                    io.to(socketId).emit('receive-message', { senderId: OFFICIAL_ID, message: msgObj });
+                    io.to(socketId).emit('new_message_count', { senderId: OFFICIAL_ID });
+                }
                 sent++;
             } catch(_) {}
         }
