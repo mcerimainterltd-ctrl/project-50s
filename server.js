@@ -7901,15 +7901,6 @@ app.post('/api/change-password', async (req, res) => {
     }
 });
 
-    // Catch-all MUST be last — after every other route is registered,
-    // otherwise routes defined below this point would never be reached.
-    app.get('*', (req, res) => {
-        if (req.path.startsWith('/api/')) {
-            return res.status(404).json({ success: false, message: 'API endpoint not found' });
-        }
-        res.sendFile(path.join(BASE_DIR, 'index.html'));
-    });
-
 // ── Official Account Endpoints ───────────────────────────────────────────────
 const OFFICIAL_ID = '058000000001';
 
@@ -7928,14 +7919,21 @@ app.post('/api/admin/official-account/pic', memoryUpload.single('file'), async (
     if (secret !== process.env.ADMIN_SECRET) return res.json({ success: false, message: 'Unauthorized' });
     try {
         if (!req.file) return res.json({ success: false, message: 'No file uploaded' });
-        const uploadResult = await new Promise((resolve, reject) => {
-            const stream = cloudinary.uploader.upload_stream(
-                { folder: 'xamepage/official', public_id: 'official_avatar', overwrite: true },
-                (err, result) => err ? reject(err) : resolve(result)
-            );
-            stream.end(req.file.buffer);
+        // Upload to ImageKit
+        const ikAuth = Buffer.from(process.env.IMAGEKIT_PRIVATE_KEY + ':').toString('base64');
+        const fd = new (require('form-data'))();
+        fd.append('file', req.file.buffer, { filename: 'official_avatar.jpg' });
+        fd.append('fileName', 'official_avatar');
+        fd.append('folder', '/xamepage/official');
+        fd.append('useUniqueFileName', 'false');
+        const ikRes = await fetch('https://upload.imagekit.io/api/v1/files/upload', {
+            method: 'POST',
+            headers: { Authorization: 'Basic ' + ikAuth, ...fd.getHeaders() },
+            body: fd
         });
-        const profilePic = uploadResult.secure_url;
+        const ikData = await ikRes.json();
+        if (!ikData.url) return res.json({ success: false, message: 'ImageKit upload failed', ikData });
+        const profilePic = ikData.url;
         await User.findOneAndUpdate({ xameId: OFFICIAL_ID }, { profilePic });
         res.json({ success: true, profilePic });
     } catch (err) { res.json({ success: false, message: err.message }); }
@@ -7961,9 +7959,7 @@ app.post('/api/admin/official-account/broadcast', async (req, res) => {
                     ts: Date.now(),
                     status: 'delivered',
                 };
-                // Save to both sides
                 await saveMessage(msg);
-                // Notify via socket if online
                 const socketId = findSocketId(user.xameId);
                 if (socketId) io.to(socketId).emit('message', msg);
                 sent++;
@@ -7972,6 +7968,15 @@ app.post('/api/admin/official-account/broadcast', async (req, res) => {
         res.json({ success: true, sent });
     } catch (err) { res.json({ success: false, message: err.message }); }
 });
+
+    // Catch-all MUST be last — after every other route is registered,
+    // otherwise routes defined below this point would never be reached.
+    app.get('*', (req, res) => {
+        if (req.path.startsWith('/api/')) {
+            return res.status(404).json({ success: false, message: 'API endpoint not found' });
+        }
+        res.sendFile(path.join(BASE_DIR, 'index.html'));
+    });
 
     server.listen(PORT, () => {
         console.log('='.repeat(60));
