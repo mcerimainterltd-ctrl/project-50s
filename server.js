@@ -7926,6 +7926,19 @@ app.post('/api/admin/official-account/pic', memoryUpload.single('file'), async (
     } catch (err) { res.json({ success: false, message: err.message }); }
 });
 
+app.post('/api/admin/official-account/delete-message', async (req, res) => {
+    const secret = req.body.secret || req.headers['x-admin-secret'];
+    if (secret !== process.env.ADMIN_SECRET) return res.json({ success: false, message: 'Unauthorized' });
+    const { messageId } = req.body;
+    if (!messageId) return res.json({ success: false, message: 'messageId required' });
+    try {
+        const result = await Message.deleteMany({ messageId });
+        // Notify all online users to delete this message
+        io.emit('messages-deleted', { deleterId: OFFICIAL_ID, contactId: OFFICIAL_ID, messageIds: [messageId], permanently: true });
+        res.json({ success: true, deleted: result.deletedCount });
+    } catch (err) { res.json({ success: false, message: err.message }); }
+});
+
 app.post('/api/admin/official-account/broadcast', async (req, res) => {
     const secret = req.body.secret || req.headers['x-admin-secret'];
     if (secret !== process.env.ADMIN_SECRET) return res.json({ success: false, message: 'Unauthorized' });

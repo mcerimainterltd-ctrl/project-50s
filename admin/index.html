@@ -452,6 +452,14 @@
       </div>
       <button class="btn btn-primary btn-full" onclick="broadcastOfficialMessage()" id="broadcast-btn">📢 Broadcast to All Users</button>
       <div id="broadcast-msg"></div>
+
+      <!-- Delete message -->
+      <div class="sl" style="margin-top:16px">🗑️ DELETE MESSAGE FOR EVERYONE</div>
+      <div class="field"><label class="label">MESSAGE ID</label>
+        <input type="text" id="official-del-id" class="input mono" placeholder="Paste message ID to delete">
+      </div>
+      <button class="btn btn-danger btn-full" onclick="deleteOfficialMessage()">🗑️ Delete for Everyone</button>
+      <div id="delete-msg"></div>
     </div>
   </div>
 
@@ -1238,6 +1246,27 @@ async function sendAI() {
 function quickAction(prompt) {
   document.getElementById('ai-input').value = prompt;
   sendAI();
+}
+
+async function deleteOfficialMessage() {
+  const secret  = document.getElementById('official-secret').value.trim();
+  const msgId   = document.getElementById('official-del-id').value.trim();
+  if (!secret) return alert('Enter admin secret first');
+  if (!msgId)  return alert('Enter a message ID');
+  if (!confirm('Delete this message for ALL users? This cannot be undone.')) return;
+  const r = await fetch(SERVER + '/api/admin/official-account/delete-message', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+    body: JSON.stringify({ messageId: msgId })
+  });
+  const d = await r.json();
+  const el = document.getElementById('delete-msg');
+  if (d.success) {
+    el.innerHTML = '<span style="color:#00B0A0">✅ Deleted (' + d.deleted + ' records)</span>';
+    document.getElementById('official-del-id').value = '';
+  } else {
+    el.innerHTML = '<span style="color:red">❌ ' + d.message + '</span>';
+  }
 }
 
 // updateContextBadge is called explicitly after renderUserPanel in searchUser()
