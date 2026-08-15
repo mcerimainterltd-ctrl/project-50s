@@ -181,9 +181,9 @@
   <!-- USERS TAB -->
   <div id="tab-users" class="content">
     <div class="card">
-      <div class="sl">SEARCH USER BY XAME-ID</div>
+      <div class="sl">SEARCH USER BY XAME-ID OR NAME</div>
       <div class="search-row">
-        <input type="text" id="search-input" class="input mono" placeholder="e.g. 058123456789" onkeydown="if(event.key==='Enter')searchUser()">
+        <input type="text" id="search-input" class="input mono" placeholder="XameID or first/last name" onkeydown="if(event.key==='Enter')searchUser()">
         <button class="btn btn-primary" onclick="searchUser()" id="search-btn">Search</button>
       </div>
       <div id="search-error" class="error-msg hidden"></div>
@@ -544,6 +544,10 @@ async function searchUser() {
   const r = await api('POST', '/api/search-user', {xameId});
   btn.disabled = false; btn.textContent = 'Search';
 
+  // Remove any previous multi-result list
+  const prevList = document.getElementById('search-results-list');
+  if (prevList) prevList.remove();
+
   if (r.success && r.user) {
     currentUser = r.user;
     renderUserPanel(r.user);
@@ -551,8 +555,38 @@ async function searchUser() {
     document.getElementById('user-panel').classList.remove('hidden');
     document.getElementById('user-panel').style.display = 'flex';
     addLog(true, `Loaded user: ${xameId}`);
+  } else if (r.success && r.users && r.users.length > 0) {
+    // Multiple matches — show a selectable list
+    const list = document.createElement('div');
+    list.id = 'search-results-list';
+    list.style.cssText = 'margin-top:12px;border:1px solid #1F2937;border-radius:12px;overflow:hidden';
+    r.users.forEach(u => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:12px;padding:12px 16px;cursor:pointer;border-bottom:1px solid #1F2937;background:#0D1117';
+      row.onmouseover = () => row.style.background = '#161B22';
+      row.onmouseout  = () => row.style.background = '#0D1117';
+      const name = u.preferredName || `${u.firstName} ${u.lastName}`;
+      row.innerHTML = `
+        <div style="width:36px;height:36px;border-radius:50%;background:#00B0A0;display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;flex-shrink:0">${(u.firstName||'?')[0]}</div>
+        <div>
+          <div style="color:#fff;font-weight:600;font-size:13px">${name}</div>
+          <div style="color:#6B7280;font-size:11px">${u.xameId}${u.suspended ? ' <span style="color:#EF4444">[Suspended]</span>' : ''}</div>
+        </div>`;
+      row.onclick = () => {
+        currentUser = u;
+        renderUserPanel(u);
+        updateContextBadge();
+        document.getElementById('user-panel').classList.remove('hidden');
+        document.getElementById('user-panel').style.display = 'flex';
+        list.remove();
+        addLog(true, `Loaded user: ${u.xameId}`);
+      };
+      list.appendChild(row);
+    });
+    document.getElementById('search-btn').parentElement.parentElement.appendChild(list);
+    addLog(true, `Found ${r.users.length} users matching "${xameId}"`);
   } else {
-    err.textContent = 'No user found with that Xame-ID.';
+    err.textContent = r.message || 'No user found.';
     err.classList.remove('hidden');
     addLog(false, `Not found: ${xameId}`);
   }

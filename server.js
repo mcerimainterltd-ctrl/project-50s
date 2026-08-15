@@ -1151,11 +1151,32 @@ app.post('/api/get-user-name', async (req, res) => {
 
 app.post('/api/search-user', async (req, res) => {
     const { xameId } = req.body;
-    if (!xameId?.trim()) return res.status(400).json({ success: false, message: 'Xame-ID required.' });
+    if (!xameId?.trim()) return res.status(400).json({ success: false, message: 'Search query required.' });
+    const q = xameId.trim();
     try {
-        const user = await User.findOne({ xameId: xameId.trim() });
-        if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
-        res.json({ success: true, user: {
+        // Try exact xameId first
+        let user = await User.findOne({ xameId: q });
+        if (user) {
+            return res.json({ success: true, user: mapUser(user), users: null });
+        }
+        // Fall back to name search (first, last, preferred)
+        const nameRegex = new RegExp(q, 'i');
+        const users = await User.find({
+            $or: [
+                { firstName: nameRegex },
+                { lastName: nameRegex },
+                { preferredName: nameRegex },
+            ]
+        }).limit(20).lean();
+        if (users.length === 1) return res.json({ success: true, user: mapUser(users[0]), users: null });
+        if (users.length > 1) return res.json({ success: true, user: null, users: users.map(mapUser) });
+        return res.status(404).json({ success: false, message: 'No user found.' });
+    } catch (err) {
+        res.status(500).json({ success: false, message: 'Server error.' });
+    }
+});
+
+function mapUser(user) { return {
             xameId:             user.xameId,
             firstName:          user.firstName,
             lastName:           user.lastName,
@@ -1173,11 +1194,8 @@ app.post('/api/search-user', async (req, res) => {
             createdAt:          user.createdAt,
             suspended:          user.suspended || false,
             isOnline:           onlineUsers.has(user.xameId),
-        }});
-    } catch (err) {
-        res.status(500).json({ success: false, message: 'Server error.' });
-    }
-});
+        };
+}
 
 app.post('/api/add-contact', async (req, res) => {
     const { userId, contactId, customName } = req.body;
