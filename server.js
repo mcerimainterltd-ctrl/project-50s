@@ -7919,21 +7919,8 @@ app.post('/api/admin/official-account/pic', memoryUpload.single('file'), async (
     if (secret !== process.env.ADMIN_SECRET) return res.json({ success: false, message: 'Unauthorized' });
     try {
         if (!req.file) return res.json({ success: false, message: 'No file uploaded' });
-        // Upload to ImageKit
-        const ikAuth = Buffer.from(process.env.IMAGEKIT_PRIVATE_KEY + ':').toString('base64');
-        const fd = new (require('form-data'))();
-        fd.append('file', req.file.buffer, { filename: 'official_avatar.jpg' });
-        fd.append('fileName', 'official_avatar');
-        fd.append('folder', '/xamepage/official');
-        fd.append('useUniqueFileName', 'false');
-        const ikRes = await fetch('https://upload.imagekit.io/api/v1/files/upload', {
-            method: 'POST',
-            headers: { Authorization: 'Basic ' + ikAuth, ...fd.getHeaders() },
-            body: fd
-        });
-        const ikData = await ikRes.json();
-        if (!ikData.url) return res.json({ success: false, message: 'ImageKit upload failed', ikData });
-        const profilePic = ikData.url;
+        const profilePic = await uploadToImageKit(req.file.buffer, 'official_avatar.jpg', 'official');
+        if (!profilePic) return res.json({ success: false, message: 'ImageKit upload failed' });
         await User.findOneAndUpdate({ xameId: OFFICIAL_ID }, { profilePic });
         res.json({ success: true, profilePic });
     } catch (err) { res.json({ success: false, message: err.message }); }
