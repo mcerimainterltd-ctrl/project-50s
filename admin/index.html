@@ -174,6 +174,7 @@
     <button class="tab active" onclick="switchTab('users',this)">👤 Users</button>
     <button class="tab" onclick="switchTab('announce',this)">📣 Announce</button>
     <button class="tab" onclick="switchTab('log',this)" id="log-tab">📋 Log</button>
+    <button class="tab" onclick="switchTab('official',this)" id="official-tab">🛡️ Official</button>
     <button class="tab" onclick="switchTab('wallet',this)" id="wallet-tab">💰 Wallet</button>
     <button class="tab" onclick="switchTab('xametel',this)" id="xametel-tab">📞 XameTel</button>
   </div>
@@ -411,6 +412,49 @@
   </div>
 
   <!-- LOG TAB -->
+  <!-- OFFICIAL TAB -->
+  <div id="tab-official" class="content hidden">
+    <div class="card">
+      <div class="sl">🛡️ XAMEPAGE OFFICIAL ACCOUNT (058000000001)</div>
+
+      <!-- Profile Picture -->
+      <div class="field">
+        <label class="label">PROFILE PICTURE</label>
+        <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px">
+          <img id="official-avatar" src="" style="width:64px;height:64px;border-radius:50%;border:2px solid #00B0A0;object-fit:cover;background:#1F2937">
+          <div style="flex:1">
+            <div class="upload-zone" id="official-upload-zone" style="padding:10px">
+              <input type="file" accept="image/*" onchange="handleOfficialPicUpload(this)">
+              <div style="pointer-events:none;font-size:12px;color:#6B7280">Click to upload new logo</div>
+            </div>
+            <div id="official-upload-status" style="font-size:11px;color:#6B7280;margin-top:4px"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Admin secret -->
+      <div class="field">
+        <label class="label">ADMIN SECRET</label>
+        <input type="password" id="official-secret" class="input mono" placeholder="Required for all actions">
+      </div>
+
+      <!-- Load current info -->
+      <button class="btn btn-ghost" onclick="loadOfficialAccount()" style="margin-bottom:16px">🔄 Load Current Info</button>
+      <div id="official-info" style="margin-bottom:16px"></div>
+
+      <!-- Post to all users chat -->
+      <div class="sl" style="margin-top:16px">📢 BROADCAST MESSAGE TO ALL USERS</div>
+      <div class="field"><label class="label">MESSAGE</label>
+        <textarea id="official-msg" class="input" rows="3" placeholder="Type your message to all users..."></textarea>
+      </div>
+      <div class="field"><label class="label">MEDIA URL (optional)</label>
+        <input type="text" id="official-media-url" class="input" placeholder="https://ik.imagekit.io/...">
+      </div>
+      <button class="btn btn-primary btn-full" onclick="broadcastOfficialMessage()" id="broadcast-btn">📢 Broadcast to All Users</button>
+      <div id="broadcast-msg"></div>
+    </div>
+  </div>
+
   <div id="tab-log" class="content hidden">
     <div class="card">
       <div class="sl">ACTION LOG</div>
@@ -1197,6 +1241,73 @@ function quickAction(prompt) {
 }
 
 // updateContextBadge is called explicitly after renderUserPanel in searchUser()
+
+// ── OFFICIAL ACCOUNT FUNCTIONS ───────────────────────────────────────────────
+const OFFICIAL_ID = '058000000001';
+
+async function loadOfficialAccount() {
+  const secret = document.getElementById('official-secret').value.trim();
+  if (!secret) return alert('Enter admin secret first');
+  const r = await fetch(SERVER + '/api/admin/official-account?userId=' + OFFICIAL_ID, {
+    headers: { 'x-admin-secret': secret }
+  });
+  const d = await r.json();
+  if (!d.success) return document.getElementById('official-info').innerHTML = '<span style="color:red">' + d.message + '</span>';
+  const av = document.getElementById('official-avatar');
+  if (d.profilePic) av.src = d.profilePic;
+  document.getElementById('official-info').innerHTML = `
+    <div style="font-size:12px;color:#6B7280">
+      <div><b style="color:#e5e7eb">Name:</b> ${d.preferredName || d.firstName + ' ' + d.lastName}</div>
+      <div><b style="color:#e5e7eb">Status:</b> ${d.statusMessage || '—'}</div>
+      <div><b style="color:#e5e7eb">Profile Pic:</b> ${d.profilePic ? '<a href="'+d.profilePic+'" target="_blank" style="color:#00B0A0">View</a>' : 'None'}</div>
+    </div>`;
+}
+
+async function handleOfficialPicUpload(input) {
+  const secret = document.getElementById('official-secret').value.trim();
+  if (!secret) { alert('Enter admin secret first'); input.value=''; return; }
+  const file = input.files[0];
+  if (!file) return;
+  const status = document.getElementById('official-upload-status');
+  status.textContent = 'Uploading...';
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('userId', OFFICIAL_ID);
+  fd.append('secret', secret);
+  const r = await fetch(SERVER + '/api/admin/official-account/pic', { method: 'POST', body: fd });
+  const d = await r.json();
+  if (d.success) {
+    status.textContent = '✅ Uploaded';
+    document.getElementById('official-avatar').src = d.profilePic;
+  } else {
+    status.textContent = '❌ ' + d.message;
+  }
+}
+
+async function broadcastOfficialMessage() {
+  const secret = document.getElementById('official-secret').value.trim();
+  const msg    = document.getElementById('official-msg').value.trim();
+  const media  = document.getElementById('official-media-url').value.trim();
+  if (!secret) return alert('Enter admin secret first');
+  if (!msg)    return alert('Enter a message');
+  const btn = document.getElementById('broadcast-btn');
+  btn.disabled = true; btn.textContent = 'Broadcasting...';
+  const r = await fetch(SERVER + '/api/admin/official-account/broadcast', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+    body: JSON.stringify({ message: msg, mediaUrl: media || null })
+  });
+  const d = await r.json();
+  const el = document.getElementById('broadcast-msg');
+  if (d.success) {
+    el.innerHTML = '<span style="color:#00B0A0">✅ Sent to ' + d.sent + ' users</span>';
+    document.getElementById('official-msg').value = '';
+    document.getElementById('official-media-url').value = '';
+  } else {
+    el.innerHTML = '<span style="color:red">❌ ' + d.message + '</span>';
+  }
+  btn.disabled = false; btn.textContent = '📢 Broadcast to All Users';
+}
 </script>
 </body>
 </html>

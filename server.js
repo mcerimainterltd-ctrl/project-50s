@@ -7910,6 +7910,69 @@ app.post('/api/change-password', async (req, res) => {
         res.sendFile(path.join(BASE_DIR, 'index.html'));
     });
 
+// ── Official Account Endpoints ───────────────────────────────────────────────
+const OFFICIAL_ID = '058000000001';
+
+app.get('/api/admin/official-account', async (req, res) => {
+    const secret = req.headers['x-admin-secret'];
+    if (secret !== process.env.ADMIN_SECRET) return res.json({ success: false, message: 'Unauthorized' });
+    try {
+        const user = await User.findOne({ xameId: OFFICIAL_ID }).lean();
+        if (!user) return res.json({ success: false, message: 'Official account not found' });
+        res.json({ success: true, ...user });
+    } catch (err) { res.json({ success: false, message: err.message }); }
+});
+
+app.post('/api/admin/official-account/pic', memoryUpload.single('file'), async (req, res) => {
+    const secret = req.body.secret || req.headers['x-admin-secret'];
+    if (secret !== process.env.ADMIN_SECRET) return res.json({ success: false, message: 'Unauthorized' });
+    try {
+        if (!req.file) return res.json({ success: false, message: 'No file uploaded' });
+        const uploadResult = await new Promise((resolve, reject) => {
+            const stream = cloudinary.uploader.upload_stream(
+                { folder: 'xamepage/official', public_id: 'official_avatar', overwrite: true },
+                (err, result) => err ? reject(err) : resolve(result)
+            );
+            stream.end(req.file.buffer);
+        });
+        const profilePic = uploadResult.secure_url;
+        await User.findOneAndUpdate({ xameId: OFFICIAL_ID }, { profilePic });
+        res.json({ success: true, profilePic });
+    } catch (err) { res.json({ success: false, message: err.message }); }
+});
+
+app.post('/api/admin/official-account/broadcast', async (req, res) => {
+    const secret = req.body.secret || req.headers['x-admin-secret'];
+    if (secret !== process.env.ADMIN_SECRET) return res.json({ success: false, message: 'Unauthorized' });
+    const { message, mediaUrl } = req.body;
+    if (!message) return res.json({ success: false, message: 'Message required' });
+    try {
+        const users = await User.find({ xameId: { $ne: OFFICIAL_ID } }, { xameId: 1 }).lean();
+        let sent = 0;
+        for (const user of users) {
+            try {
+                const msg = {
+                    id: require('uuid').v4(),
+                    senderId: OFFICIAL_ID,
+                    receiverId: user.xameId,
+                    text: message,
+                    fileUrl: mediaUrl || '',
+                    fileMime: mediaUrl ? 'image/jpeg' : '',
+                    ts: Date.now(),
+                    status: 'delivered',
+                };
+                // Save to both sides
+                await saveMessage(msg);
+                // Notify via socket if online
+                const socketId = findSocketId(user.xameId);
+                if (socketId) io.to(socketId).emit('message', msg);
+                sent++;
+            } catch(_) {}
+        }
+        res.json({ success: true, sent });
+    } catch (err) { res.json({ success: false, message: err.message }); }
+});
+
     server.listen(PORT, () => {
         console.log('='.repeat(60));
         console.log('✅  XamePage Server v2.1.1');
