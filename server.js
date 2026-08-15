@@ -7926,6 +7926,16 @@ app.post('/api/admin/official-account/pic', memoryUpload.single('file'), async (
     } catch (err) { res.json({ success: false, message: err.message }); }
 });
 
+app.get('/api/admin/official-account/recent-broadcasts', async (req, res) => {
+    const secret = req.headers['x-admin-secret'];
+    if (secret !== process.env.ADMIN_SECRET) return res.json({ success: false, message: 'Unauthorized' });
+    try {
+        const messages = await Message.find({ senderId: OFFICIAL_ID })
+            .sort({ ts: -1 }).limit(10).lean();
+        res.json({ success: true, messages });
+    } catch (err) { res.json({ success: false, message: err.message }); }
+});
+
 app.post('/api/admin/official-account/delete-message', async (req, res) => {
     const secret = req.body.secret || req.headers['x-admin-secret'];
     if (secret !== process.env.ADMIN_SECRET) return res.json({ success: false, message: 'Unauthorized' });

@@ -453,6 +453,11 @@
       <button class="btn btn-primary btn-full" onclick="broadcastOfficialMessage()" id="broadcast-btn">📢 Broadcast to All Users</button>
       <div id="broadcast-msg"></div>
 
+      <!-- Recent Broadcasts -->
+      <div class="sl" style="margin-top:16px">📋 RECENT BROADCASTS</div>
+      <button class="btn btn-ghost" onclick="loadRecentBroadcasts()" style="margin-bottom:8px">🔄 Load Recent Messages</button>
+      <div id="recent-broadcasts" style="margin-bottom:16px"></div>
+
       <!-- Delete message -->
       <div class="sl" style="margin-top:16px">🗑️ DELETE MESSAGE FOR EVERYONE</div>
       <div class="field"><label class="label">MESSAGE ID</label>
@@ -1246,6 +1251,42 @@ async function sendAI() {
 function quickAction(prompt) {
   document.getElementById('ai-input').value = prompt;
   sendAI();
+}
+
+async function loadRecentBroadcasts() {
+  const secret = document.getElementById('official-secret').value.trim();
+  if (!secret) return alert('Enter admin secret first');
+  const el = document.getElementById('recent-broadcasts');
+  el.innerHTML = 'Loading...';
+  const r = await fetch(SERVER + '/api/admin/official-account/recent-broadcasts', {
+    headers: { 'x-admin-secret': secret }
+  });
+  const d = await r.json();
+  if (!d.success) { el.innerHTML = '<span style="color:red">❌ ' + d.message + '</span>'; return; }
+  if (!d.messages.length) { el.innerHTML = '<span style="color:#6B7280">No broadcasts yet</span>'; return; }
+  el.innerHTML = d.messages.map(m => `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:8px;border-bottom:1px solid #1F2937;gap:8px">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;color:#e5e7eb;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.text || '📎 Media'}</div>
+        <div style="font-size:10px;color:#6B7280">${new Date(m.ts).toLocaleString()}</div>
+      </div>
+      <button onclick="quickDelete('${m.messageId}')" style="background:#7f1d1d;border:none;color:#fca5a5;padding:4px 8px;border-radius:6px;font-size:11px;cursor:pointer;white-space:nowrap">🗑️ Delete</button>
+    </div>
+  `).join('');
+}
+
+async function quickDelete(messageId) {
+  const secret = document.getElementById('official-secret').value.trim();
+  if (!secret) return alert('Enter admin secret first');
+  if (!confirm('Delete this message for everyone?')) return;
+  const r = await fetch(SERVER + '/api/admin/official-account/delete-message', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+    body: JSON.stringify({ messageId })
+  });
+  const d = await r.json();
+  if (d.success) { loadRecentBroadcasts(); }
+  else alert('❌ ' + d.message);
 }
 
 async function deleteOfficialMessage() {
