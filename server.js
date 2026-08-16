@@ -7930,8 +7930,14 @@ app.get('/api/admin/official-account/recent-broadcasts', async (req, res) => {
     const secret = req.headers['x-admin-secret'];
     if (secret !== process.env.ADMIN_SECRET) return res.json({ success: false, message: 'Unauthorized' });
     try {
-        const messages = await Message.find({ senderId: OFFICIAL_ID })
-            .sort({ ts: -1 }).limit(10).lean();
+        // Get distinct broadcasts — one record per unique messageId
+        const messages = await Message.aggregate([
+            { $match: { senderId: OFFICIAL_ID } },
+            { $sort: { ts: -1 } },
+            { $group: { _id: '$text', messageId: { $first: '$messageId' }, text: { $first: '$text' }, ts: { $first: '$ts' } } },
+            { $sort: { ts: -1 } },
+            { $limit: 10 }
+        ]);
         res.json({ success: true, messages });
     } catch (err) { res.json({ success: false, message: err.message }); }
 });
@@ -7942,7 +7948,14 @@ app.post('/api/admin/official-account/delete-message', async (req, res) => {
     const { messageId } = req.body;
     if (!messageId) return res.json({ success: false, message: 'messageId required' });
     try {
-        const result = await Message.deleteMany({ messageId });
+        // Find the text of this message to delete all copies sent to all users
+        const sample = await Message.findOne({ messageId }).lean();
+        let result;
+        if (sample?.text) {
+            result = await Message.deleteMany({ senderId: OFFICIAL_ID, text: sample.text });
+        } else {
+            result = await Message.deleteMany({ messageId });
+        }
         // Notify all online users to delete this message
         io.emit('messages-deleted', { deleterId: OFFICIAL_ID, contactId: OFFICIAL_ID, messageIds: [messageId], permanently: true });
         res.json({ success: true, deleted: result.deletedCount });
