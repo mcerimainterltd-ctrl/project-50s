@@ -379,6 +379,7 @@ const userSchema = new mongoose.Schema({
 
 const messageSchema = new mongoose.Schema({
     messageId:   { type: String, required: true, unique: true },
+    isBroadcast: { type: Boolean, default: false },
     senderId:    { type: String, required: true, index: true },
     recipientId: { type: String, required: true, index: true },
     ts:          { type: Number, required: true },
@@ -7932,7 +7933,7 @@ app.get('/api/admin/official-account/recent-broadcasts', async (req, res) => {
     try {
         // Get distinct broadcasts — one record per unique messageId
         const messages = await Message.aggregate([
-            { $match: { senderId: OFFICIAL_ID } },
+            { $match: { senderId: OFFICIAL_ID, isBroadcast: true } },
             { $sort: { ts: -1 } },
             { $group: { _id: '$text', messageId: { $first: '$messageId' }, text: { $first: '$text' }, ts: { $first: '$ts' } } },
             { $sort: { ts: -1 } },
@@ -7990,6 +7991,7 @@ app.post('/api/admin/official-account/broadcast', async (req, res) => {
                     recipientId: user.xameId,
                     ts,
                     text: message,
+                    isBroadcast: true,
                     ...(mediaUrl && { file: { url: mediaUrl, mime: 'image/jpeg', name: 'media' } }),
                 }).save();
                 // Notify if online
