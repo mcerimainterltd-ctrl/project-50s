@@ -6412,6 +6412,27 @@ app.get('/join/:code', async (req, res) => {
         const name = user ? (user.preferredName || user.firstName) : 'A friend';
         const pic  = user ? (user.profilePic || '') : '';
         const apkUrl = 'https://app.xamepage.com/api/app/download';
+
+        let userPosts = [];
+        if (user && user.xameId) {
+            userPosts = await DiscoveryPost.find({ authorId: user.xameId, isWhisper: { $ne: true } })
+                .sort({ ts: -1 })
+                .limit(3)
+                .lean();
+        }
+
+        const previewHtml = userPosts.length > 0 ? `
+  <div style="margin-bottom:20px;text-align:left;">
+    <p style="color:rgba(255,255,255,0.5);font-size:12px;margin-bottom:8px;font-weight:600;">LATEST FROM ${name.toUpperCase()}</p>
+    <div style="display:grid;grid-template-columns:repeat(${userPosts.length}, 1fr);gap:8px;">
+      ${userPosts.map(p => `
+        <div style="background:#1e1e2e;border-radius:10px;overflow:hidden;border:1px solid rgba(255,255,255,0.1);aspect-ratio:1;position:relative;">
+          ${p.thumbnailUrl || p.mediaUrl ? `<img src="${p.thumbnailUrl || p.mediaUrl}" style="width:100%;height:100%;object-fit:cover;">` : `<div style="padding:8px;font-size:10px;color:rgba(255,255,255,0.7);overflow:hidden;">${p.title || p.caption || 'Post'}</div>`}
+        </div>
+      `).join('')}
+    </div>
+  </div>` : '';
+
         res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6440,6 +6461,7 @@ app.get('/join/:code', async (req, res) => {
   <p class="invite-text">You were invited by</p>
   <h1 class="name">${name}</h1>
   <p class="tagline">Join XamePage — the ultramodern messaging & calling experience. Earn XameCoins just for signing up!</p>
+  ${previewHtml}
   <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:14px;padding:14px;margin-bottom:16px;">
     <p style="color:rgba(255,255,255,0.4);font-size:11px;margin-bottom:8px;letter-spacing:1px;">REFERRAL CODE</p>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
