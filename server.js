@@ -64,7 +64,7 @@ const io = new Server(server, {
     transports:      ['polling', 'websocket'],
     allowEIO3:       true,
     path:            '/socket.io/',
-    pingTimeout:     60000,
+    pingTimeout:     15000,
     pingInterval:    25000,
     upgradeTimeout:  30000,
     maxHttpBufferSize: 1e8
