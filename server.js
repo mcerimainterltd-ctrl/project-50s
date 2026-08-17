@@ -8062,3 +8062,84 @@ app.post('/api/admin/official-account/broadcast', async (req, res) => {
     process.exit(1);
 });
 // imagekit-1784893344
+
+
+// Phase 1: Web SSR Landing Page for Spaces
+app.get('/space/:slug', async (req, res) => {
+    const slug = req.params.slug;
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XamePage Space - ${slug}</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background: #1e293b; border-radius: 12px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+        h1 { font-size: 1.5rem; color: #38bdf8; margin-top: 0; }
+        .chat-box { height: 350px; overflow-y: auto; background: #0f172a; border-radius: 8px; padding: 12px; margin-bottom: 15px; display: flex; flex-direction: column-reverse; }
+        .msg { margin-bottom: 10px; padding: 8px 12px; border-radius: 8px; background: #334155; }
+        .msg.guest { background: #1e3a8a; }
+        .sender { font-size: 0.75rem; color: #94a3b8; font-weight: bold; margin-bottom: 4px; }
+        .input-group { display: flex; gap: 8px; }
+        input[type="text"] { flex: 1; padding: 10px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; }
+        button { background: #0284c7; color: white; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        button:hover { background: #0369a1; }
+        .banner { background: #0284c7; padding: 10px; border-radius: 6px; text-align: center; margin-bottom: 15px; font-size: 0.9rem; }
+        .banner a { color: #fff; font-weight: bold; text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="banner">Viewing on Web. <a href="https://app.xamepage.com/download">Open in App</a></div>
+        <h1 id="space-title">Loading Space...</h1>
+        <div class="chat-box" id="chat"></div>
+        <div class="input-group">
+            <input type="text" id="msgText" placeholder="Type a message as guest..." />
+            <button onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+    <script>
+        let guestToken = '';
+        const slug = "${slug}";
+        async function init() {
+            const res = await fetch('/api/v3/spaces/' + slug);
+            const data = await res.json();
+            if (data.success) {
+                document.getElementById('space-title').innerText = data.space.name;
+                guestToken = data.guestToken;
+                loadMessages();
+            }
+        }
+        async function loadMessages() {
+            const res = await fetch('/api/v3/objects/space/' + slug + '/messages', {
+                headers: { 'Authorization': 'Bearer ' + guestToken }
+            });
+            const data = await res.json();
+            if (data.success) {
+                const chat = document.getElementById('chat');
+                chat.innerHTML = data.messages.map(m => \`
+                    <div class="msg \${m.isGuest ? 'guest' : ''}">
+                        <div class="sender">\${m.senderName} \${m.isGuest ? '(Guest)' : ''}</div>
+                        <div>\${m.text}</div>
+                    </div>
+                \`).join('');
+            }
+        }
+        async function sendMessage() {
+            const text = document.getElementById('msgText').value;
+            if (!text) return;
+            await fetch('/api/v3/objects/space/' + slug + '/messages', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + guestToken },
+                body: JSON.stringify({ senderName: 'Web Guest', text: text })
+            });
+            document.getElementById('msgText').value = '';
+            loadMessages();
+        }
+        init();
+    </script>
+</body>
+</html>`;
+    res.send(html);
+});
