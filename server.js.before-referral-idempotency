@@ -1,4 +1,3 @@
-const spacesRouter = require('./routes/spacesRouter');
 //
 // XamePage v2.1.1 — Server
 //
@@ -70,7 +69,6 @@ const io = new Server(server, {
 
 // Capture raw bytes for Monnify webhook signature verification BEFORE the
 // global JSON parser below consumes the request stream.
-app.use('/api/v3/spaces', spacesRouter);
 app.use('/api/wallet/monnify/webhook', express.raw({ type: 'application/json' }));
 app.use('/api/wallet/squad/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '500mb' }));
@@ -6413,7 +6411,7 @@ app.get('/join/:code', async (req, res) => {
         }
         const name = user ? (user.preferredName || user.firstName) : 'A friend';
         const pic  = user ? (user.profilePic || '') : '';
-        const apkUrl = 'https://app.xamepage.com/api/app/download';
+        const apkUrl = `https://app.xamepage.com/api/app/download?ref=${encodeURIComponent(code)}`;
 
         let userPosts = [];
         if (user && user.xameId) {
@@ -6505,61 +6503,6 @@ app.get('/api/referral/:code', async (req, res) => {
     }
 });
 
-app.get('/join/:code', async (req, res) => {
-    try {
-        const code = req.params.code;
-        let user = await User.findOne({ referralCode: code });
-        if (!user) {
-            const account = await RewardAccount.findOne({ referralCode: code });
-            if (account) user = await User.findOne({ xameId: account.userId });
-        }
-        const name = user ? (user.preferredName || user.firstName) : 'A friend';
-        const pic  = user ? (user.profilePic || '') : '';
-        const apkUrl = 'https://app.xamepage.com/api/app/download';
-        res.send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Join ${name} on XamePage</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #0a0a0f; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; }
-  .card { background: #13131a; border: 1px solid #ffffff18; border-radius: 24px; padding: 40px 32px; max-width: 400px; width: 100%; text-align: center; box-shadow: 0 24px 64px #00000080; }
-  .logo { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 32px; background: linear-gradient(135deg, #00e5ff, #7c4dff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-  .avatar { width: 88px; height: 88px; border-radius: 50%; object-fit: cover; border: 3px solid #00e5ff44; margin-bottom: 16px; background: #1e1e2e; }
-  .avatar-placeholder { width: 88px; height: 88px; border-radius: 50%; background: linear-gradient(135deg, #00e5ff22, #7c4dff22); border: 3px solid #00e5ff44; margin: 0 auto 16px; display: flex; align-items: center; justify-content: center; font-size: 36px; }
-  .invite-text { color: #ffffff80; font-size: 14px; margin-bottom: 6px; }
-  .name { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
-  .tagline { color: #ffffff50; font-size: 13px; margin-bottom: 32px; line-height: 1.5; }
-  .btn { display: block; background: linear-gradient(135deg, #00e5ff, #7c4dff); color: #fff; text-decoration: none; padding: 16px 24px; border-radius: 14px; font-size: 16px; font-weight: 700; letter-spacing: 0.3px; transition: opacity 0.2s; }
-  .btn:hover { opacity: 0.88; }
-  .footer { margin-top: 24px; color: #ffffff30; font-size: 11px; }
-</style>
-</head>
-<body>
-<div class="card">
-  <div class="logo">XamePage</div>
-  ${pic ? `<img class="avatar" src="${pic}" onerror="this.style.display='none'" alt="${name}">` : `<div class="avatar-placeholder">👤</div>`}
-  <p class="invite-text">You were invited by</p>
-  <h1 class="name">${name}</h1>
-  <p class="tagline">Join XamePage — the ultramodern messaging & calling experience. Earn XameCoins just for signing up!</p>
-  <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:14px;padding:14px;margin-bottom:16px;">
-    <p style="color:rgba(255,255,255,0.4);font-size:11px;margin-bottom:8px;letter-spacing:1px;">REFERRAL CODE</p>
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-      <span style="font-size:20px;font-weight:800;letter-spacing:3px;color:#00e5ff;">${code}</span>
-      <button onclick="navigator.clipboard.writeText('${code}').then(()=>{this.textContent='✓ Copied!';setTimeout(()=>this.textContent='Copy',2000)})" style="background:linear-gradient(135deg,#00e5ff,#7c4dff);border:none;border-radius:8px;padding:8px 14px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;">Copy</button>
-    </div>
-  </div>
-  <a class="btn" href="${apkUrl}">⬇️ Download XamePage</a>
-  <p style="font-size:11px;color:rgba(255,255,255,0.3);margin-top:12px;">Copy the code above and enter it during registration</p>
-</div>
-</body>
-</html>`);
-    } catch (err) {
-        res.status(500).send('Server error');
-    }
-});
 
 app.get('/privacy',     (req, res) => res.sendFile(path.join(BASE_DIR, 'legal', 'privacy.html')));
 app.get('/terms',       (req, res) => res.sendFile(path.join(BASE_DIR, 'legal', 'terms.html')));
@@ -6974,6 +6917,50 @@ app.post('/api/rewards/register-referral', async (req, res) => {
         await RewardAccount.findOneAndUpdate({ userId: newUserId },
             { userId: newUserId, referralCode: code, referredBy: referrerAccount.userId },
             { upsert: true, new: true });
+
+        // ── Auto-connect referral pair ─────────────────────────────────────
+        // New users joining through a referral are automatically connected
+        // to the person who invited them. Idempotent and non-blocking.
+        try {
+            const newUser = await User.findOne({ xameId: newUserId });
+            const referrerUser = await User.findOne({ xameId: referrerAccount.userId });
+
+            if (newUser && referrerUser) {
+                const now = new Date();
+
+                if (!(newUser.contacts || []).some(
+                    c => String(c.contactId) === String(referrerUser._id)
+                )) {
+                    newUser.contacts.push({
+                        contactId: referrerUser._id,
+                        addedAt: now
+                    });
+                }
+
+                if (!(referrerUser.contacts || []).some(
+                    c => String(c.contactId) === String(newUser._id)
+                )) {
+                    referrerUser.contacts.push({
+                        contactId: newUser._id,
+                        addedAt: now
+                    });
+                }
+
+                await Promise.all([
+                    newUser.save(),
+                    referrerUser.save()
+                ]);
+
+                console.log(
+                    `✅ Referral auto-connected: ${referrerAccount.userId} ↔ ${newUserId}`
+                );
+            }
+        } catch (connectErr) {
+            console.warn(
+                `⚠️ Referral auto-connect failed for ${newUserId}:`,
+                connectErr.message
+            );
+        }
 
         // Credit referrer
         referrerAccount.activeReferrals += 1;
@@ -7862,45 +7849,6 @@ app.post('/api/admin/recall-broadcast', async (req, res) => {
 // ── END ADMIN ENDPOINTS ───────────────────────────────────────────────────────
 
 // ── Referral landing page ─────────────────────────────────────────────────────
-app.get('/join/:code', async (req, res) => {
-    try {
-        const account = await RewardAccount.findOne({ referralCode: req.params.code });
-        if (!account) return res.redirect('/');
-        const user = await User.findOne({ xameId: account.userId })
-            .select('preferredName firstName lastName profilePic');
-        const name = user?.preferredName || `${user?.firstName} ${user?.lastName}`.trim() || account.userId;
-        const pic  = user?.profilePic || '';
-        res.send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>${name} invited you to XamePage</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:#07101C;color:#EDF3F8;font-family:system-ui,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
-.card{background:#0F1E2E;border:1px solid rgba(255,255,255,0.06);border-radius:24px;padding:40px 32px;max-width:400px;width:100%;text-align:center}
-.avatar{width:80px;height:80px;border-radius:50%;object-fit:cover;border:3px solid #00B0A0;margin:0 auto 16px}
-.avatar-placeholder{width:80px;height:80px;border-radius:50%;background:#00B0A0;display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:700;margin:0 auto 16px}
-h1{font-size:22px;font-weight:800;margin-bottom:8px}
-p{color:#8AAFC8;font-size:15px;margin-bottom:32px;line-height:1.6}
-.btn{display:block;background:#00B0A0;color:#fff;text-decoration:none;padding:16px 32px;border-radius:14px;font-size:16px;font-weight:700;margin-bottom:12px}
-.btn-ghost{display:block;background:rgba(255,255,255,0.06);color:#EDF3F8;text-decoration:none;padding:14px 32px;border-radius:14px;font-size:15px}
-.logo{font-size:13px;color:#4A6E88;margin-top:24px}
-</style>
-</head>
-<body>
-<div class="card">
-${pic ? `<img src="${pic}" class="avatar" alt="${name}">` : `<div class="avatar-placeholder">${name[0]?.toUpperCase()}</div>`}
-<h1>${name} invited you!</h1>
-<p>Join XamePage — the ultramodern messaging, calling and payments app. Sign up and start earning XameCoins together.</p>
-<a href="https://app.xamepage.com/api/app/download?ref=${req.params.code}" class="btn">📲 Download XamePage</a>
-<a href="https://xamepage.com" class="btn-ghost">Learn More</a>
-<div class="logo">XamePage by McErima Interltd</div>
-</div>
-</body>
-</html>`);
-    } catch (err) { res.redirect('/'); }
-});
 
 // ── POST /api/change-password ────────────────────────────────────────────────
 app.post('/api/change-password', async (req, res) => {
