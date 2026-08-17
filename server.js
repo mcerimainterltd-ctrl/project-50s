@@ -70,11 +70,11 @@ const io = new Server(server, {
 
 // Capture raw bytes for Monnify webhook signature verification BEFORE the
 // global JSON parser below consumes the request stream.
-app.use('/api/v3/spaces', spacesRouter);
 app.use('/api/wallet/monnify/webhook', express.raw({ type: 'application/json' }));
 app.use('/api/wallet/squad/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '500mb' }));
 app.use(express.urlencoded({ limit: '500mb', extended: true }));
+app.use('/api/v3/spaces', spacesRouter);
 app.use(cors());
 
 // ============================================================
