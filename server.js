@@ -1,3 +1,4 @@
+const viralObjectsRouter = require('./routes/viralObjectsRouter');
 const spacesRouter = require('./routes/spacesRouter');
 //
 // XamePage v2.1.1 — Server
@@ -75,6 +76,7 @@ app.use('/api/wallet/squad/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '500mb' }));
 app.use(express.urlencoded({ limit: '500mb', extended: true }));
 app.use('/api/v3/spaces', spacesRouter);
+app.use('/api/v3/objects', viralObjectsRouter);
 app.use(cors());
 
 // ============================================================
