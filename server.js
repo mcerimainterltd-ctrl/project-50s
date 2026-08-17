@@ -813,12 +813,25 @@ app.post('/api/register',
         const errs = validationResult(req);
         if (!errs.isEmpty()) return res.status(400).json({ success: false, errors: errs.array() });
 
-        const { firstName, lastName, dob, password } = req.body;
+        const { firstName, lastName, dob, password, phone } = req.body;
         try {
+            // If phone provided, verify it was OTP-verified
+            if (phone) {
+                global.verifiedPhones = global.verifiedPhones || {};
+                const vp = global.verifiedPhones[phone];
+                if (!vp || !vp.verified || new Date() > vp.expires) {
+                    return res.status(400).json({ success: false, message: 'Phone number not verified. Please verify with OTP first.' });
+                }
+                // Check not already taken
+                const taken = await User.findOne({ phone });
+                if (taken) return res.status(400).json({ success: false, message: 'This phone number is already registered.' });
+            }
             const xameId         = await generateUniqueXameId();
             const hashedPassword = await bcrypt.hash(password, 10);
             const referralCode   = xameId.replace('@', '').toUpperCase() + Math.random().toString(36).substring(2, 6).toUpperCase();
-            const user           = await new User({ xameId, firstName, lastName, dob, password: hashedPassword, referralCode }).save();
+            const userData       = { xameId, firstName, lastName, dob, password: hashedPassword, referralCode };
+            if (phone) { userData.phone = phone; delete global.verifiedPhones[phone]; }
+            const user           = await new User(userData).save();
             const resp           = user.toObject(); delete resp.password;
             console.log(`✅ Registered: ${xameId}`);
 
@@ -849,6 +862,68 @@ app.post('/api/register',
         }
     }
 );
+
+// ── 3.0: Send OTP for phone registration ─────────────────────────────────────
+app.post('/api/auth/send-otp', async (req, res) => {
+    const { phone } = req.body;
+    if (!phone) return res.status(400).json({ success: false, message: 'Phone number required.' });
+    try {
+        // Check if phone already registered
+        const existing = await User.findOne({ phone });
+        if (existing) return res.status(400).json({ success: false, message: 'This phone number is already registered.' });
+
+        // Generate 6-digit OTP
+        const code    = Math.floor(100000 + Math.random() * 900000).toString();
+        const expires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+        // Store OTP temporarily (use a simple in-memory map keyed by phone)
+        global.phoneOtps = global.phoneOtps || {};
+        global.phoneOtps[phone] = { code, expires };
+
+        // Send OTP via Twilio SMS
+        if (twilioClient) {
+            await twilioClient.messages.create({
+                body: `Your XamePage verification code is: ${code}. Valid for 10 minutes.`,
+                from: process.env.TWILIO_PHONE_NUMBER,
+                to:   phone,
+            });
+            console.log(`✅ OTP sent to ${phone}`);
+        } else {
+            console.warn('⚠️ Twilio not configured — OTP:', code);
+        }
+
+        res.json({ success: true, message: 'OTP sent successfully.' });
+    } catch (err) {
+        console.error('Send OTP error:', err);
+        res.status(500).json({ success: false, message: 'Failed to send OTP: ' + err.message });
+    }
+});
+
+// ── 3.0: Verify OTP for phone registration ────────────────────────────────────
+app.post('/api/auth/verify-otp', async (req, res) => {
+    const { phone, otp } = req.body;
+    if (!phone || !otp) return res.status(400).json({ success: false, message: 'Phone and OTP required.' });
+    try {
+        global.phoneOtps = global.phoneOtps || {};
+        const record = global.phoneOtps[phone];
+        if (!record) return res.status(400).json({ success: false, message: 'No OTP found for this number. Please request a new one.' });
+        if (new Date() > record.expires) {
+            delete global.phoneOtps[phone];
+            return res.status(400).json({ success: false, message: 'OTP has expired. Please request a new one.' });
+        }
+        if (record.code !== otp.toString().trim()) {
+            return res.status(400).json({ success: false, message: 'Invalid OTP. Please try again.' });
+        }
+        // OTP valid — mark phone as verified
+        delete global.phoneOtps[phone];
+        global.verifiedPhones = global.verifiedPhones || {};
+        global.verifiedPhones[phone] = { verified: true, expires: new Date(Date.now() + 30 * 60 * 1000) };
+        res.json({ success: true, message: 'Phone verified successfully.' });
+    } catch (err) {
+        console.error('Verify OTP error:', err);
+        res.status(500).json({ success: false, message: 'Server error.' });
+    }
+});
 
 app.post('/api/set-password',
     body('xameId').trim().escape().notEmpty(),
