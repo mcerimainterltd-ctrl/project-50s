@@ -950,12 +950,15 @@ app.post('/api/set-password',
 );
 
 app.post('/api/login', async (req, res) => {
-    const { xameId, password } = req.body;
-    if (!xameId) return res.status(400).json({ success: false, message: 'Xame-ID required.' });
+    const { xameId, password, phone } = req.body;
+    if (!xameId && !phone) return res.status(400).json({ success: false, message: 'Xame-ID or phone number required.' });
 
     try {
-        const user = await User.findOne({ xameId });
-        if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
+        // Support login by phone number (3.0) or Xame-ID (existing)
+        const user = phone
+            ? await User.findOne({ phone })
+            : await User.findOne({ xameId });
+        if (!user) return res.status(404).json({ success: false, message: phone ? 'No account found for this phone number.' : 'User not found.' });
 
         if (user.suspended) {
             return res.status(403).json({ success: false, message: 'Your account has been suspended. Please contact support.' });
