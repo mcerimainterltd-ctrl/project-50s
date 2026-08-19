@@ -864,6 +864,39 @@ app.post('/api/register',
 );
 
 // ── 3.0: Send OTP for phone registration ─────────────────────────────────────
+// ── 3.0: Contact matching — check which phone numbers are on XamePage ────────
+app.post('/api/contacts/match', async (req, res) => {
+    const { phones } = req.body;
+    if (!phones || !Array.isArray(phones) || phones.length === 0) {
+        return res.status(400).json({ success: false, message: 'phones array required.' });
+    }
+    try {
+        // Normalize all phones — strip spaces, dashes, ensure consistent format
+        const normalize = (p) => p.replace(/[\s\-().]/g, '');
+        const normalized = phones.map(normalize).filter(p => p.length >= 7);
+
+        // Find all users whose phone matches any of the provided numbers
+        const users = await User.find({
+            phone: { $in: normalized }
+        }).select('xameId firstName lastName profilePic phone').lean();
+
+        // Build a map of phone → user for fast lookup
+        const matched = {};
+        for (const u of users) {
+            if (u.phone) matched[normalize(u.phone)] = {
+                xameId:     u.xameId,
+                name:       `${u.firstName} ${u.lastName}`.trim(),
+                profilePic: u.profilePic || '',
+            };
+        }
+
+        res.json({ success: true, matched });
+    } catch (err) {
+        console.error('Contact match error:', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 app.post('/api/auth/send-otp', async (req, res) => {
     const { phone } = req.body;
     if (!phone) return res.status(400).json({ success: false, message: 'Phone number required.' });
