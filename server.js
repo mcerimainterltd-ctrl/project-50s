@@ -2598,6 +2598,28 @@ setInterval(async () => {
     } catch (err) { console.error('Scheduled call sweep error:', err); }
 }, 15 * 1000);
 
+// ── Silent FCM keepalive — reconnects background sockets every 3 minutes ────
+setInterval(async () => {
+    if (mongoose.connection.readyState !== 1) return;
+    if (!admin.apps.length) return;
+    try {
+        const users = await User.find({ fcmToken: { $exists: true, $ne: '' } }, 'xameId fcmToken').lean();
+        if (!users.length) return;
+        const chunks = [];
+        for (let i = 0; i < users.length; i += 500) chunks.push(users.slice(i, i + 500));
+        for (const chunk of chunks) {
+            const tokens = chunk.map(u => u.fcmToken).filter(Boolean);
+            if (!tokens.length) continue;
+            await admin.messaging().sendEachForMulticast({
+                tokens,
+                data: { type: 'socket_keepalive', ts: String(Date.now()) },
+                android: { priority: 'high' },
+                apns: { headers: { 'apns-priority': '5', 'apns-push-type': 'background' }, payload: { aps: { 'content-available': 1 } } },
+            }).catch(() => {});
+        }
+    } catch (_) {}
+}, 180000); // every 3 minutes — balances background reconnect speed against push volume/battery cost
+
 // ============================================================
 // SPA CATCH-ALL
 // ============================================================
