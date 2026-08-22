@@ -3914,6 +3914,89 @@ app.get('/api/wallet/squad/callback', async (req, res) => {
     }
 });
 
+// ── 3.0 Block 6: Public Profile API ─────────────────────────────────────────
+app.get('/api/public/profile/:xameId', async (req, res) => {
+    try {
+        const user = await User.findOne({ xameId: req.params.xameId })
+            .select('xameId firstName lastName profilePic').lean();
+        if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
+        res.json({ success: true, profile: {
+            xameId:     user.xameId,
+            name:       `${user.firstName} ${user.lastName}`.trim(),
+            profilePic: user.profilePic || '',
+        }});
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// ── 3.0 Block 6: Public Profile Page ─────────────────────────────────────────
+app.get('/u/:xameId', async (req, res) => {
+    try {
+        const user = await User.findOne({ xameId: req.params.xameId })
+            .select('xameId firstName lastName profilePic').lean();
+        if (!user) return res.status(404).send(`<!DOCTYPE html><html><head><title>XamePage — User Not Found</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{background:#07101C;color:#EDF3F8;font-family:sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center}a{color:#00B0A0}</style></head><body><h2>User not found</h2><p>This XamePage profile does not exist.</p><a href="https://xamepage.com">← Back to XamePage</a></body></html>`);
+
+        const name       = `${user.firstName} ${user.lastName}`.trim();
+        const pic        = user.profilePic || '';
+        const xameId     = user.xameId;
+        const appUrl     = `https://app.xamepage.com`;
+        const downloadUrl = `https://app.xamepage.com/api/app/download`;
+
+        res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${name} — XamePage</title>
+<meta name="description" content="Connect with ${name} on XamePage — chat, call, and pay.">
+<meta property="og:title" content="${name} on XamePage">
+<meta property="og:description" content="Message, call, or send money to ${name} on XamePage.">
+${pic ? `<meta property="og:image" content="${pic}">` : ''}
+<link href="https://fonts.googleapis.com/css2?family=Cabinet+Grotesk:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#07101C;color:#EDF3F8;font-family:'Cabinet Grotesk',sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px}
+.card{background:#0F1E2E;border:1px solid rgba(255,255,255,0.06);border-radius:24px;padding:40px 32px;max-width:380px;width:100%;text-align:center}
+.avatar{width:96px;height:96px;border-radius:50%;object-fit:cover;border:3px solid #00B0A0;margin-bottom:16px}
+.avatar-placeholder{width:96px;height:96px;border-radius:50%;background:linear-gradient(135deg,#00B0A0,#007A6E);display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:800;color:#fff;margin:0 auto 16px}
+.name{font-size:24px;font-weight:800;margin-bottom:4px}
+.xame-id{font-size:13px;color:#4A6E88;margin-bottom:32px}
+.actions{display:flex;flex-direction:column;gap:12px}
+.btn{display:block;padding:14px;border-radius:12px;font-size:15px;font-weight:700;text-decoration:none;transition:all 0.2s}
+.btn-primary{background:#00B0A0;color:#000}
+.btn-secondary{background:rgba(0,176,160,0.1);border:1px solid rgba(0,176,160,0.25);color:#00B0A0}
+.divider{border:none;border-top:1px solid rgba(255,255,255,0.06);margin:24px 0}
+.footer{margin-top:24px;font-size:12px;color:#4A6E88}
+.footer a{color:#00B0A0;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="card">
+  ${pic
+    ? `<img src="${pic}" class="avatar" alt="${name}">`
+    : `<div class="avatar-placeholder">${name.charAt(0).toUpperCase()}</div>`}
+  <div class="name">${name}</div>
+  <div class="xame-id">@${xameId}</div>
+  <div class="actions">
+    <a href="${appUrl}" class="btn btn-primary">💬 Message on XamePage</a>
+    <a href="${appUrl}" class="btn btn-secondary">📞 Call on XamePage</a>
+    <a href="${appUrl}" class="btn btn-secondary">💳 Send Money via XamePay</a>
+  </div>
+  <hr class="divider">
+  <p style="font-size:13px;color:#8AAFC8;margin-bottom:16px">Don't have XamePage yet?</p>
+  <a href="${downloadUrl}" class="btn btn-primary">⬇ Download Free</a>
+</div>
+<div class="footer">
+  <a href="https://xamepage.com">xamepage.com</a> — by McErima International Limited
+</div>
+</body>
+</html>`);
+    } catch (err) {
+        res.status(500).send('Server error');
+    }
+});
+
 // Squad webhook (server-side, uses SQUAD_SECRET_KEY for HMAC-SHA512 signature check)
 app.post('/api/wallet/squad/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
     try {
