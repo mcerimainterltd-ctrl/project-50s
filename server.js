@@ -1,6 +1,7 @@
 const claimRouter = require('./routes/claimRouter');
 const viralObjectsRouter = require('./routes/viralObjectsRouter');
 const spacesRouter = require('./routes/spacesRouter');
+const SpaceMessage = require('./models/SpaceMessage');
 //
 // XamePage v2.1.1 — Server
 //
@@ -2499,6 +2500,30 @@ io.on('connection', (socket) => {
                 io.to(callerSid).emit('new_message', { ...msgPayload, direction: 'sent' });
             }
         } catch (err) { console.error('call-ended error:', err); }
+    });
+
+    // ── XamePage Spaces — Real-time ──────────────────────────────────────────
+    socket.on('space:join', ({ spaceSlug, userId }) => {
+        socket.join(`space:${spaceSlug}`);
+        socket.to(`space:${spaceSlug}`).emit('space:user_joined', { userId, spaceSlug });
+    });
+
+    socket.on('space:leave', ({ spaceSlug, userId }) => {
+        socket.leave(`space:${spaceSlug}`);
+        socket.to(`space:${spaceSlug}`).emit('space:user_left', { userId, spaceSlug });
+    });
+
+    socket.on('space:message', async ({ spaceSlug, message }) => {
+        // Broadcast to all Space members
+        io.to(`space:${spaceSlug}`).emit('space:message', { spaceSlug, message });
+    });
+
+    socket.on('space:typing', ({ spaceSlug, userId, name, isTyping }) => {
+        socket.to(`space:${spaceSlug}`).emit('space:typing', { userId, name, isTyping });
+    });
+
+    socket.on('space:reaction', ({ spaceSlug, msgId, emoji, userId }) => {
+        io.to(`space:${spaceSlug}`).emit('space:reaction', { msgId, emoji, userId });
     });
 });
 
