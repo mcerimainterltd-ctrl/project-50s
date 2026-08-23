@@ -8396,7 +8396,7 @@ header{background:var(--surface);border-bottom:1px solid var(--border);padding:1
     <div class="hname">${name}</div>
     <div class="hmeta">${memberCount} members · ${archetype}</div>
   </div>
-  <a class="download-btn" href="https://app.xamepage.com/download">Get App</a>
+  <a class="download-btn" href="https://app.xamepage.com/api/app/download">Get App</a>
 </header>
 <div class="banner">
   <span class="banner-text">📱 Better experience in the app</span>
