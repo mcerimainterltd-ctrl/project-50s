@@ -3965,7 +3965,9 @@ app.get('/u/:xameId', async (req, res) => {
         const name       = `${user.firstName} ${user.lastName}`.trim();
         const pic        = user.profilePic || '';
         const xameId     = user.xameId;
-        const appUrl     = `https://app.xamepage.com`;
+        const msgUrl      = `https://app.xamepage.com/chat/${xameId}`;
+        const callUrl     = `https://app.xamepage.com/call/${xameId}`;
+        const payUrl      = `https://app.xamepage.com/pay/${xameId}`;
         const downloadUrl = `https://app.xamepage.com/api/app/download`;
 
         res.send(`<!DOCTYPE html>
@@ -4004,9 +4006,9 @@ body{background:#07101C;color:#EDF3F8;font-family:'Cabinet Grotesk',sans-serif;m
   <div class="name">${name}</div>
   <div class="xame-id">@${xameId}</div>
   <div class="actions">
-    <a href="${appUrl}" class="btn btn-primary">💬 Message on XamePage</a>
-    <a href="${appUrl}" class="btn btn-secondary">📞 Call on XamePage</a>
-    <a href="${appUrl}" class="btn btn-secondary">💳 Send Money via XamePay</a>
+    <a href="${msgUrl}" class="btn btn-primary">💬 Message on XamePage</a>
+    <a href="${callUrl}" class="btn btn-secondary">📞 Call on XamePage</a>
+    <a href="${payUrl}" class="btn btn-secondary">💳 Send Money via XamePay</a>
   </div>
   <hr class="divider">
   <p style="font-size:13px;color:#8AAFC8;margin-bottom:16px">Don't have XamePage yet?</p>
