@@ -5,6 +5,20 @@ const SpaceMessage = require('../models/SpaceMessage');
 const User       = require('../models/User');
 const { verifySessionOrGuest, generateGuestToken } = require('../middleware/guestAuth');
 const { v4: uuidv4 } = require('uuid');
+const jwt = require('jsonwebtoken');
+const JWT_SECRET = process.env.JWT_SECRET || 'xamepage_enterprise_secret_key_2026';
+
+// ── Mint a Spaces session token for an already-logged-in XamePage user ────────
+router.post('/session-token', async (req, res) => {
+    try {
+        const { xameId } = req.body;
+        if (!xameId) return res.status(400).json({ success: false, message: 'xameId required.' });
+        const user = await User.findOne({ xameId }).lean();
+        if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
+        const token = jwt.sign({ xameId, userId: xameId, scope: 'user_session' }, JWT_SECRET, { expiresIn: '30d' });
+        res.json({ success: true, token });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
 
 // ── Create Space ──────────────────────────────────────────────────────────────
 router.post('/create', verifySessionOrGuest, async (req, res) => {
