@@ -5624,56 +5624,6 @@ discoveryPostSchema.index({ pulseExpiresAt: 1 },
     { expireAfterSeconds: 0, sparse: true });
 const DiscoveryPost = mongoose.model('DiscoveryPost', discoveryPostSchema);
 
-// ── Space Schema ──────────────────────────────────────────────────────────────
-const spaceMemberSchema = new mongoose.Schema({
-    xameId:       { type: String, required: true },
-    role:         { type: String, default: 'MEMBER' }, // 'OWNER' | 'ADMIN' | 'MEMBER'
-    displayName:  { type: String, default: '' },
-    avatar:       { type: String, default: '' },
-    isRegistered: { type: Boolean, default: true },
-    joinedAt:     { type: Date, default: Date.now },
-}, { _id: false });
-
-const spaceSchema = new mongoose.Schema({
-    spaceSlug:   { type: String, required: true, unique: true },
-    name:        { type: String, required: true },
-    description: { type: String, default: '' },
-    avatar:      { type: String, default: '' },
-    coverImage:  { type: String, default: '' },
-    archetype:   { type: String, default: 'community' },
-    creatorId:   { type: String, required: true },
-    accessControl: {
-        visibility:        { type: String, default: 'public_link' }, // 'public_link' | 'private' | 'invite_only'
-        allowGuestPosting: { type: Boolean, default: true },
-    },
-    stats: {
-        memberCount:  { type: Number, default: 0 },
-        messageCount: { type: Number, default: 0 },
-    },
-    members:         [spaceMemberSchema],
-    pinnedMessageId: { type: String, default: null },
-    createdAt:       { type: Date, default: Date.now },
-});
-const Space = mongoose.model('Space', spaceSchema);
-
-// ── Space Message Schema ──────────────────────────────────────────────────────
-const spaceMessageSchema = new mongoose.Schema({
-    spaceSlug:    { type: String, required: true, index: true },
-    senderId:     { type: String, required: true },
-    senderName:   { type: String, default: 'Guest' },
-    senderAvatar: { type: String, default: '' },
-    isGuest:      { type: Boolean, default: false },
-    text:         { type: String, default: '' },
-    mediaUrl:     { type: String, default: '' },
-    mediaType:    { type: String, default: '' },
-    fileName:     { type: String, default: '' },
-    replyToId:    { type: String, default: null },
-    replyToText:  { type: String, default: null },
-    reactions:    [{ emoji: String, userId: String, _id: false }],
-    createdAt:    { type: Date, default: Date.now },
-    deleted:      { type: Boolean, default: false },
-});
-const SpaceMessage = mongoose.model('SpaceMessage', spaceMessageSchema);
 
 const discoveryStorySchema = new mongoose.Schema({
     storyId:      { type: String, required: true, unique: true },
