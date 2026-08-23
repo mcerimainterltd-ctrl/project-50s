@@ -8327,79 +8327,175 @@ app.post('/api/admin/official-account/broadcast', async (req, res) => {
 // Phase 1: Web SSR Landing Page for Spaces
 app.get('/space/:slug', async (req, res) => {
     const slug = req.params.slug;
-    const html = `<!DOCTYPE html>
+    const Space = require('./models/Space');
+    const SpaceMessage = require('./models/SpaceMessage');
+    try {
+        const space = await Space.findOne({ spaceSlug: slug }).lean();
+        const name = space?.name || slug;
+        const archetype = space?.archetype || 'community';
+        const description = space?.description || '';
+        const memberCount = space?.stats?.memberCount || 0;
+        const avatar = space?.avatar || '';
+        const archetypeEmoji = { family:'👨‍👩‍👧‍👦', school:'🎓', business:'💼', community:'🌍', project:'🚀', event:'🎉' }[archetype] || '🌍';
+        const messages = space ? await SpaceMessage.find({ spaceSlug: slug, deleted: false }).sort({ createdAt: 1 }).limit(50).lean() : [];
+        const msgsJson = JSON.stringify(messages);
+
+        res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>XamePage Space - ${slug}</title>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 20px; }
-        .container { max-width: 600px; margin: 0 auto; background: #1e293b; border-radius: 12px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
-        h1 { font-size: 1.5rem; color: #38bdf8; margin-top: 0; }
-        .chat-box { height: 350px; overflow-y: auto; background: #0f172a; border-radius: 8px; padding: 12px; margin-bottom: 15px; display: flex; flex-direction: column-reverse; }
-        .msg { margin-bottom: 10px; padding: 8px 12px; border-radius: 8px; background: #334155; }
-        .msg.guest { background: #1e3a8a; }
-        .sender { font-size: 0.75rem; color: #94a3b8; font-weight: bold; margin-bottom: 4px; }
-        .input-group { display: flex; gap: 8px; }
-        input[type="text"] { flex: 1; padding: 10px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; }
-        button { background: #0284c7; color: white; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-weight: bold; }
-        button:hover { background: #0369a1; }
-        .banner { background: #0284c7; padding: 10px; border-radius: 6px; text-align: center; margin-bottom: 15px; font-size: 0.9rem; }
-        .banner a { color: #fff; font-weight: bold; text-decoration: underline; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${name} · XamePage Space</title>
+<meta name="description" content="${description || `Join ${name} on XamePage`}">
+<meta property="og:title" content="${name} · XamePage Space">
+<meta property="og:description" content="${description || `Join ${name} — ${memberCount} members`}">
+${avatar ? `<meta property="og:image" content="${avatar}">` : ''}
+<link href="https://fonts.googleapis.com/css2?family=Cabinet+Grotesk:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#07101C;--surface:#0F1E2E;--card:#1A2A3A;--primary:#00B0A0;--text:#EDF3F8;--muted:#4A6E88;--border:rgba(255,255,255,0.06)}
+body{background:var(--bg);color:var(--text);font-family:'Cabinet Grotesk',sans-serif;height:100dvh;display:flex;flex-direction:column;overflow:hidden}
+header{background:var(--surface);border-bottom:1px solid var(--border);padding:12px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+.avatar{width:40px;height:40px;border-radius:50%;background:var(--primary);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;overflow:hidden}
+.avatar img{width:100%;height:100%;object-fit:cover}
+.hinfo{flex:1;min-width:0}
+.hname{font-size:16px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hmeta{font-size:12px;color:var(--muted)}
+.download-btn{background:var(--primary);color:#000;border:none;padding:8px 14px;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer;text-decoration:none;white-space:nowrap}
+.banner{background:linear-gradient(135deg,rgba(0,176,160,0.15),rgba(0,176,160,0.05));border-bottom:1px solid rgba(0,176,160,0.2);padding:10px 16px;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-shrink:0}
+.banner-text{font-size:13px;color:var(--primary)}
+.messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+.msg{display:flex;gap:8px;align-items:flex-end}
+.msg.mine{flex-direction:row-reverse}
+.msg-avatar{width:28px;height:28px;border-radius:50%;background:var(--primary);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#000;flex-shrink:0}
+.bubble{max-width:72%;padding:10px 14px;border-radius:16px;font-size:14px;line-height:1.4}
+.msg:not(.mine) .bubble{background:var(--card);border-bottom-left-radius:4px}
+.msg.mine .bubble{background:var(--primary);color:#000;border-bottom-right-radius:4px}
+.sender-name{font-size:11px;color:var(--muted);margin-bottom:3px;font-weight:700}
+.msg-time{font-size:10px;opacity:0.5;margin-top:3px}
+.guest-badge{font-size:10px;background:rgba(255,165,0,0.2);color:orange;padding:1px 5px;border-radius:4px;margin-left:4px}
+.composer{background:var(--surface);border-top:1px solid var(--border);padding:12px 16px;display:flex;gap:10px;align-items:flex-end;flex-shrink:0}
+.composer input{flex:1;background:var(--card);border:none;border-radius:20px;padding:10px 16px;color:var(--text);font-size:14px;outline:none;font-family:inherit}
+.composer input::placeholder{color:var(--muted)}
+.send-btn{width:40px;height:40px;background:var(--primary);border:none;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.send-btn svg{fill:#000}
+.empty{text-align:center;padding:40px 20px;color:var(--muted)}
+.join-modal{position:fixed;inset:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px}
+.modal-card{background:var(--surface);border-radius:20px;padding:28px;max-width:340px;width:100%;border:1px solid var(--border)}
+.modal-title{font-size:20px;font-weight:800;margin-bottom:8px}
+.modal-sub{font-size:13px;color:var(--muted);margin-bottom:20px}
+.modal-input{width:100%;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 16px;color:var(--text);font-size:14px;font-family:inherit;outline:none;margin-bottom:12px}
+.modal-btn{width:100%;background:var(--primary);color:#000;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:800;cursor:pointer;margin-bottom:8px}
+.modal-skip{width:100%;background:transparent;color:var(--muted);border:none;padding:10px;font-size:13px;cursor:pointer}
+</style>
 </head>
 <body>
-    <div class="container">
-        <div class="banner">Viewing on Web. <a href="https://app.xamepage.com/download">Open in App</a></div>
-        <h1 id="space-title">Loading Space...</h1>
-        <div class="chat-box" id="chat"></div>
-        <div class="input-group">
-            <input type="text" id="msgText" placeholder="Type a message as guest..." />
-            <button onclick="sendMessage()">Send</button>
-        </div>
-    </div>
-    <script>
-        let guestToken = '';
-        const slug = "${slug}";
-        async function init() {
-            const res = await fetch('/api/v3/spaces/' + slug);
-            const data = await res.json();
-            if (data.success) {
-                document.getElementById('space-title').innerText = data.space.name;
-                guestToken = data.guestToken;
-                loadMessages();
-            }
-        }
-        async function loadMessages() {
-            const res = await fetch('/api/v3/objects/space/' + slug + '/messages', {
-                headers: { 'Authorization': 'Bearer ' + guestToken }
-            });
-            const data = await res.json();
-            if (data.success) {
-                const chat = document.getElementById('chat');
-                chat.innerHTML = data.messages.map(m => \`
-                    <div class="msg \${m.isGuest ? 'guest' : ''}">
-                        <div class="sender">\${m.senderName} \${m.isGuest ? '(Guest)' : ''}</div>
-                        <div>\${m.text}</div>
-                    </div>
-                \`).join('');
-            }
-        }
-        async function sendMessage() {
-            const text = document.getElementById('msgText').value;
-            if (!text) return;
-            await fetch('/api/v3/objects/space/' + slug + '/messages', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + guestToken },
-                body: JSON.stringify({ senderName: 'Web Guest', text: text })
-            });
-            document.getElementById('msgText').value = '';
-            loadMessages();
-        }
-        init();
-    </script>
+<header>
+  <div class="avatar">${avatar ? `<img src="${avatar}" alt="${name}">` : archetypeEmoji}</div>
+  <div class="hinfo">
+    <div class="hname">${name}</div>
+    <div class="hmeta">${memberCount} members · ${archetype}</div>
+  </div>
+  <a class="download-btn" href="https://app.xamepage.com/download">Get App</a>
+</header>
+<div class="banner">
+  <span class="banner-text">📱 Better experience in the app</span>
+  <a class="download-btn" href="https://app.xamepage.com/spaces/${slug}">Open in App</a>
+</div>
+<div class="messages" id="messages">
+  ${messages.length === 0 ? '<div class="empty">No messages yet. Be the first to say hello! 👋</div>' : ''}
+</div>
+${space?.accessControl?.allowGuestPosting !== false ? `
+<div class="composer">
+  <input type="text" id="msgInput" placeholder="Message ${name}..." maxlength="500">
+  <button class="send-btn" onclick="sendMsg()">
+    <svg width="18" height="18" viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg>
+  </button>
+</div>` : `<div style="text-align:center;padding:12px;color:var(--muted);font-size:13px">Guest posting is disabled for this Space</div>`}
+
+<div class="join-modal" id="joinModal">
+  <div class="modal-card">
+    <div style="font-size:36px;text-align:center;margin-bottom:12px">${archetypeEmoji}</div>
+    <div class="modal-title">Join ${name}</div>
+    <div class="modal-sub">Enter a display name to participate in this Space</div>
+    <input class="modal-input" id="nameInput" placeholder="Your display name" maxlength="30" autocomplete="off">
+    <button class="modal-btn" onclick="joinSpace()">Join Space</button>
+    <button class="modal-skip" onclick="browseOnly()">Just browse</button>
+  </div>
+</div>
+
+<script>
+const slug = '${slug}';
+const API  = '/api/v3/spaces';
+let guestToken = '', displayName = '', guestId = '';
+
+const msgs = ${msgsJson};
+
+function renderMessages() {
+  const el = document.getElementById('messages');
+  if (!msgs.length) return;
+  el.innerHTML = msgs.map(m => {
+    const isMine = m.senderId === guestId;
+    const initial = (m.senderName || 'G')[0].toUpperCase();
+    const time = new Date(m.createdAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    return \`<div class="msg \${isMine ? 'mine' : ''}">
+      \${!isMine ? \`<div class="msg-avatar">\${initial}</div>\` : ''}
+      <div>
+        \${!isMine ? \`<div class="sender-name">\${m.senderName || 'Guest'}\${m.isGuest ? '<span class="guest-badge">guest</span>':''}</div>\` : ''}
+        <div class="bubble">\${m.text}</div>
+        <div class="msg-time">\${time}</div>
+      </div>
+    </div>\`;
+  }).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+async function joinSpace() {
+  displayName = document.getElementById('nameInput').value.trim();
+  if (!displayName) return;
+  document.getElementById('joinModal').style.display = 'none';
+  await fetch(\`\${API}/\${slug}/join\`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json', ...(guestToken ? {Authorization:'Bearer '+guestToken} : {})},
+    body: JSON.stringify({displayName})
+  });
+}
+
+function browseOnly() {
+  displayName = 'Guest';
+  document.getElementById('joinModal').style.display = 'none';
+}
+
+async function sendMsg() {
+  const text = document.getElementById('msgInput').value.trim();
+  if (!text || !displayName) return;
+  document.getElementById('msgInput').value = '';
+  const r = await fetch(\`\${API}/\${slug}/messages\`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json', ...(guestToken ? {Authorization:'Bearer '+guestToken} : {})},
+    body: JSON.stringify({text, displayName})
+  });
+  const d = await r.json();
+  if (d.success) {
+    msgs.push(d.message);
+    renderMessages();
+  }
+}
+
+document.getElementById('msgInput')?.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
+
+async function init() {
+  const r = await fetch(\`\${API}/\${slug}\`);
+  const d = await r.json();
+  if (d.guestToken) { guestToken = d.guestToken; guestId = JSON.parse(atob(d.guestToken.split('.')[1])).sub; }
+  renderMessages();
+}
+init();
+</script>
 </body>
-</html>`;
-    res.send(html);
-});
+</html>`);
+    } catch(err) {
+        res.status(500).send('Server error');
+    }
+})
+
