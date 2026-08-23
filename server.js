@@ -3955,6 +3955,20 @@ app.get('/api/public/profile/:xameId', async (req, res) => {
     }
 });
 
+// ── Android App Links verification ──────────────────────────────────────────
+app.get('/.well-known/assetlinks.json', (req, res) => {
+  res.json([{
+    relation: ['delegate_permission/common.handle_all_urls'],
+    target: {
+      namespace: 'android_app',
+      package_name: 'com.xamepage.app',
+      sha256_cert_fingerprints: [
+        '95:D6:C2:88:43:23:40:36:C8:53:49:D4:4E:27:A2:3E:39:AE:2F:C0:14:DC:03:DD:8B:23:BF:E7:35:A3:B6:B8'
+      ]
+    }
+  }]);
+});
+
 // ── 3.0 Block 6: Public Profile Page ─────────────────────────────────────────
 app.get('/u/:xameId', async (req, res) => {
     try {
