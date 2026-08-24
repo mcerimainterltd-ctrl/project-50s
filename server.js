@@ -3963,7 +3963,7 @@ app.get('/.well-known/assetlinks.json', (req, res) => {
       namespace: 'android_app',
       package_name: 'com.xamepage.app',
       sha256_cert_fingerprints: [
-        'F1:EE:03:97:F8:05:46:03:47:26:7C:4C:2C:1C:98:97:4A:81:B2:97:65:63:DB:6D:78:C2:B9:57:E3:EE:A5:1'
+        'F1:EE:03:97:F8:05:46:03:47:26:C4:CE:2C:1C:98:97:4A:81:B2:97:65:63:DB:6D:78:C2:B9:57:E3:EE:A5:1'
       ]
     }
   }]);
