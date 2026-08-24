@@ -4022,7 +4022,7 @@ body{background:#07101C;color:#EDF3F8;font-family:'Cabinet Grotesk',sans-serif;m
   <div class="actions">
     <a href="${msgUrl}" class="btn btn-primary">💬 Message on XamePage</a>
     <a href="${callUrl}" class="btn btn-secondary">📞 Call on XamePage</a>
-    <a href="${payUrl}" class="btn btn-secondary">💳 Send Money via XamePay</a>
+    <a href="${payUrl}" class="btn btn-secondary">💰 Pay ${name.split(' ')[0]} via XamePay</a>
   </div>
   <hr class="divider">
   <p style="font-size:13px;color:#8AAFC8;margin-bottom:16px">Don't have XamePage yet?</p>
