@@ -3979,9 +3979,9 @@ app.get('/u/:xameId', async (req, res) => {
         const name       = `${user.firstName} ${user.lastName}`.trim();
         const pic        = user.profilePic || '';
         const xameId     = user.xameId;
-        const msgUrl      = `https://app.xamepage.com/chat/${xameId}`;
-        const callUrl     = `https://app.xamepage.com/call/${xameId}`;
-        const payUrl      = `https://app.xamepage.com/pay/${xameId}`;
+        const msgUrl      = `xamepage://chat/${xameId}`;
+        const callUrl     = `xamepage://call/${xameId}`;
+        const payUrl      = `xamepage://pay/${xameId}`;
         const downloadUrl = `https://app.xamepage.com/api/app/download`;
 
         res.send(`<!DOCTYPE html>
@@ -8400,7 +8400,7 @@ header{background:var(--surface);border-bottom:1px solid var(--border);padding:1
 </header>
 <div class="banner">
   <span class="banner-text">📱 Better experience in the app</span>
-  <a class="download-btn" href="https://app.xamepage.com/spaces/${slug}">Open in App</a>
+  <a class="download-btn" href="xamepage://spaces/${slug}">Open in App</a>
 </div>
 <div class="messages" id="messages">
   ${messages.length === 0 ? '<div class="empty">No messages yet. Be the first to say hello! 👋</div>' : ''}
