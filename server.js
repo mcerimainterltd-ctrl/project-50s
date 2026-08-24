@@ -3979,9 +3979,9 @@ app.get('/u/:xameId', async (req, res) => {
         const name       = `${user.firstName} ${user.lastName}`.trim();
         const pic        = user.profilePic || '';
         const xameId     = user.xameId;
-        const msgUrl      = `xamepage://chat/${xameId}`;
-        const callUrl     = `xamepage://call/${xameId}`;
-        const payUrl      = `xamepage://pay/${xameId}`;
+        const msgUrl      = `https://app.xamepage.com/chat/${xameId}`;
+        const callUrl     = `https://app.xamepage.com/call/${xameId}`;
+        const payUrl      = `https://app.xamepage.com/pay/${xameId}`;
         const downloadUrl = `https://app.xamepage.com/api/app/download`;
 
         res.send(`<!DOCTYPE html>
