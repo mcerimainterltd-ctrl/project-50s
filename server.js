@@ -4004,12 +4004,26 @@ body{background:#07101C;color:#EDF3F8;font-family:'Cabinet Grotesk',sans-serif;m
 .name{font-size:24px;font-weight:800;margin-bottom:4px}
 .xame-id{font-size:13px;color:#4A6E88;margin-bottom:32px}
 .actions{display:flex;flex-direction:column;gap:12px}
-.btn{display:block;padding:14px;border-radius:12px;font-size:15px;font-weight:700;text-decoration:none;transition:all 0.2s}
+.btn{display:block;padding:14px;border-radius:12px;font-size:15px;font-weight:700;text-decoration:none;transition:all 0.2s;cursor:pointer;border:none;width:100%;text-align:center}
 .btn-primary{background:#00B0A0;color:#000}
-.btn-secondary{background:rgba(0,176,160,0.1);border:1px solid rgba(0,176,160,0.25);color:#00B0A0}
+.btn-secondary{background:rgba(0,176,160,0.1);border:1px solid rgba(0,176,160,0.25) !important;color:#00B0A0}
 .divider{border:none;border-top:1px solid rgba(255,255,255,0.06);margin:24px 0}
 .footer{margin-top:24px;font-size:12px;color:#4A6E88}
 .footer a{color:#00B0A0;text-decoration:none}
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:100;align-items:center;justify-content:center;padding:24px}
+.overlay.active{display:flex}
+.panel{background:#0F1E2E;border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:28px;width:100%;max-width:360px}
+.panel h3{font-size:18px;font-weight:800;margin-bottom:6px}
+.panel p{font-size:13px;color:#8AAFC8;margin-bottom:20px}
+.input{width:100%;background:#07101C;border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:12px 14px;color:#EDF3F8;font-size:15px;margin-bottom:12px;font-family:inherit}
+.input:focus{outline:none;border-color:#00B0A0}
+textarea.input{min-height:90px;resize:none}
+.row{display:flex;gap:10px}
+.btn-cancel{background:rgba(255,255,255,0.06);color:#8AAFC8}
+.success-msg{text-align:center;padding:16px 0}
+.success-msg .icon{font-size:48px;margin-bottom:8px}
+.success-msg h3{font-size:18px;font-weight:800;margin-bottom:6px}
+.success-msg p{font-size:13px;color:#8AAFC8;margin-bottom:20px}
 </style>
 </head>
 <body>
@@ -4020,8 +4034,8 @@ body{background:#07101C;color:#EDF3F8;font-family:'Cabinet Grotesk',sans-serif;m
   <div class="name">${name}</div>
   <div class="xame-id">@${xameId}</div>
   <div class="actions">
-    <a href="${msgUrl}" class="btn btn-primary">💬 Message on XamePage</a>
-    <a href="${callUrl}" class="btn btn-secondary">📞 Call on XamePage</a>
+    <button class="btn btn-primary" onclick="showPanel('msg')">💬 Message on XamePage</button>
+    <button class="btn btn-secondary" onclick="showPanel('call')">📞 Call on XamePage</button>
     <a href="${payUrl}" class="btn btn-secondary">💳 Send Money via XamePay</a>
   </div>
   <hr class="divider">
@@ -4031,6 +4045,110 @@ body{background:#07101C;color:#EDF3F8;font-family:'Cabinet Grotesk',sans-serif;m
 <div class="footer">
   <a href="https://xamepage.com">xamepage.com</a> — by McErima International Limited
 </div>
+
+<!-- Message overlay -->
+<div class="overlay" id="msgOverlay">
+  <div class="panel">
+    <div id="msgForm">
+      <h3>💬 Message ${name.split(' ')[0]}</h3>
+      <p>Your message will be delivered to ${name.split(' ')[0]}'s XamePage inbox.</p>
+      <input class="input" id="msgName" placeholder="Your name" maxlength="40">
+      <textarea class="input" id="msgText" placeholder="Type your message..." maxlength="500"></textarea>
+      <div class="row">
+        <button class="btn btn-cancel" onclick="hidePanel('msg')" style="flex:1">Cancel</button>
+        <button class="btn btn-primary" onclick="sendMsg()" id="msgBtn" style="flex:2">Send Message</button>
+      </div>
+    </div>
+    <div class="success-msg" id="msgSuccess" style="display:none">
+      <div class="icon">✅</div>
+      <h3>Message Sent!</h3>
+      <p>${name.split(' ')[0]} will receive your message on XamePage.</p>
+      <p style="margin-bottom:16px">Want to continue the conversation?</p>
+      <a href="${downloadUrl}" class="btn btn-primary">⬇ Get XamePage Free</a>
+      <button class="btn btn-cancel" onclick="hidePanel('msg')" style="margin-top:10px">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Call overlay -->
+<div class="overlay" id="callOverlay">
+  <div class="panel">
+    <div id="callForm">
+      <h3>📞 Call ${name.split(' ')[0]}</h3>
+      <p>${name.split(' ')[0]} will receive a call notification on XamePage and can answer from the app.</p>
+      <input class="input" id="callName" placeholder="Your name" maxlength="40">
+      <div class="row">
+        <button class="btn btn-cancel" onclick="hidePanel('call')" style="flex:1">Cancel</button>
+        <button class="btn btn-primary" onclick="sendCall()" id="callBtn" style="flex:2">📞 Request Call</button>
+      </div>
+    </div>
+    <div class="success-msg" id="callSuccess" style="display:none">
+      <div class="icon">📞</div>
+      <h3>Call Request Sent!</h3>
+      <p>${name.split(' ')[0]} has been notified and will call you back.</p>
+      <p style="margin-bottom:16px">Get XamePage to receive calls too.</p>
+      <a href="${downloadUrl}" class="btn btn-primary">⬇ Get XamePage Free</a>
+      <button class="btn btn-cancel" onclick="hidePanel('call')" style="margin-top:10px">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const XAME_ID = '${xameId}';
+const API = 'https://project-50s.onrender.com';
+
+function showPanel(type) { document.getElementById(type+'Overlay').classList.add('active'); }
+function hidePanel(type) {
+  document.getElementById(type+'Overlay').classList.remove('active');
+  document.getElementById(type+'Form').style.display='';
+  document.getElementById(type+'Success').style.display='none';
+}
+
+async function sendMsg() {
+  const name = document.getElementById('msgName').value.trim();
+  const text = document.getElementById('msgText').value.trim();
+  if (!name) { alert('Please enter your name'); return; }
+  if (!text)  { alert('Please enter a message'); return; }
+  const btn = document.getElementById('msgBtn');
+  btn.textContent = 'Sending...'; btn.disabled = true;
+  try {
+    const r = await fetch(API+'/api/web/message', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ toXameId: XAME_ID, fromName: name, text })
+    });
+    const d = await r.json();
+    if (d.success) {
+      document.getElementById('msgForm').style.display='none';
+      document.getElementById('msgSuccess').style.display='';
+    } else { alert(d.message || 'Failed to send. Try again.'); }
+  } catch(e) { alert('Connection error. Try again.'); }
+  btn.textContent = 'Send Message'; btn.disabled = false;
+}
+
+async function sendCall() {
+  const name = document.getElementById('callName').value.trim();
+  if (!name) { alert('Please enter your name'); return; }
+  const btn = document.getElementById('callBtn');
+  btn.textContent = 'Sending...'; btn.disabled = true;
+  try {
+    const r = await fetch(API+'/api/web/call-request', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ toXameId: XAME_ID, fromName: name })
+    });
+    const d = await r.json();
+    if (d.success) {
+      document.getElementById('callForm').style.display='none';
+      document.getElementById('callSuccess').style.display='';
+    } else { alert(d.message || 'Failed. Try again.'); }
+  } catch(e) { alert('Connection error. Try again.'); }
+  btn.textContent = '📞 Request Call'; btn.disabled = false;
+}
+
+// Close overlay on backdrop click
+document.querySelectorAll('.overlay').forEach(o => {
+  o.addEventListener('click', e => { if(e.target===o) o.classList.remove('active'); });
+});
+</script>
 </body>
 </html>`);
     } catch (err) {
@@ -8499,3 +8617,98 @@ init();
     }
 })
 
+
+// ═══════════════════════════════════════════════════════════════════
+// WEB INTERACTION LAYER — message, call request, payment from browser
+// ═══════════════════════════════════════════════════════════════════
+
+// POST /api/web/message — deliver a web message to a XamePage user's inbox
+app.post('/api/web/message', async (req, res) => {
+  try {
+    const { toXameId, fromName, text } = req.body;
+    if (!toXameId || !fromName?.trim() || !text?.trim())
+      return res.json({ success: false, message: 'Missing fields.' });
+
+    const recipient = await User.findOne({ xameId: toXameId }).lean();
+    if (!recipient) return res.json({ success: false, message: 'User not found.' });
+
+    const guestId  = 'web_' + toXameId + '_' + Date.now();
+    const msgId    = require('uuid').v4();
+    const msgObj   = {
+      messageId:   msgId,
+      senderId:    guestId,
+      recipientId: toXameId,
+      text:        `[Web message from ${fromName.trim()}]: ${text.trim()}`,
+      ts:          new Date(),
+      status:      'delivered',
+    };
+
+    // Save to DB
+    await new Message(msgObj).save();
+
+    // Deliver via socket if online
+    const recipSocketId = findSocketId(toXameId);
+    if (recipSocketId) {
+      io.to(recipSocketId).emit('receive-message', {
+        id:          msgId,
+        senderId:    guestId,
+        recipientId: toXameId,
+        text:        msgObj.text,
+        ts:          msgObj.ts,
+        status:      'delivered',
+        type:        'text',
+      });
+    }
+
+    // FCM push if offline
+    if (recipient.fcmToken && admin.apps.length) {
+      await admin.messaging().send({
+        token: recipient.fcmToken,
+        android: { priority: 'high' },
+        notification: {
+          title: `Web message from ${fromName.trim()}`,
+          body: text.trim(),
+        },
+        data: { type: 'web_message', fromName: fromName.trim() },
+      }).catch(() => {});
+    }
+
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+});
+
+// POST /api/web/call-request — notify XamePage user of a web call request
+app.post('/api/web/call-request', async (req, res) => {
+  try {
+    const { toXameId, fromName } = req.body;
+    if (!toXameId || !fromName?.trim())
+      return res.json({ success: false, message: 'Missing fields.' });
+
+    const recipient = await User.findOne({ xameId: toXameId }).lean();
+    if (!recipient) return res.json({ success: false, message: 'User not found.' });
+
+    // Notify via socket if online
+    const recipSocketId = findSocketId(toXameId);
+    if (recipSocketId) {
+      io.to(recipSocketId).emit('web_call_request', {
+        fromName: fromName.trim(),
+        callUrl:  `https://app.xamepage.com/web-call/${toXameId}`,
+      });
+    }
+
+    // FCM push
+    if (recipient.fcmToken && admin.apps.length) {
+      await admin.messaging().send({
+        token: recipient.fcmToken,
+        android: { priority: 'high' },
+        notification: {
+          title: `Web call from ${fromName.trim()}`,
+          body:  `${fromName.trim()} wants to call you on XamePage`,
+        },
+        data: { type: 'web_call', fromName: fromName.trim(), toXameId },
+      }).catch(() => {});
+    }
+
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+});
