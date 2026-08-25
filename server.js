@@ -2366,8 +2366,8 @@ io.on('connection', (socket) => {
                 : isCancelled
                     ? { callerId: rejectorId, recipientId, status: 'pending' }
                     : { callerId: recipientId, recipientId: rejectorId, status: 'pending' };
-            const updated = isNoAnswer ? null : await CallHistory.findOneAndUpdate(q, { status: newStatus });
-            if (sid && !isNoAnswer) io.to(sid).emit('call-rejected', { senderId: rejectorId, reason });
+              const updated = isNoAnswer ? null : await CallHistory.findOneAndUpdate(q, { status: newStatus }, { new: true });
+            if (sid && !isNoAnswer) io.to(sid).emit('call-rejected', { senderId: rejectorId, reason, callId });
             if (updated) socket.emit('call-acknowledged', { senderId: recipientId, acknowledgedCallId: updated.callId });
 
             // Save call message for cancelled and declined
@@ -2382,7 +2382,7 @@ io.on('connection', (socket) => {
                     recipientId:  msgRecipientId,
                     ts:           Date.now(),
                     text:         '',
-                    callType:     'voice',
+                    callType:     updated?.callType || 'voice',
                     callStatus,
                     callDuration: 0,
                     status:       'sent',
@@ -2390,7 +2390,7 @@ io.on('connection', (socket) => {
                 const rejPayload = {
                     id: rejMsg.messageId, senderId: msgSenderId, recipientId: msgRecipientId,
                     ts: rejMsg.ts, text: '', type: 'call',
-                    callType: 'voice', callStatus, callDuration: 0, status: 'sent',
+                    callType: updated?.callType || 'voice', callStatus, callDuration: 0, status: 'sent',
                 };
                 const callerSid = findSocketId(msgSenderId);
                 const recipSid2 = findSocketId(msgRecipientId);
@@ -2415,13 +2415,14 @@ io.on('connection', (socket) => {
     socket.on('call-unanswered', async ({ recipientId, callId }) => {
         const callerId = socketToUserMap.get(socket.id);
         try {
-            await CallHistory.findOneAndUpdate(
+            const callRecord = await CallHistory.findOneAndUpdate(
                 { callId, callerId, recipientId, status: { $in: ['pending', 'ended'] } },
-                { status: 'no-answer', duration: 0 }
+                { status: 'no-answer', duration: 0 },
+                { new: true }
             );
-            // Save no-answer call message
+            // Save no-answer call message using the original call type
             const { v4: uuidv4na } = require('uuid');
-            const callType2 = 'voice';
+            const callType2 = callRecord?.callType || 'voice';
             const noAnsMsg = await new Message({
                 messageId:    uuidv4na(),
                 senderId:     callerId,
