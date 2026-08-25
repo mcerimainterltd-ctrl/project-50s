@@ -3981,7 +3981,7 @@ app.get('/u/:xameId', async (req, res) => {
         const xameId     = user.xameId;
         const msgUrl      = `https://app.xamepage.com/chat/${xameId}`;
         const callUrl     = `https://app.xamepage.com/call/${xameId}`;
-        const payUrl      = `https://app.xamepage.com/pay/${xameId}`;
+        const payUrl      = `xamepage://add/${xameId}`;
         const downloadUrl = `https://app.xamepage.com/api/app/download`;
 
         res.send(`<!DOCTYPE html>
