@@ -1624,6 +1624,10 @@ app.post('/api/settings', async (req, res) => {
 // ============================================================
 
 io.on('connection', (socket) => {
+  socket.use(([event, ...args], next) => {
+    console.log(`📨 ${event}`, ...args);
+    next();
+  });
     const userId = socket.handshake.query.userId;
     console.log(`✅ Connected: ${userId} (${io.engine.clientsCount} total)`);
 
