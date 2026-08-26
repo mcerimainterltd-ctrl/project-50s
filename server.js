@@ -2201,7 +2201,6 @@ io.on('connection', (socket) => {
     // ── 1-to-1 WebRTC (unchanged from v2.1) ──────────────
 
     socket.on('call-user', async ({ recipientId, offer, callType }) => {
-        console.log("📞 call-user from", callerId, "to", recipientId);
         const callerId      = socketToUserMap.get(socket.id);
         const recipSocketId = findSocketId(recipientId);
 
@@ -2320,12 +2319,10 @@ io.on('connection', (socket) => {
         }
     });
 
-        console.log("📞 make-answer from", socketToUserMap.get(socket.id), "to", recipientId);
     socket.on('make-answer', ({ recipientId, answer }) => {
         const sid = findSocketId(recipientId);
         if (sid) io.to(sid).emit('make-answer', { answer, senderId: socketToUserMap.get(socket.id) });
     });
-        console.log("📞 ice-candidate from", socketToUserMap.get(socket.id), "to", recipientId);
 
     socket.on('ice-candidate', ({ recipientId, candidate }) => {
         const sid = findSocketId(recipientId);
