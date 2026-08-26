@@ -2278,7 +2278,7 @@ io.on('connection', (socket) => {
                     const pushSub = await PushSubscription.findOne({ userId: recipientId });
                     if (pushSub) {
                         await webpush.sendNotification(pushSub.subscription, JSON.stringify({
-                            type: 'incoming-call', callerId, callerName: incomingName, callType, callId
+                            type: 'incoming-call', callerId, callerName: incomingName, callType, callId, offer: offer
                         }));
                     }
                 } catch (_) { /* non-fatal */ }
