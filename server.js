@@ -2325,9 +2325,9 @@ io.on('connection', (socket) => {
         const sid = findSocketId(recipientId);
         if (sid) io.to(sid).emit('make-answer', { answer, senderId: socketToUserMap.get(socket.id) });
     });
+        console.log("📞 ice-candidate from", socketToUserMap.get(socket.id), "to", recipientId);
 
     socket.on('ice-candidate', ({ recipientId, candidate }) => {
-        console.log("📞 ice-candidate from", socketToUserMap.get(socket.id), "to", recipientId);
         const sid = findSocketId(recipientId);
         if (sid) io.to(sid).emit('ice-candidate', { candidate, senderId: socketToUserMap.get(socket.id) });
     });
