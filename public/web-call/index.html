@@ -24,7 +24,18 @@ video{
 #remoteVideo{display:none}
 #localVideo{
   position:fixed;right:20px;bottom:90px;width:120px;
-  border:2px solid #00b0a0;z-index:5
+  border:2px solid #00b0a0;z-index:5;
+  cursor:grab;touch-action:none;user-select:none
+}
+#localVideo.dragging{cursor:grabbing}
+#localVideo.swapped{
+  position:relative;right:auto;bottom:auto;width:100%;
+  max-height:55vh;object-fit:cover;z-index:1
+}
+#remoteVideo.swapped{
+  position:fixed;right:20px;bottom:90px;width:120px;
+  border:2px solid #00b0a0;z-index:5;
+  cursor:grab;touch-action:none;user-select:none
 }
 button{
   border:0;border-radius:12px;padding:14px 20px;
@@ -76,6 +87,96 @@ const endBtn = document.getElementById('endBtn');
 const remoteVideo = document.getElementById('remoteVideo');
 const localVideo = document.getElementById('localVideo');
 const guestName = document.getElementById('guestName');
+let videoSwapped = false;
+let draggingVideo = null;
+let dragOffsetX = 0;
+let dragOffsetY = 0;
+let lastTapTime = 0;
+
+function getThumbnail() {
+  return videoSwapped ? remoteVideo : localVideo;
+}
+
+function swapVideos() {
+  videoSwapped = !videoSwapped;
+
+  localVideo.classList.toggle('swapped', videoSwapped);
+  remoteVideo.classList.toggle('swapped', !videoSwapped);
+
+  if (videoSwapped) {
+    remoteVideo.style.display = 'block';
+    localVideo.style.display = 'block';
+  } else {
+    localVideo.style.display = 'block';
+    if (remoteVideo.srcObject) remoteVideo.style.display = 'block';
+  }
+}
+
+function beginVideoDrag(e) {
+  const thumb = getThumbnail();
+  if (e.target !== thumb) return;
+
+  const rect = thumb.getBoundingClientRect();
+  const point = e.touches ? e.touches[0] : e;
+
+  draggingVideo = thumb;
+  dragOffsetX = point.clientX - rect.left;
+  dragOffsetY = point.clientY - rect.top;
+
+  thumb.classList.add('dragging');
+  thumb.style.left = rect.left + 'px';
+  thumb.style.top = rect.top + 'px';
+  thumb.style.right = 'auto';
+  thumb.style.bottom = 'auto';
+
+  e.preventDefault();
+}
+
+function moveVideoDrag(e) {
+  if (!draggingVideo) return;
+
+  const point = e.touches ? e.touches[0] : e;
+  const maxX = window.innerWidth - draggingVideo.offsetWidth;
+  const maxY = window.innerHeight - draggingVideo.offsetHeight;
+
+  draggingVideo.style.left =
+    Math.max(0, Math.min(maxX, point.clientX - dragOffsetX)) + 'px';
+  draggingVideo.style.top =
+    Math.max(0, Math.min(maxY, point.clientY - dragOffsetY)) + 'px';
+
+  e.preventDefault();
+}
+
+function endVideoDrag() {
+  if (!draggingVideo) return;
+  draggingVideo.classList.remove('dragging');
+  draggingVideo = null;
+}
+
+function handleVideoTap(e) {
+  const now = Date.now();
+
+  if (now - lastTapTime < 300) {
+    swapVideos();
+    lastTapTime = 0;
+    e.preventDefault();
+    return;
+  }
+
+  lastTapTime = now;
+}
+
+localVideo.addEventListener('pointerdown', beginVideoDrag);
+remoteVideo.addEventListener('pointerdown', beginVideoDrag);
+
+window.addEventListener('pointermove', moveVideoDrag);
+window.addEventListener('pointerup', endVideoDrag);
+
+localVideo.addEventListener('touchstart', handleVideoTap, {passive:false});
+remoteVideo.addEventListener('touchstart', handleVideoTap, {passive:false});
+localVideo.addEventListener('dblclick', swapVideos);
+remoteVideo.addEventListener('dblclick', swapVideos);
+
 
 function status(text) {
   statusEl.textContent = text;
