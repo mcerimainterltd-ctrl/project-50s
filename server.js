@@ -2460,6 +2460,10 @@ io.on('connection', (socket) => {
 
     socket.on('call-ended', async ({ recipientId, callId }) => {
         const uid = socketToUserMap.get(socket.id);
+
+        // Clear active-call state for both participants.
+        activeCalls.delete(uid);
+        activeCalls.delete(recipientId);
         try {
             const endTime = new Date();
             const callRecord = callId
