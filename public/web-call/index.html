@@ -91,91 +91,155 @@ let videoSwapped = false;
 let draggingVideo = null;
 let dragOffsetX = 0;
 let dragOffsetY = 0;
+let pointerStartX = 0;
+let pointerStartY = 0;
+let pointerMoved = false;
 let lastTapTime = 0;
+let lastTapTarget = null;
 
 function getThumbnail() {
   return videoSwapped ? remoteVideo : localVideo;
 }
 
+function resetVideoPosition(video) {
+  video.style.left = '';
+  video.style.top = '';
+  video.style.right = '';
+  video.style.bottom = '';
+}
+
 function swapVideos() {
   videoSwapped = !videoSwapped;
 
-  localVideo.classList.toggle('swapped', videoSwapped);
-  remoteVideo.classList.toggle('swapped', !videoSwapped);
+  const newThumbnail = getThumbnail();
+  const newMain = videoSwapped ? localVideo : remoteVideo;
 
-  if (videoSwapped) {
-    remoteVideo.style.display = 'block';
-    localVideo.style.display = 'block';
-  } else {
-    localVideo.style.display = 'block';
-    if (remoteVideo.srcObject) remoteVideo.style.display = 'block';
-  }
+  // Completely reset both videos first.
+  [localVideo, remoteVideo].forEach(video => {
+    video.classList.remove('swapped', 'dragging');
+    resetVideoPosition(video);
+
+    video.style.position = '';
+    video.style.width = '';
+    video.style.maxHeight = '';
+    video.style.zIndex = '';
+    video.style.border = '';
+  });
+
+  // Exactly one main video.
+  newMain.classList.add('swapped');
+  newMain.style.display = 'block';
+  newMain.style.position = 'relative';
+  newMain.style.left = 'auto';
+  newMain.style.top = 'auto';
+  newMain.style.right = 'auto';
+  newMain.style.bottom = 'auto';
+  newMain.style.width = '100%';
+  newMain.style.maxHeight = '55vh';
+  newMain.style.objectFit = 'cover';
+  newMain.style.zIndex = '1';
+  newMain.style.border = '0';
+
+  // Exactly one draggable thumbnail.
+  newThumbnail.style.display = 'block';
+  newThumbnail.style.position = 'fixed';
+  newThumbnail.style.left = '';
+  newThumbnail.style.top = '';
+  newThumbnail.style.right = '20px';
+  newThumbnail.style.bottom = '90px';
+  newThumbnail.style.width = '120px';
+  newThumbnail.style.maxHeight = '55vh';
+  newThumbnail.style.objectFit = 'cover';
+  newThumbnail.style.zIndex = '5';
+  newThumbnail.style.border = '2px solid #00b0a0';
+
+  // The thumbnail must never inherit the main-video state.
+  newThumbnail.classList.remove('swapped');
 }
 
-function beginVideoDrag(e) {
+
+function beginVideoPointer(e) {
   const thumb = getThumbnail();
-  if (e.target !== thumb) return;
+
+  // Only the current thumbnail can be dragged.
+  if (e.currentTarget !== thumb) return;
 
   const rect = thumb.getBoundingClientRect();
-  const point = e.touches ? e.touches[0] : e;
 
   draggingVideo = thumb;
-  dragOffsetX = point.clientX - rect.left;
-  dragOffsetY = point.clientY - rect.top;
+  dragOffsetX = e.clientX - rect.left;
+  dragOffsetY = e.clientY - rect.top;
+  pointerStartX = e.clientX;
+  pointerStartY = e.clientY;
+  pointerMoved = false;
 
-  thumb.classList.add('dragging');
-  thumb.style.left = rect.left + 'px';
-  thumb.style.top = rect.top + 'px';
-  thumb.style.right = 'auto';
-  thumb.style.bottom = 'auto';
-
+  thumb.setPointerCapture?.(e.pointerId);
   e.preventDefault();
 }
 
-function moveVideoDrag(e) {
+function moveVideoPointer(e) {
   if (!draggingVideo) return;
 
-  const point = e.touches ? e.touches[0] : e;
+  const dx = Math.abs(e.clientX - pointerStartX);
+  const dy = Math.abs(e.clientY - pointerStartY);
+
+  if (dx > 6 || dy > 6) pointerMoved = true;
+
+  if (!pointerMoved) return;
+
   const maxX = window.innerWidth - draggingVideo.offsetWidth;
   const maxY = window.innerHeight - draggingVideo.offsetHeight;
 
   draggingVideo.style.left =
-    Math.max(0, Math.min(maxX, point.clientX - dragOffsetX)) + 'px';
+    Math.max(0, Math.min(maxX, e.clientX - dragOffsetX)) + 'px';
   draggingVideo.style.top =
-    Math.max(0, Math.min(maxY, point.clientY - dragOffsetY)) + 'px';
+    Math.max(0, Math.min(maxY, e.clientY - dragOffsetY)) + 'px';
+  draggingVideo.style.right = 'auto';
+  draggingVideo.style.bottom = 'auto';
 
+  draggingVideo.classList.add('dragging');
   e.preventDefault();
 }
 
-function endVideoDrag() {
+function endVideoPointer(e) {
   if (!draggingVideo) return;
-  draggingVideo.classList.remove('dragging');
+
+  const thumb = draggingVideo;
+
+  try {
+    thumb.releasePointerCapture?.(e.pointerId);
+  } catch (_) {}
+
   draggingVideo = null;
-}
+  thumb.classList.remove('dragging');
 
-function handleVideoTap(e) {
-  const now = Date.now();
+  // A tap (not a drag) is eligible for double-tap swapping.
+  if (!pointerMoved) {
+    const now = Date.now();
 
-  if (now - lastTapTime < 300) {
-    swapVideos();
-    lastTapTime = 0;
-    e.preventDefault();
-    return;
+    if (lastTapTarget === thumb && now - lastTapTime < 350) {
+      lastTapTime = 0;
+      lastTapTarget = null;
+      swapVideos();
+      return;
+    }
+
+    lastTapTime = now;
+    lastTapTarget = thumb;
   }
-
-  lastTapTime = now;
 }
 
-localVideo.addEventListener('pointerdown', beginVideoDrag);
-remoteVideo.addEventListener('pointerdown', beginVideoDrag);
+localVideo.addEventListener('pointerdown', beginVideoPointer);
+remoteVideo.addEventListener('pointerdown', beginVideoPointer);
 
-window.addEventListener('pointermove', moveVideoDrag);
-window.addEventListener('pointerup', endVideoDrag);
+localVideo.addEventListener('pointermove', moveVideoPointer);
+remoteVideo.addEventListener('pointermove', moveVideoPointer);
 
-localVideo.addEventListener('touchstart', handleVideoTap, {passive:false});
-remoteVideo.addEventListener('touchstart', handleVideoTap, {passive:false});
-localVideo.addEventListener('dblclick', swapVideos);
-remoteVideo.addEventListener('dblclick', swapVideos);
+localVideo.addEventListener('pointerup', endVideoPointer);
+remoteVideo.addEventListener('pointerup', endVideoPointer);
+
+localVideo.addEventListener('pointercancel', endVideoPointer);
+remoteVideo.addEventListener('pointercancel', endVideoPointer);
 
 
 function status(text) {
