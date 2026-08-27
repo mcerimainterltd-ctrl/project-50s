@@ -2202,6 +2202,167 @@ io.on('connection', (socket) => {
         });
     });
 
+    // ── WEB-CALL ↔ FLUTTER WEBRTC BRIDGE ─────────────────────────────
+    // Browser web-call sockets are identified by socket.handshake.query.webCall.
+    // The browser's socket.id is used as the temporary callerId so the existing
+    // Flutter WebRTC code can answer/send ICE without changing its native flow.
+
+    const webCallSockets = global.__xamePageWebCallSockets || (global.__xamePageWebCallSockets = new Map());
+    const webCallByTarget = global.__xamePageWebCallByTarget || (global.__xamePageWebCallByTarget = new Map());
+
+    if (socket.handshake?.query?.webCall === '1') {
+        const targetUserId = String(socket.handshake.query.targetUserId || '').trim();
+
+        if (targetUserId) {
+            webCallSockets.set(socket.id, {
+                socketId: socket.id,
+                targetUserId,
+                fromName: '',
+                callId: null,
+            });
+            webCallByTarget.set(targetUserId, socket.id);
+
+            console.log(`[WEB-CALL] browser connected socket=${socket.id} target=${targetUserId}`);
+
+            socket.on('web-call:offer', async (data = {}) => {
+                try {
+                    const targetId = String(data.targetUserId || targetUserId).trim();
+                    const fromName = String(data.fromName || 'Web caller').trim().slice(0, 40);
+                    const callType = data.callType === 'voice' ? 'voice' : 'video';
+                    const offer = data.offer;
+
+                    if (!targetId || !offer?.sdp || !offer?.type) {
+                        return socket.emit('web-call:error', { message: 'Invalid call offer.' });
+                    }
+
+                    const recipientSocketId = findSocketId(targetId);
+
+                    if (!recipientSocketId) {
+                        return socket.emit('web-call:unavailable');
+                    }
+
+                    const recipient = await User.findOne({ xameId: targetId }).lean();
+                    if (!recipient) {
+                        return socket.emit('web-call:error', { message: 'User not found.' });
+                    }
+
+                    const callId = uuidv4();
+                    const state = webCallSockets.get(socket.id);
+
+                    if (state) {
+                        state.targetUserId = targetId;
+                        state.fromName = fromName;
+                        state.callId = callId;
+                    }
+
+                    webCallByTarget.set(targetId, socket.id);
+
+                    await new CallHistory({
+                        callId,
+                        callerId: socket.id,
+                        recipientId: targetId,
+                        callType,
+                        status: 'pending',
+                    }).save();
+
+                    io.to(recipientSocketId).emit('call-user', {
+                        offer,
+                        callerId: socket.id,
+                        callType,
+                        callId,
+                        caller: {
+                            xameId: socket.id,
+                            preferredName: fromName,
+                            displayName: fromName,
+                            profilePic: '',
+                        },
+                    });
+
+                    // Browser is NOT accepted yet. The Flutter recipient
+                    // must explicitly accept the call first.
+                    console.log(`[WEB-CALL] offer ${socket.id} -> ${targetId} callId=${callId}`);
+                } catch (err) {
+                    console.error('[WEB-CALL] offer error:', err);
+                    socket.emit('web-call:error', { message: 'Failed to start web call.' });
+                }
+            });
+
+            // Browser -> Flutter ICE candidate
+            socket.on('web-call:ice', ({ targetUserId: targetId, candidate } = {}) => {
+                try {
+                    const target = String(targetId || targetUserId || '').trim();
+                    if (!target || !candidate) return;
+
+                    const flutterSocketId = findSocketId(target);
+                    if (!flutterSocketId) {
+                        console.log(`[WEB-CALL] ICE target offline target=${target}`);
+                        return;
+                    }
+
+                    io.to(flutterSocketId).emit('ice-candidate', {
+                        candidate,
+                        senderId: socket.id,
+                    });
+
+                    console.log(
+                        `[WEB-CALL] ICE browser=${socket.id} -> Flutter=${target}`
+                    );
+                } catch (err) {
+                    console.error('[WEB-CALL] ICE bridge error:', err);
+                }
+            });
+
+            socket.on('web-call:end', ({ targetUserId: targetId } = {}) => {
+                const state = webCallSockets.get(socket.id);
+                const recipientId = String(targetId || state?.targetUserId || '').trim();
+                const sid = findSocketId(recipientId);
+
+                if (sid) {
+                    io.to(sid).emit('call-ended', {
+                        senderId: socket.id,
+                    });
+                }
+
+                if (state?.callId) {
+                    CallHistory.findOneAndUpdate(
+                        { callId: state.callId },
+                        { status: 'ended', endTime: new Date() }
+                    ).catch(() => {});
+                }
+
+                socket.emit('web-call:ended');
+            });
+
+            socket.on('disconnect', () => {
+                const state = webCallSockets.get(socket.id);
+
+                if (state) {
+                    const sid = findSocketId(state.targetUserId);
+
+                    if (sid) {
+                        io.to(sid).emit('call-ended', {
+                            senderId: socket.id,
+                        });
+                    }
+
+                    if (state.callId) {
+                        CallHistory.findOneAndUpdate(
+                            { callId: state.callId },
+                            { status: 'ended', endTime: new Date() }
+                        ).catch(() => {});
+                    }
+
+                    if (webCallByTarget.get(state.targetUserId) === socket.id) {
+                        webCallByTarget.delete(state.targetUserId);
+                    }
+
+                    webCallSockets.delete(socket.id);
+                    console.log(`[WEB-CALL] browser disconnected socket=${socket.id}`);
+                }
+            });
+        }
+    }
+
     // ── 1-to-1 WebRTC (unchanged from v2.1) ──────────────
 
     socket.on('call-user', async ({ recipientId, offer, callType }) => {
@@ -2324,13 +2485,46 @@ io.on('connection', (socket) => {
     });
 
     socket.on('make-answer', ({ recipientId, answer }) => {
+        // Web caller: recipientId is the temporary browser socket ID.
+        if (webCallSockets?.has(recipientId)) {
+            const webSocket = io.sockets.sockets.get(recipientId);
+            if (webSocket) {
+                webSocket.emit('web-call:answer', {
+                    answer,
+                    senderId: socketToUserMap.get(socket.id),
+                });
+                console.log(`[WEB-CALL] answer Flutter=${socketToUserMap.get(socket.id)} -> browser=${recipientId}`);
+            }
+            return;
+        }
+
+        // Normal Flutter ↔ Flutter call.
         const sid = findSocketId(recipientId);
-        if (sid) io.to(sid).emit('make-answer', { answer, senderId: socketToUserMap.get(socket.id) });
+        if (sid) io.to(sid).emit('make-answer', {
+            answer,
+            senderId: socketToUserMap.get(socket.id)
+        });
     });
 
     socket.on('ice-candidate', ({ recipientId, candidate }) => {
+        // Web caller: recipientId is the temporary browser socket ID.
+        if (webCallSockets?.has(recipientId)) {
+            const webSocket = io.sockets.sockets.get(recipientId);
+            if (webSocket) {
+                webSocket.emit('web-call:ice', {
+                    candidate,
+                    senderId: socketToUserMap.get(socket.id),
+                });
+            }
+            return;
+        }
+
+        // Normal Flutter ↔ Flutter call.
         const sid = findSocketId(recipientId);
-        if (sid) io.to(sid).emit('ice-candidate', { candidate, senderId: socketToUserMap.get(socket.id) });
+        if (sid) io.to(sid).emit('ice-candidate', {
+            candidate,
+            senderId: socketToUserMap.get(socket.id)
+        });
     });
 
     socket.on('stream-ready', ({ recipientId, streamType }) => {
@@ -2340,22 +2534,106 @@ io.on('connection', (socket) => {
 
     socket.on('call-accepted', async ({ recipientId, callId }) => {
         const acceptorId = socketToUserMap.get(socket.id);
-        const sid        = findSocketId(recipientId);
-        if (sid) io.to(sid).emit('call-accepted', { recipientId: acceptorId });
-        // Mark both parties as in an active call
+
+        // WEB-CALL: recipientId is the temporary browser socket ID.
+        if (webCallSockets?.has(recipientId)) {
+            const webSocket = io.sockets.sockets.get(recipientId);
+
+            if (webSocket) {
+                webSocket.emit('web-call:accepted', {
+                    callId,
+                    recipientId: acceptorId
+                });
+
+                console.log(
+                    `[WEB-CALL] accepted Flutter=${acceptorId} -> browser=${recipientId} callId=${callId}`
+                );
+            }
+
+            activeCalls.add(acceptorId);
+            activeCalls.add(recipientId);
+
+            try {
+                if (callId) {
+                    await CallHistory.findOneAndUpdate(
+                        { callId },
+                        { status: 'accepted', startTime: new Date() }
+                    );
+                }
+            } catch (err) {
+                console.error('[WEB-CALL] accepted history error:', err);
+            }
+
+            return;
+        }
+
+        // Normal Flutter ↔ Flutter call.
+        const sid = findSocketId(recipientId);
+        if (sid) {
+            io.to(sid).emit('call-accepted', {
+                recipientId: acceptorId
+            });
+        }
+
         activeCalls.add(acceptorId);
         activeCalls.add(recipientId);
+
         try {
             const q = callId
                 ? { callId }
-                : { callerId: recipientId, recipientId: acceptorId, status: 'pending' };
-            await CallHistory.findOneAndUpdate(q, { status: 'accepted', startTime: new Date() });
-        } catch (err) { console.error('call-accepted history error:', err); }
+                : {
+                    callerId: recipientId,
+                    recipientId: acceptorId,
+                    status: 'pending'
+                };
+
+            await CallHistory.findOneAndUpdate(
+                q,
+                { status: 'accepted', startTime: new Date() }
+            );
+        } catch (err) {
+            console.error('call-accepted history error:', err);
+        }
     });
 
     socket.on('call-rejected', async ({ recipientId, reason, callId }) => {
         const rejectorId = socketToUserMap.get(socket.id);
-        const sid        = findSocketId(recipientId);
+
+        // WEB-CALL: recipientId is the temporary browser socket ID.
+        if (webCallSockets?.has(recipientId)) {
+            const webSocket = io.sockets.sockets.get(recipientId);
+
+            if (webSocket) {
+                webSocket.emit('web-call:rejected', {
+                    reason: reason || 'declined',
+                    callId,
+                    senderId: rejectorId
+                });
+
+                console.log(
+                    `[WEB-CALL] rejected Flutter=${rejectorId} -> browser=${recipientId} reason=${reason || 'declined'}`
+                );
+            }
+
+            activeCalls.delete(rejectorId);
+            activeCalls.delete(recipientId);
+
+            try {
+                if (callId) {
+                    await CallHistory.findOneAndUpdate(
+                        { callId },
+                        { status: reason === 'cancelled' ? 'cancelled' : 'rejected' }
+                    );
+                }
+            } catch (err) {
+                console.error('[WEB-CALL] rejected history error:', err);
+            }
+
+            return;
+        }
+
+        // Normal Flutter ↔ Flutter call.
+        const sid = findSocketId(recipientId);
         // Clear active call status for both parties
         activeCalls.delete(rejectorId);
         activeCalls.delete(recipientId);
@@ -2460,6 +2738,39 @@ io.on('connection', (socket) => {
 
     socket.on('call-ended', async ({ recipientId, callId }) => {
         const uid = socketToUserMap.get(socket.id);
+
+        // WEB-CALL: recipientId is the temporary browser socket ID.
+        if (webCallSockets?.has(recipientId)) {
+            const webSocket = io.sockets.sockets.get(recipientId);
+
+            if (webSocket) {
+                webSocket.emit('web-call:ended', {
+                    callId,
+                    senderId: uid
+                });
+
+                console.log(
+                    `[WEB-CALL] ended Flutter=${uid} -> browser=${recipientId} callId=${callId}`
+                );
+            }
+
+            activeCalls.delete(uid);
+            activeCalls.delete(recipientId);
+
+            try {
+                if (callId) {
+                    await CallHistory.findOneAndUpdate(
+                        { callId },
+                        { status: 'ended', endTime: new Date() }
+                    );
+                }
+            } catch (err) {
+                console.error('[WEB-CALL] ended history error:', err);
+            }
+
+            return;
+        }
+
 
         // Clear active-call state for both participants.
         activeCalls.delete(uid);
@@ -8632,6 +8943,26 @@ init();
 // ═══════════════════════════════════════════════════════════════════
 
 // POST /api/web/message — deliver a web message to a XamePage user's inbox
+
+// ═══════════════════════════════════════════════════════════════════
+// WEB CALL — browser ↔ XamePage Flutter WebRTC bridge
+// ═══════════════════════════════════════════════════════════════════
+
+app.get('/web-call/:xameId', async (req, res) => {
+  try {
+    const user = await User.findOne({ xameId: req.params.xameId })
+      .select('xameId preferredName profilePic')
+      .lean();
+
+    if (!user) return res.status(404).send('XamePage user not found.');
+
+    res.sendFile(path.join(BASE_DIR, 'public', 'web-call', 'index.html'));
+  } catch (err) {
+    console.error('web-call page error:', err);
+    res.status(500).send('Server error');
+  }
+});
+
 app.post('/api/web/message', async (req, res) => {
   try {
     const { toXameId, fromName, text } = req.body;

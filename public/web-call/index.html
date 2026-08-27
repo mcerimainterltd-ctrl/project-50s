@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>XamePage Web Call</title>
+<style>
+*{box-sizing:border-box;margin:0}
+body{
+  min-height:100vh;background:#07101c;color:#edf3f8;
+  font-family:Arial,sans-serif;display:flex;
+  align-items:center;justify-content:center;padding:20px
+}
+.card{
+  width:100%;max-width:430px;background:#0f1e2e;
+  border-radius:24px;padding:28px;text-align:center
+}
+h1{font-size:25px;margin-bottom:8px}
+#status{color:#8aafc8;margin:10px 0 20px}
+video{
+  width:100%;background:#000;border-radius:18px;
+  display:none;max-height:55vh;object-fit:cover
+}
+#remoteVideo{display:none}
+#localVideo{
+  position:fixed;right:20px;bottom:90px;width:120px;
+  border:2px solid #00b0a0;z-index:5
+}
+button{
+  border:0;border-radius:12px;padding:14px 20px;
+  margin:6px;font-weight:700;font-size:15px;cursor:pointer
+}
+.primary{background:#00b0a0;color:#001512}
+.danger{background:#d9534f;color:#fff}
+.secondary{background:#183047;color:#00b0a0}
+input{
+  width:100%;padding:13px;border-radius:10px;
+  border:1px solid #294258;background:#07101c;
+  color:#fff;font-size:15px;margin:7px 0
+}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1 id="title">XamePage Web Call</h1>
+  <div id="status">Connecting…</div>
+
+  <input id="guestName" placeholder="Your name" maxlength="40">
+
+  <video id="remoteVideo" autoplay playsinline></video>
+  <video id="localVideo" autoplay muted playsinline></video>
+
+  <div>
+    <button id="startBtn" class="primary">Start Call</button>
+    <button id="endBtn" class="danger" style="display:none">End Call</button>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const XAME_ID = location.pathname.split('/').filter(Boolean).pop();
+const socket = io({
+  query: {
+    webCall: '1',
+    targetUserId: XAME_ID
+  }
+});
+
+let pc = null;
+let localStream = null;
+let callStarted = false;
+
+const statusEl = document.getElementById('status');
+const startBtn = document.getElementById('startBtn');
+const endBtn = document.getElementById('endBtn');
+const remoteVideo = document.getElementById('remoteVideo');
+const localVideo = document.getElementById('localVideo');
+const guestName = document.getElementById('guestName');
+
+function status(text) {
+  statusEl.textContent = text;
+}
+
+function makePeer() {
+  pc = new RTCPeerConnection({
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' }
+    ]
+  });
+
+  pc.onicecandidate = e => {
+    if (e.candidate) {
+      socket.emit('web-call:ice', {
+        targetUserId: XAME_ID,
+        candidate: e.candidate
+      });
+    }
+  };
+
+  pc.ontrack = e => {
+    if (e.streams && e.streams[0]) {
+      remoteVideo.srcObject = e.streams[0];
+      remoteVideo.style.display = 'block';
+    }
+  };
+
+  pc.onconnectionstatechange = () => {
+    if (!pc) return;
+    if (pc.connectionState === 'connected') status('Call connected');
+    if (['failed','disconnected','closed'].includes(pc.connectionState)) {
+      status('Call ended');
+    }
+  };
+}
+
+async function startCall() {
+  if (callStarted) return;
+
+  const name = guestName.value.trim();
+  if (!name) {
+    alert('Please enter your name');
+    return;
+  }
+
+  startBtn.disabled = true;
+  status('Requesting camera and microphone…');
+
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: true
+    });
+
+    localVideo.srcObject = localStream;
+    localVideo.style.display = 'block';
+
+    makePeer();
+
+    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+    status('Calling…');
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    socket.emit('web-call:offer', {
+      targetUserId: XAME_ID,
+      offer: {
+        type: offer.type,
+        sdp: offer.sdp
+      },
+      fromName: name,
+      callType: 'video'
+    });
+
+    callStarted = true;
+    endBtn.style.display = 'inline-block';
+  } catch (e) {
+    console.error(e);
+    status('Camera/microphone access failed');
+    startBtn.disabled = false;
+  }
+}
+
+async function endCall() {
+  socket.emit('web-call:end', { targetUserId: XAME_ID });
+
+  if (pc) {
+    pc.close();
+    pc = null;
+  }
+
+  if (localStream) {
+    localStream.getTracks().forEach(t => t.stop());
+    localStream = null;
+  }
+
+  localVideo.style.display = 'none';
+  remoteVideo.style.display = 'none';
+
+  callStarted = false;
+  startBtn.disabled = false;
+  endBtn.style.display = 'none';
+  status('Call ended');
+}
+
+socket.on('web-call:answer', async data => {
+  if (!pc) return;
+
+  try {
+    await pc.setRemoteDescription(
+      new RTCSessionDescription(data.answer)
+    );
+    status('Connecting…');
+  } catch (e) {
+    console.error('Answer error:', e);
+    status('Failed to establish call');
+  }
+});
+
+socket.on('web-call:ice', async data => {
+  if (!pc || !data.candidate) return;
+
+  try {
+    await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+  } catch (e) {
+    console.warn('ICE error:', e);
+  }
+});
+
+socket.on('web-call:accepted', () => {
+  status('XamePage user accepted the call');
+});
+
+socket.on('web-call:rejected', data => {
+  status(data?.reason === 'busy'
+    ? 'User is currently busy'
+    : 'Call declined');
+});
+
+socket.on('web-call:unavailable', () => {
+  status('User is offline');
+});
+
+socket.on('web-call:ended', () => {
+  status('Call ended by the other person');
+  endCall();
+});
+
+socket.on('web-call:error', data => {
+  status(data?.message || 'Call error');
+  startBtn.disabled = false;
+});
+
+socket.on('connect', () => {
+  status('Ready to call');
+});
+
+socket.on('disconnect', () => {
+  status('Connection lost');
+});
+
+startBtn.onclick = startCall;
+endBtn.onclick = endCall;
+</script>
+</body>
+</html>
