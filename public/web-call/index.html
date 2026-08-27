@@ -62,7 +62,8 @@ input{
   <video id="localVideo" autoplay muted playsinline></video>
 
   <div>
-    <button id="startBtn" class="primary">Start Call</button>
+    <button id="videoBtn" class="primary">📹 Video Call</button>
+    <button id="voiceBtn" class="secondary">📞 Voice Call</button>
     <button id="endBtn" class="danger" style="display:none">End Call</button>
   </div>
 </div>
@@ -80,9 +81,11 @@ const socket = io({
 let pc = null;
 let localStream = null;
 let callStarted = false;
+let callType = 'video';
 
 const statusEl = document.getElementById('status');
-const startBtn = document.getElementById('startBtn');
+const videoBtn = document.getElementById('videoBtn');
+const voiceBtn = document.getElementById('voiceBtn');
 const endBtn = document.getElementById('endBtn');
 const remoteVideo = document.getElementById('remoteVideo');
 const localVideo = document.getElementById('localVideo');
@@ -279,7 +282,7 @@ function makePeer() {
   };
 }
 
-async function startCall() {
+async function startCall(type = 'video') {
   if (callStarted) return;
 
   const name = guestName.value.trim();
@@ -288,23 +291,37 @@ async function startCall() {
     return;
   }
 
-  startBtn.disabled = true;
-  status('Requesting camera and microphone…');
+  callType = type;
+
+  videoBtn.disabled = true;
+  voiceBtn.disabled = true;
+
+  status(callType === 'video'
+    ? 'Requesting camera and microphone…'
+    : 'Requesting microphone…');
 
   try {
     localStream = await navigator.mediaDevices.getUserMedia({
       audio: true,
-      video: true
+      video: callType === 'video'
     });
 
-    localVideo.srcObject = localStream;
-    localVideo.style.display = 'block';
+    if (callType === 'video') {
+      localVideo.srcObject = localStream;
+      localVideo.style.display = 'block';
+      remoteVideo.style.display = 'none';
+    } else {
+      // Voice call: no camera/video UI.
+      localVideo.srcObject = null;
+      localVideo.style.display = 'none';
+      remoteVideo.style.display = 'none';
+    }
 
     makePeer();
 
     localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-    status('Calling…');
+    status(callType === 'video' ? 'Calling…' : 'Calling by voice…');
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
@@ -316,15 +333,19 @@ async function startCall() {
         sdp: offer.sdp
       },
       fromName: name,
-      callType: 'video'
+      callType
     });
 
     callStarted = true;
     endBtn.style.display = 'inline-block';
   } catch (e) {
     console.error(e);
-    status('Camera/microphone access failed');
-    startBtn.disabled = false;
+    status(callType === 'video'
+      ? 'Camera/microphone access failed'
+      : 'Microphone access failed');
+
+    videoBtn.disabled = false;
+    voiceBtn.disabled = false;
   }
 }
 
@@ -345,10 +366,15 @@ async function endCall() {
   remoteVideo.style.display = 'none';
 
   callStarted = false;
-  startBtn.disabled = false;
+  videoBtn.disabled = false;
+  voiceBtn.disabled = false;
   endBtn.style.display = 'none';
   status('Call ended');
 }
+
+videoBtn.addEventListener('click', () => startCall('video'));
+voiceBtn.addEventListener('click', () => startCall('voice'));
+
 
 socket.on('web-call:answer', async data => {
   if (!pc) return;
