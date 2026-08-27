@@ -349,8 +349,12 @@ async function startCall(type = 'video') {
   }
 }
 
-async function endCall() {
-  socket.emit('web-call:end', { targetUserId: XAME_ID });
+async function endCall(notifyServer = true) {
+  // Only notify the server when this side is actually ending the call.
+  // Remote 'web-call:ended' events must only clean up locally.
+  if (notifyServer) {
+    socket.emit('web-call:end', { targetUserId: XAME_ID });
+  }
 
   if (pc) {
     pc.close();
@@ -362,6 +366,8 @@ async function endCall() {
     localStream = null;
   }
 
+  localVideo.srcObject = null;
+  remoteVideo.srcObject = null;
   localVideo.style.display = 'none';
   remoteVideo.style.display = 'none';
 
@@ -416,12 +422,13 @@ socket.on('web-call:unavailable', () => {
 
 socket.on('web-call:ended', () => {
   status('Call ended by the other person');
-  endCall();
+  endCall(false);
 });
 
 socket.on('web-call:error', data => {
   status(data?.message || 'Call error');
-  startBtn.disabled = false;
+  videoBtn.disabled = false;
+  voiceBtn.disabled = false;
 });
 
 socket.on('connect', () => {
@@ -432,7 +439,6 @@ socket.on('disconnect', () => {
   status('Connection lost');
 });
 
-startBtn.onclick = startCall;
 endBtn.onclick = endCall;
 </script>
 </body>
