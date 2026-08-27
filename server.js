@@ -4300,7 +4300,7 @@ app.get('/u/:xameId', async (req, res) => {
         const pic        = user.profilePic || '';
         const xameId     = user.xameId;
         const msgUrl      = `https://app.xamepage.com/chat/${xameId}`;
-        const callUrl     = `https://app.xamepage.com/call/${xameId}`;
+        const callUrl     = `https://app.xamepage.com/web-call/${xameId}`;
         const payUrl      = `xamepage://add/${xameId}`;
         const downloadUrl = `https://app.xamepage.com/api/app/download`;
 
@@ -4355,7 +4355,7 @@ textarea.input{min-height:90px;resize:none}
   <div class="xame-id">@${xameId}</div>
   <div class="actions">
     <button class="btn btn-primary" onclick="showPanel('msg')">💬 Message on XamePage</button>
-    <button class="btn btn-secondary" onclick="showPanel('call')">📞 Call on XamePage</button>
+    <a href="${callUrl}" class="btn btn-secondary">📞 Call on XamePage</a>
     <a href="${payUrl}" class="btn btn-secondary">💳 Send Money via XamePay</a>
   </div>
   <hr class="divider">
