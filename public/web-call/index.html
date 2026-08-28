@@ -59,6 +59,7 @@ input{
   <input id="guestName" placeholder="Your name" maxlength="40">
 
   <video id="remoteVideo" autoplay playsinline></video>
+  <audio id="remoteAudio" autoplay playsinline></audio>
   <video id="localVideo" autoplay muted playsinline></video>
 
   <div>
@@ -88,6 +89,7 @@ const videoBtn = document.getElementById('videoBtn');
 const voiceBtn = document.getElementById('voiceBtn');
 const endBtn = document.getElementById('endBtn');
 const remoteVideo = document.getElementById('remoteVideo');
+const remoteAudio = document.getElementById('remoteAudio');
 const localVideo = document.getElementById('localVideo');
 const guestName = document.getElementById('guestName');
 let videoSwapped = false;
@@ -283,8 +285,17 @@ async function makePeer() {
 
   pc.ontrack = e => {
     if (e.streams && e.streams[0]) {
-      remoteVideo.srcObject = e.streams[0];
+      const remoteStream = e.streams[0];
+
+      // Keep the existing remote-video path unchanged.
+      remoteVideo.srcObject = remoteStream;
       remoteVideo.style.display = 'block';
+
+      // Dedicated audio playback for voice calls and remote audio tracks.
+      remoteAudio.srcObject = remoteStream;
+      remoteAudio.play().catch(err => {
+        console.warn('[WEBRTC] Remote audio autoplay blocked:', err);
+      });
     }
   };
 
