@@ -4361,6 +4361,21 @@ font-family:inherit;font-size:15px;font-weight:800;cursor:pointer}
 color:#ff8f8f;border-radius:10px;padding:10px;font-size:13px;margin-bottom:14px;text-align:center}
 .back{display:block;text-align:center;color:#00B0A0;text-decoration:none;
 font-size:13px;margin-top:18px}
+.account-screen{display:none}
+.account-screen.active{display:block}
+.account-title{text-align:center;font-size:20px;font-weight:800;margin-bottom:8px}
+.account-note{text-align:center;font-size:12px;color:#8AAFC8;line-height:1.5;margin-bottom:22px}
+.account-row{background:#07101C;border:1px solid rgba(255,255,255,.1);
+border-radius:12px;padding:13px 14px;margin-bottom:10px}
+.account-label{display:block;font-size:12px;color:#4A6E88;margin-bottom:5px;font-weight:600}
+.account-value{display:block;font-size:15px;color:#EDF3F8;word-break:break-word}
+.copy-btn{display:block;width:100%;padding:12px;border-radius:11px;border:1px solid rgba(255,255,255,.1);
+background:#07101C;color:#EDF3F8;font-family:inherit;font-size:14px;font-weight:700;
+cursor:pointer;margin-top:8px}
+.copy-btn:active{opacity:.75}
+.account-back{display:block;width:100%;padding:13px;border-radius:12px;border:0;
+background:#00B0A0;color:#000;font-family:inherit;font-size:15px;font-weight:800;
+cursor:pointer;margin-top:18px}
 </style>
 </head>
 <body>
@@ -4406,6 +4421,30 @@ placeholder="you@example.com" required>
 </div>
 <button class="btn btn-primary" id="payBtn" type="submit">💳 Continue</button>
 </form>
+
+<div class="account-screen" id="accountScreen">
+<h2 class="account-title">Payment Account</h2>
+<p class="account-note">Transfer the amount to the account below to complete your payment.</p>
+
+<div class="account-row">
+<span class="account-label">Bank</span>
+<span class="account-value" id="accountBank"></span>
+</div>
+
+<div class="account-row">
+<span class="account-label">Account Number</span>
+<span class="account-value" id="accountNumber"></span>
+<button type="button" class="copy-btn" id="copyAccountNumber">📋 Copy Account Number</button>
+</div>
+
+<div class="account-row">
+<span class="account-label">Account Name</span>
+<span class="account-value" id="accountName"></span>
+<button type="button" class="copy-btn" id="copyAccountName">📋 Copy Account Name</button>
+</div>
+
+<button type="button" class="account-back" id="accountBack">← Back to Payment Options</button>
+</div>
 
 <p class="note">Choose a payment method above to complete your payment securely.</p>
 <a class="back" href="/u/${xameId}">← Back to ${firstName}'s profile</a>
@@ -4475,9 +4514,16 @@ form.addEventListener('submit', async (e) => {
 
         if (d.success && d.account) {
             const a = d.account;
-            alert('Payment Account:\\\\n\\\\nBank: ' + (a.bank_name || '') +
-                  '\\\\nAccount Number: ' + (a.account_number || '') +
-                  '\\\\nAccount Name: ' + (a.account_name || ''));
+
+            document.getElementById('accountBank').textContent =
+                a.bank_name || '';
+            document.getElementById('accountNumber').textContent =
+                a.account_number || '';
+            document.getElementById('accountName').textContent =
+                a.account_name || '';
+
+            form.style.display = 'none';
+            document.getElementById('accountScreen').classList.add('active');
             return;
         }
 
@@ -4488,6 +4534,49 @@ form.addEventListener('submit', async (e) => {
         btn.disabled = false;
         btn.textContent = '💳 Continue to Payment';
     }
+});
+
+async function copyAccountValue(elementId, buttonId, defaultText) {
+    const value = document.getElementById(elementId).textContent.trim();
+    const button = document.getElementById(buttonId);
+
+    if (!value) return;
+
+    try {
+        await navigator.clipboard.writeText(value);
+        button.textContent = '✓ Copied';
+        setTimeout(() => {
+            button.textContent = defaultText;
+        }, 1500);
+    } catch (err) {
+        button.textContent = 'Copy failed';
+        setTimeout(() => {
+            button.textContent = defaultText;
+        }, 1500);
+    }
+}
+
+document.getElementById('copyAccountNumber').addEventListener('click', () => {
+    copyAccountValue(
+        'accountNumber',
+        'copyAccountNumber',
+        '📋 Copy Account Number'
+    );
+});
+
+document.getElementById('copyAccountName').addEventListener('click', () => {
+    copyAccountValue(
+        'accountName',
+        'copyAccountName',
+        '📋 Copy Account Name'
+    );
+});
+
+document.getElementById('accountBack').addEventListener('click', () => {
+    document.getElementById('accountScreen').classList.remove('active');
+    form.style.display = '';
+    btn.disabled = false;
+    btn.textContent = '💳 Continue to Payment';
 });
 </script>
 </body>
