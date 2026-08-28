@@ -4475,9 +4475,9 @@ form.addEventListener('submit', async (e) => {
 
         if (d.success && d.account) {
             const a = d.account;
-            alert('Payment Account:\n\nBank: ' + (a.bank_name || '') +
-                  '\nAccount Number: ' + (a.account_number || '') +
-                  '\nAccount Name: ' + (a.account_name || ''));
+            alert('Payment Account:\\\\n\\\\nBank: ' + (a.bank_name || '') +
+                  '\\\\nAccount Number: ' + (a.account_number || '') +
+                  '\\\\nAccount Name: ' + (a.account_name || ''));
             return;
         }
 
