@@ -4346,9 +4346,8 @@ border-radius:11px;padding:13px 14px;color:#EDF3F8;font-size:15px;
 margin-bottom:15px;font-family:inherit}
 .input:focus{outline:none;border-color:#00B0A0}
 .payment-methods{display:grid;gap:9px;margin-bottom:15px}
-.payment-method{display:flex;align-items:center;gap:10px;background:#07101C;border:1px solid rgba(255,255,255,.1);border-radius:11px;padding:12px;cursor:pointer}
-.payment-method:has(input:checked){border-color:#00B0A0}
-.payment-method input{margin:0;flex:0 0 auto}
+.payment-method{display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;background:#07101C;border:1px solid rgba(255,255,255,.1);border-radius:11px;padding:12px;cursor:pointer;color:#EDF3F8;font:inherit;text-align:left}
+.payment-method.selected{border-color:#00B0A0}
 .amount-wrap{position:relative}
 .amount-wrap span{position:absolute;left:14px;top:13px;color:#8AAFC8;font-size:15px}
 .amount{padding-left:34px}
@@ -4391,18 +4390,16 @@ placeholder="you@example.com" required>
 
 <label class="label">Payment method</label>
 <div class="payment-methods">
-<label class="payment-method">
-<input type="radio" name="method" value="flw-card" checked>
+<input type="hidden" id="paymentMethod" value="flw-card">
+<button type="button" class="payment-method selected" data-method="flw-card">
 <span>💳 Flutterwave Card</span>
-</label>
-<label class="payment-method">
-<input type="radio" name="method" value="flw-va">
+</button>
+<button type="button" class="payment-method" data-method="flw-va">
 <span>🏦 Flutterwave Virtual Account</span>
-</label>
-<label class="payment-method">
-<input type="radio" name="method" value="squad">
+</button>
+<button type="button" class="payment-method" data-method="squad">
 <span>🌍 Squad International Card/USSD</span>
-</label>
+</button>
 </div>
 <button class="btn btn-primary" id="payBtn" type="submit">💳 Continue</button>
 </form>
@@ -4416,16 +4413,14 @@ const form = document.getElementById('payForm');
 const btn = document.getElementById('payBtn');
 const error = document.getElementById('error');
 
-document.querySelectorAll('.payment-method').forEach(label => {
-    label.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+document.querySelectorAll('.payment-method').forEach(button => {
+    button.addEventListener('click', () => {
+        const method = button.dataset.method;
+        document.getElementById('paymentMethod').value = method;
 
-        const radio = label.querySelector('input[type="radio"]');
-        if (radio) {
-            radio.checked = true;
-            radio.dispatchEvent(new Event('change', { bubbles: true }));
-        }
+        document.querySelectorAll('.payment-method').forEach(item => {
+            item.classList.toggle('selected', item === button);
+        });
     });
 });
 
@@ -4454,7 +4449,7 @@ form.addEventListener('submit', async (e) => {
     btn.textContent = 'Preparing payment...';
 
     try {
-        const method = document.querySelector('input[name="method"]:checked')?.value;
+        const method = document.getElementById('paymentMethod').value;
         let endpoint;
 
         if (method === 'flw-card') {
