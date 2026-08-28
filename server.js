@@ -4347,7 +4347,8 @@ margin-bottom:15px;font-family:inherit}
 .input:focus{outline:none;border-color:#00B0A0}
 .payment-methods{display:grid;gap:9px;margin-bottom:15px}
 .payment-method{display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;background:#07101C;border:1px solid rgba(255,255,255,.1);border-radius:11px;padding:12px;cursor:pointer;color:#EDF3F8;font:inherit;text-align:left}
-.payment-method.selected{border-color:#00B0A0}
+.payment-method input{margin:0;flex:0 0 auto}
+.payment-method:has(input:checked){border-color:#00B0A0}
 .amount-wrap{position:relative}
 .amount-wrap span{position:absolute;left:14px;top:13px;color:#8AAFC8;font-size:15px}
 .amount{padding-left:34px}
@@ -4390,16 +4391,18 @@ placeholder="you@example.com" required>
 
 <label class="label">Payment method</label>
 <div class="payment-methods">
-<input type="hidden" id="paymentMethod" value="flw-card">
-<button type="button" class="payment-method selected" data-method="flw-card">
+<div class="payment-method">
+<input type="radio" name="method" value="flw-card" checked>
 <span>💳 Flutterwave Card</span>
-</button>
-<button type="button" class="payment-method" data-method="flw-va">
+</div>
+<div class="payment-method">
+<input type="radio" name="method" value="flw-va">
 <span>🏦 Flutterwave Virtual Account</span>
-</button>
-<button type="button" class="payment-method" data-method="squad">
+</div>
+<div class="payment-method">
+<input type="radio" name="method" value="squad">
 <span>🌍 Squad International Card/USSD</span>
-</button>
+</div>
 </div>
 <button class="btn btn-primary" id="payBtn" type="submit">💳 Continue</button>
 </form>
@@ -4412,17 +4415,6 @@ placeholder="you@example.com" required>
 const form = document.getElementById('payForm');
 const btn = document.getElementById('payBtn');
 const error = document.getElementById('error');
-
-document.querySelectorAll('.payment-method').forEach(button => {
-    button.addEventListener('click', () => {
-        const method = button.dataset.method;
-        document.getElementById('paymentMethod').value = method;
-
-        document.querySelectorAll('.payment-method').forEach(item => {
-            item.classList.toggle('selected', item === button);
-        });
-    });
-});
 
 form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -4449,7 +4441,7 @@ form.addEventListener('submit', async (e) => {
     btn.textContent = 'Preparing payment...';
 
     try {
-        const method = document.getElementById('paymentMethod').value;
+        const method = document.querySelector('input[name="method"]:checked')?.value;
         let endpoint;
 
         if (method === 'flw-card') {
