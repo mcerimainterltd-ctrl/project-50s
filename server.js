@@ -4289,6 +4289,177 @@ app.get('/.well-known/assetlinks.json', (req, res) => {
   }]);
 });
 
+
+// ── Public Web Send Money Page ───────────────────────────────────────────────
+app.get('/web/pay/:xameId', async (req, res) => {
+    try {
+        const user = await User.findOne({ xameId: req.params.xameId })
+            .select('xameId firstName lastName profilePic')
+            .lean();
+
+        if (!user) {
+            return res.status(404).send(`<!DOCTYPE html>
+<html><head><title>XamePage — User Not Found</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{background:#07101C;color:#EDF3F8;font-family:sans-serif;display:flex;
+align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center}
+.card{background:#0F1E2E;border:1px solid rgba(255,255,255,.08);border-radius:20px;
+padding:32px;max-width:360px;width:calc(100% - 48px)}
+a{color:#00B0A0;text-decoration:none}
+</style></head>
+<body><div class="card"><h2>User not found</h2>
+<p>This XamePage profile does not exist.</p>
+<a href="https://xamepage.com">← Back to XamePage</a></div></body></html>`);
+        }
+
+        const name = `${user.firstName} ${user.lastName}`.trim();
+        const firstName = user.firstName || 'User';
+        const pic = user.profilePic || '';
+        const xameId = user.xameId;
+
+        res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Send Money to ${name} — XamePage</title>
+<meta name="description" content="Send money securely to ${name} on XamePage.">
+<link href="https://fonts.googleapis.com/css2?family=Cabinet+Grotesk:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#07101C;color:#EDF3F8;font-family:'Cabinet Grotesk',sans-serif;
+min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.card{background:#0F1E2E;border:1px solid rgba(255,255,255,.06);border-radius:24px;
+padding:32px;max-width:390px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+.avatar{width:82px;height:82px;border-radius:50%;object-fit:cover;
+border:3px solid #00B0A0;margin:0 auto 14px;display:block}
+.avatar-placeholder{width:82px;height:82px;border-radius:50%;
+background:linear-gradient(135deg,#00B0A0,#007A6E);display:flex;
+align-items:center;justify-content:center;font-size:32px;font-weight:800;
+color:#fff;margin:0 auto 14px}
+h1{text-align:center;font-size:22px;font-weight:800;margin-bottom:4px}
+.handle{text-align:center;font-size:13px;color:#4A6E88;margin-bottom:28px}
+.label{display:block;font-size:13px;color:#8AAFC8;margin:0 0 7px;font-weight:600}
+.input{width:100%;background:#07101C;border:1px solid rgba(255,255,255,.1);
+border-radius:11px;padding:13px 14px;color:#EDF3F8;font-size:15px;
+margin-bottom:15px;font-family:inherit}
+.input:focus{outline:none;border-color:#00B0A0}
+.amount-wrap{position:relative}
+.amount-wrap span{position:absolute;left:14px;top:13px;color:#8AAFC8;font-size:15px}
+.amount{padding-left:34px}
+.btn{display:block;width:100%;padding:14px;border-radius:12px;border:none;
+font-family:inherit;font-size:15px;font-weight:800;cursor:pointer}
+.btn-primary{background:#00B0A0;color:#000;margin-top:4px}
+.btn-primary:disabled{opacity:.55;cursor:not-allowed}
+.note{text-align:center;font-size:12px;color:#4A6E88;margin-top:16px;line-height:1.5}
+.error{display:none;background:rgba(255,70,70,.08);border:1px solid rgba(255,70,70,.2);
+color:#ff8f8f;border-radius:10px;padding:10px;font-size:13px;margin-bottom:14px;text-align:center}
+.back{display:block;text-align:center;color:#00B0A0;text-decoration:none;
+font-size:13px;margin-top:18px}
+</style>
+</head>
+<body>
+<div class="card">
+${pic
+    ? `<img src="${pic}" class="avatar" alt="${name}">`
+    : `<div class="avatar-placeholder">${name.charAt(0).toUpperCase()}</div>`}
+<h1>Send Money to ${name}</h1>
+<div class="handle">@${xameId}</div>
+
+<div class="error" id="error"></div>
+
+<form id="payForm">
+<label class="label" for="amount">Amount</label>
+<div class="amount-wrap">
+<span>₦</span>
+<input class="input amount" id="amount" type="number" min="100" step="1"
+placeholder="0.00" required>
+</div>
+
+<label class="label" for="senderName">Your name</label>
+<input class="input" id="senderName" type="text" maxlength="80"
+placeholder="Enter your name" required>
+
+<label class="label" for="senderEmail">Your email</label>
+<input class="input" id="senderEmail" type="email" maxlength="120"
+placeholder="you@example.com" required>
+
+<button class="btn btn-primary" id="payBtn" type="submit">
+💳 Continue to Payment
+</button>
+</form>
+
+<p class="note">You'll be securely redirected to Flutterwave to complete your payment.</p>
+<a class="back" href="/u/${xameId}">← Back to ${firstName}'s profile</a>
+</div>
+
+<script>
+const form = document.getElementById('payForm');
+const btn = document.getElementById('payBtn');
+const error = document.getElementById('error');
+
+form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    error.style.display = 'none';
+
+    const amount = Number(document.getElementById('amount').value);
+    const senderName = document.getElementById('senderName').value.trim();
+    const email = document.getElementById('senderEmail').value.trim();
+
+    if (!Number.isFinite(amount) || amount < 100) {
+        error.textContent = 'Please enter an amount of at least ₦100.';
+        error.style.display = 'block';
+        return;
+    }
+
+    if (!senderName || !email) {
+        error.textContent = 'Please enter your name and email.';
+        error.style.display = 'block';
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Preparing payment...';
+
+    try {
+        const r = await fetch('/api/wallet/flw/init-payment', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                userId: '${xameId}',
+                amount: amount,
+                currency: 'NGN',
+                email: email,
+                name: senderName
+            })
+        });
+
+        const d = await r.json();
+
+        if (d.success && d.paymentLink) {
+            window.location.href = d.paymentLink;
+            return;
+        }
+
+        throw new Error(d.message || 'Unable to start payment.');
+    } catch (err) {
+        error.textContent = err.message || 'Unable to start payment. Please try again.';
+        error.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = '💳 Continue to Payment';
+    }
+});
+</script>
+</body>
+</html>`);
+} catch (err) {
+    console.error('Web payment page error:', err);
+    res.status(500).send('Server error');
+}
+});
+
 // ── 3.0 Block 6: Public Profile Page ─────────────────────────────────────────
 app.get('/u/:xameId', async (req, res) => {
     try {
@@ -4300,8 +4471,8 @@ app.get('/u/:xameId', async (req, res) => {
         const pic        = user.profilePic || '';
         const xameId     = user.xameId;
         const msgUrl      = `https://app.xamepage.com/chat/${xameId}`;
-        const callUrl     = `https://app.xamepage.com/web-call/${xameId}`;
-        const payUrl      = `xamepage://add/${xameId}`;
+        const callUrl     = `https://app.xamepage.com/call/${xameId}`;
+        const payUrl      = `/web/pay/${xameId}`;
         const downloadUrl = `https://app.xamepage.com/api/app/download`;
 
         res.send(`<!DOCTYPE html>
