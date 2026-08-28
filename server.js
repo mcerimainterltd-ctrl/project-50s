@@ -4471,7 +4471,7 @@ app.get('/u/:xameId', async (req, res) => {
         const pic        = user.profilePic || '';
         const xameId     = user.xameId;
         const msgUrl      = `https://app.xamepage.com/chat/${xameId}`;
-        const callUrl     = `https://app.xamepage.com/call/${xameId}`;
+        const callUrl     = `https://app.xamepage.com/web-call/${xameId}`;
         const payUrl      = `/web/pay/${xameId}`;
         const downloadUrl = `https://app.xamepage.com/api/app/download`;
 
