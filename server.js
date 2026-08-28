@@ -4345,6 +4345,10 @@ h1{text-align:center;font-size:22px;font-weight:800;margin-bottom:4px}
 border-radius:11px;padding:13px 14px;color:#EDF3F8;font-size:15px;
 margin-bottom:15px;font-family:inherit}
 .input:focus{outline:none;border-color:#00B0A0}
+.payment-methods{display:grid;gap:9px;margin-bottom:15px}
+.payment-method{display:flex;align-items:center;gap:10px;background:#07101C;border:1px solid rgba(255,255,255,.1);border-radius:11px;padding:12px;cursor:pointer}
+.payment-method:has(input:checked){border-color:#00B0A0}
+.payment-method input{margin:0;flex:0 0 auto}
 .amount-wrap{position:relative}
 .amount-wrap span{position:absolute;left:14px;top:13px;color:#8AAFC8;font-size:15px}
 .amount{padding-left:34px}
@@ -4386,15 +4390,18 @@ placeholder="Enter your name" required>
 placeholder="you@example.com" required>
 
 <label class="label">Payment method</label>
-<div style="display:grid;gap:9px;margin-bottom:15px">
-<label style="display:flex;align-items:center;gap:10px;background:#07101C;border:1px solid #00B0A0;border-radius:11px;padding:12px;cursor:pointer">
-<input type="radio" name="method" value="flw-card" checked> 💳 Flutterwave Card
+<div class="payment-methods">
+<label class="payment-method">
+<input type="radio" name="method" value="flw-card" checked>
+<span>💳 Flutterwave Card</span>
 </label>
-<label style="display:flex;align-items:center;gap:10px;background:#07101C;border:1px solid rgba(255,255,255,.1);border-radius:11px;padding:12px;cursor:pointer">
-<input type="radio" name="method" value="flw-va"> 🏦 Flutterwave Virtual Account
+<label class="payment-method">
+<input type="radio" name="method" value="flw-va">
+<span>🏦 Flutterwave Virtual Account</span>
 </label>
-<label style="display:flex;align-items:center;gap:10px;background:#07101C;border:1px solid rgba(255,255,255,.1);border-radius:11px;padding:12px;cursor:pointer">
-<input type="radio" name="method" value="squad"> 🌍 Squad International Card/USSD
+<label class="payment-method">
+<input type="radio" name="method" value="squad">
+<span>🌍 Squad International Card/USSD</span>
 </label>
 </div>
 <button class="btn btn-primary" id="payBtn" type="submit">💳 Continue</button>
@@ -4408,6 +4415,19 @@ placeholder="you@example.com" required>
 const form = document.getElementById('payForm');
 const btn = document.getElementById('payBtn');
 const error = document.getElementById('error');
+
+document.querySelectorAll('.payment-method').forEach(label => {
+    label.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const radio = label.querySelector('input[type="radio"]');
+        if (radio) {
+            radio.checked = true;
+            radio.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    });
+});
 
 form.addEventListener('submit', async (e) => {
     e.preventDefault();
