@@ -1734,6 +1734,57 @@ io.on('connection', (socket) => {
                         userToSocketMap.delete(uid);
                         broadcastOnlineUsers();
                     }
+
+                    // Clean up any accepted native call left behind by an
+                    // unexpected socket disconnect.
+                    if (!Array.from(socketToUserMap.values()).includes(uid)) {
+                        (async () => {
+                            try {
+                                const callRecord = await CallHistory.findOne({
+                                    status: 'accepted',
+                                    $or: [
+                                        { callerId: uid },
+                                        { recipientId: uid }
+                                    ]
+                                });
+
+                                if (!callRecord) return;
+
+                                const otherUserId =
+                                    callRecord.callerId === uid
+                                        ? callRecord.recipientId
+                                        : callRecord.callerId;
+
+                                activeCalls.delete(uid);
+                                activeCalls.delete(otherUserId);
+
+                                await CallHistory.findOneAndUpdate(
+                                    { callId: callRecord.callId, status: 'accepted' },
+                                    {
+                                        status: 'ended',
+                                        endTime: new Date(),
+                                        duration: 0
+                                    }
+                                );
+
+                                const otherSid = findSocketId(otherUserId);
+                                if (otherSid) {
+                                    io.to(otherSid).emit('call-ended', {
+                                        senderId: uid,
+                                        callId: callRecord.callId
+                                    });
+                                }
+
+                                console.log(
+                                    `[CALL-CLEANUP] disconnected user=${uid} ` +
+                                    `callId=${callRecord.callId} other=${otherUserId}`
+                                );
+                            } catch (err) {
+                                console.error('[CALL-CLEANUP] disconnect cleanup error:', err);
+                            }
+                        })();
+                    }
+
                     disconnectTimeouts.delete(uid);
                 }, 3000); // 3 second grace period before marking offline
                 disconnectTimeouts.set(uid, t);
