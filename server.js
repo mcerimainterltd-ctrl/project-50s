@@ -4385,12 +4385,22 @@ placeholder="Enter your name" required>
 <input class="input" id="senderEmail" type="email" maxlength="120"
 placeholder="you@example.com" required>
 
-<button class="btn btn-primary" id="payBtn" type="submit">
-💳 Continue to Payment
-</button>
+<label class="label">Payment method</label>
+<div style="display:grid;gap:9px;margin-bottom:15px">
+<label style="display:flex;align-items:center;gap:10px;background:#07101C;border:1px solid #00B0A0;border-radius:11px;padding:12px;cursor:pointer">
+<input type="radio" name="method" value="flw-card" checked> 💳 Flutterwave Card
+</label>
+<label style="display:flex;align-items:center;gap:10px;background:#07101C;border:1px solid rgba(255,255,255,.1);border-radius:11px;padding:12px;cursor:pointer">
+<input type="radio" name="method" value="flw-va"> 🏦 Flutterwave Virtual Account
+</label>
+<label style="display:flex;align-items:center;gap:10px;background:#07101C;border:1px solid rgba(255,255,255,.1);border-radius:11px;padding:12px;cursor:pointer">
+<input type="radio" name="method" value="squad"> 🌍 Squad International Card/USSD
+</label>
+</div>
+<button class="btn btn-primary" id="payBtn" type="submit">💳 Continue</button>
 </form>
 
-<p class="note">You'll be securely redirected to Flutterwave to complete your payment.</p>
+<p class="note">Choose a payment method above to complete your payment securely.</p>
 <a class="back" href="/u/${xameId}">← Back to ${firstName}'s profile</a>
 </div>
 
@@ -4424,7 +4434,20 @@ form.addEventListener('submit', async (e) => {
     btn.textContent = 'Preparing payment...';
 
     try {
-        const r = await fetch('/api/wallet/flw/init-payment', {
+        const method = document.querySelector('input[name="method"]:checked')?.value;
+        let endpoint;
+
+        if (method === 'flw-card') {
+            endpoint = '/api/wallet/flw/init-payment';
+        } else if (method === 'flw-va') {
+            endpoint = '/api/wallet/flw/virtual-account';
+        } else if (method === 'squad') {
+            endpoint = '/api/wallet/squad/init-payment';
+        } else {
+            throw new Error('Please select a payment method.');
+        }
+
+        const r = await fetch(endpoint, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
@@ -4440,6 +4463,14 @@ form.addEventListener('submit', async (e) => {
 
         if (d.success && d.paymentLink) {
             window.location.href = d.paymentLink;
+            return;
+        }
+
+        if (d.success && d.account) {
+            const a = d.account;
+            alert('Payment Account:\n\nBank: ' + (a.bank_name || '') +
+                  '\nAccount Number: ' + (a.account_number || '') +
+                  '\nAccount Name: ' + (a.account_name || ''));
             return;
         }
 
