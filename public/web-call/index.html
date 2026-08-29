@@ -59,6 +59,7 @@ input{
   <input id="guestName" placeholder="Your name" maxlength="40">
 
   <video id="remoteVideo" autoplay playsinline></video>
+  <audio id="remoteAudio" autoplay playsinline></audio>
   <video id="localVideo" autoplay muted playsinline></video>
 
   <div>
@@ -88,6 +89,7 @@ const videoBtn = document.getElementById('videoBtn');
 const voiceBtn = document.getElementById('voiceBtn');
 const endBtn = document.getElementById('endBtn');
 const remoteVideo = document.getElementById('remoteVideo');
+const remoteAudio = document.getElementById('remoteAudio');
 const localVideo = document.getElementById('localVideo');
 const guestName = document.getElementById('guestName');
 let videoSwapped = false;
@@ -301,6 +303,14 @@ async function makePeer() {
 
       remoteVideo.srcObject = stream;
       remoteVideo.style.display = 'block';
+
+      // Explicitly attach/play remote audio on Android browsers.
+      remoteAudio.srcObject = stream;
+      remoteAudio.volume = 1.0;
+      remoteAudio.muted = false;
+      remoteAudio.play().catch(err => {
+        console.warn('[WEBRTC] Remote audio playback blocked:', err);
+      });
     } else {
       status('ONTRACK: ' + (e.track?.kind || 'unknown') + ' | NO STREAM');
     }
