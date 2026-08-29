@@ -304,13 +304,18 @@ async function makePeer() {
       remoteVideo.srcObject = stream;
       remoteVideo.style.display = 'block';
 
-      // Explicitly attach/play remote audio on Android browsers.
-      remoteAudio.srcObject = stream;
-      remoteAudio.volume = 1.0;
-      remoteAudio.muted = false;
-      remoteAudio.play().catch(err => {
-        console.warn('[WEBRTC] Remote audio playback blocked:', err);
-      });
+      // Attach audio tracks separately to avoid browser autoplay conflicts
+      const audioTks = stream.getAudioTracks();
+      if (audioTks.length > 0) {
+        const audioOnlyStream = new MediaStream(audioTks);
+        remoteAudio.srcObject = audioOnlyStream;
+        remoteAudio.volume = 1.0;
+        remoteAudio.muted = false;
+        remoteAudio.play().catch(err => {
+          console.warn('[WEBRTC] Remote audio playback blocked:', err);
+          document.addEventListener('click', () => remoteAudio.play().catch(()=>{}), {once: true});
+        });
+      }
     } else {
       status('ONTRACK: ' + (e.track?.kind || 'unknown') + ' | NO STREAM');
     }
