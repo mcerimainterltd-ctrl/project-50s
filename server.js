@@ -2536,6 +2536,15 @@ io.on('connection', (socket) => {
     });
 
     socket.on('make-answer', ({ recipientId, answer }) => {
+        console.log('[WEB-CALL DEBUG] make-answer RECEIVED:', {
+            fromSocket: socket.id,
+            recipientId,
+            isWebCallSocket: webCallSockets?.has(recipientId),
+            hasAnswer: !!answer,
+            answerType: answer?.type,
+            sdpLength: answer?.sdp ? String(answer.sdp).length : 0,
+        });
+
         // TEMPORARY WEB-CALL AUDIO DIAGNOSTIC:
         // Inspect the native Flutter answer before forwarding it to the browser.
         if (webCallSockets?.has(recipientId) && answer?.sdp) {
