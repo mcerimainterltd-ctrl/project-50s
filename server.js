@@ -2536,6 +2536,31 @@ io.on('connection', (socket) => {
     });
 
     socket.on('make-answer', ({ recipientId, answer }) => {
+        // TEMPORARY WEB-CALL AUDIO DIAGNOSTIC:
+        // Inspect the native Flutter answer before forwarding it to the browser.
+        if (webCallSockets?.has(recipientId) && answer?.sdp) {
+            const sdp = String(answer.sdp);
+            const mediaSections = sdp
+                .split(/(?=m=)/)
+                .filter(section => section.startsWith('m=audio ') || section.startsWith('m=video '));
+
+            console.log('[WEB-CALL] FLUTTER ANSWER SDP MEDIA:');
+            for (const section of mediaSections) {
+                const lines = section
+                    .split('\\n')
+                    .filter(line =>
+                        line.startsWith('m=') ||
+                        line.startsWith('a=sendrecv') ||
+                        line.startsWith('a=sendonly') ||
+                        line.startsWith('a=recvonly') ||
+                        line.startsWith('a=inactive') ||
+                        line.startsWith('a=rtpmap:')
+                    );
+
+                console.log(lines.join(' | '));
+            }
+        }
+
         // Web caller: recipientId is the temporary browser socket ID.
         if (webCallSockets?.has(recipientId)) {
             const webSocket = io.sockets.sockets.get(recipientId);
