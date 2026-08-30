@@ -464,7 +464,8 @@ const groupSchema = new mongoose.Schema({
         userId:   { type: String, required: true },
         name:     { type: String, default: '' },
         role:     { type: String, enum: ['admin', 'member'], default: 'member' },
-        joinedAt: { type: Date, default: Date.now }
+        joinedAt: { type: Date, default: Date.now },
+        addedBy:  { type: String, default: '' }
     }],
     lastMessageTs:      { type: Number, default: 0 },
     lastMessagePreview: { type: String, default: '' },
@@ -3098,7 +3099,7 @@ app.post('/api/groups/create', async (req, res) => {
         if (Array.isArray(memberIds)) {
             const users = await User.find({ xameId: { $in: memberIds } });
             users.forEach(u => {
-                if (u.xameId !== userId) members.push({ userId: u.xameId, name: u.preferredName || u.firstName, role: 'member', joinedAt: new Date() });
+                if (u.xameId !== userId) members.push({ userId: u.xameId, name: u.preferredName || u.firstName, role: 'member', joinedAt: new Date(), addedBy: userId });
             });
         }
         const user = await User.findOne({ xameId: userId });
@@ -3139,7 +3140,7 @@ app.post('/api/groups/add-member', async (req, res) => {
         if (!requester || requester.role !== 'admin') return res.status(403).json({ success: false, message: 'Only admins can add members' });
         if (group.members.find(m => m.userId === userId)) return res.status(400).json({ success: false, message: 'Already a member' });
         const user = await User.findOne({ xameId: userId });
-        group.members.push({ userId, name: user?.preferredName || user?.firstName || userId, role: 'member', joinedAt: new Date() });
+        group.members.push({ userId, name: user?.preferredName || user?.firstName || userId, role: 'member', joinedAt: new Date(), addedBy: requesterId });
         await group.save();
         res.json({ success: true, group });
     } catch (err) {
@@ -3188,6 +3189,22 @@ app.post('/api/groups/upload-avatar', memoryUpload.single('avatar'), async (req,
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
+});
+
+// Leave group
+app.post('/api/groups/:groupId/leave', async (req, res) => {
+    const { groupId } = req.params;
+    const { userId } = req.body;
+    if (!userId) return res.status(400).json({ success: false, message: 'Missing userId' });
+    try {
+        const group = await Group.findOne({ groupId });
+        if (!group) return res.status(404).json({ success: false, message: 'Group not found' });
+        if (group.createdBy === userId)
+            return res.status(403).json({ success: false, message: 'Creator cannot leave. Delete the group instead.' });
+        group.members = group.members.filter(m => m.userId !== userId);
+        await group.save();
+        res.json({ success: true, message: 'Left group successfully' });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
 app.delete('/api/groups/:groupId', async (req, res) => {
