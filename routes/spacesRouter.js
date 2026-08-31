@@ -143,6 +143,20 @@ router.post('/:slug/messages/:msgId/react', verifySessionOrGuest, async (req, re
 });
 
 // ── Delete Message ────────────────────────────────────────────────────────────
+// Delete a space (owner only)
+router.delete('/:slug', verifySessionOrGuest, async (req, res) => {
+    try {
+        const space = await Space.findOne({ slug: req.params.slug });
+        if (!space) return res.status(404).json({ success: false, message: 'Space not found' });
+        const requesterId = req.user?.xameId || req.body?.userId;
+        if (space.ownerId !== requesterId)
+            return res.status(403).json({ success: false, message: 'Only the owner can delete this space' });
+        await Space.deleteOne({ slug: req.params.slug });
+        await SpaceMessage.deleteMany({ spaceSlug: req.params.slug });
+        res.json({ success: true, message: 'Space deleted' });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
 router.delete('/:slug/messages/:msgId', verifySessionOrGuest, async (req, res) => {
     try {
         const msg = await SpaceMessage.findById(req.params.msgId);

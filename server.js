@@ -3210,7 +3210,7 @@ app.post('/api/groups/:groupId/leave', async (req, res) => {
 app.delete('/api/groups/:groupId', async (req, res) => {
     try {
         const { groupId } = req.params;
-        const { userId } = req.body;
+        const userId = req.body?.userId || req.query.userId;
         const group = await Group.findOne({ groupId });
         if (!group) return res.status(404).json({ success: false, message: 'Group not found' });
         if (group.createdBy !== userId) return res.status(403).json({ success: false, message: 'Only creator can delete group' });
