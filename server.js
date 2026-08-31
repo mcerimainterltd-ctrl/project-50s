@@ -3207,10 +3207,10 @@ app.post('/api/groups/:groupId/leave', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-app.delete('/api/groups/:groupId', async (req, res) => {
+app.post('/api/groups/:groupId/delete', async (req, res) => {
     try {
         const { groupId } = req.params;
-        const userId = req.body?.userId || req.query.userId;
+        const { userId } = req.body;
         const group = await Group.findOne({ groupId });
         if (!group) return res.status(404).json({ success: false, message: 'Group not found' });
         if (group.createdBy !== userId) return res.status(403).json({ success: false, message: 'Only creator can delete group' });
