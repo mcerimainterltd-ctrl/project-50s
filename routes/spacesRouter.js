@@ -144,7 +144,7 @@ router.post('/:slug/messages/:msgId/react', verifySessionOrGuest, async (req, re
 
 // ── Delete Message ────────────────────────────────────────────────────────────
 // Delete a space (owner only)
-router.delete('/:slug', verifySessionOrGuest, async (req, res) => {
+router.post('/:slug/delete', verifySessionOrGuest, async (req, res) => {
     try {
         const space = await Space.findOne({ slug: req.params.slug });
         if (!space) return res.status(404).json({ success: false, message: 'Space not found' });
