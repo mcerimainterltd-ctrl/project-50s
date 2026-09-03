@@ -7581,6 +7581,7 @@ app.get('/join/:code', async (req, res) => {
     }
 });
 
+app.get('/delete-account', (req, res) => res.sendFile(path.join(BASE_DIR, 'public', 'delete-account.html')));
 app.get('/privacy',     (req, res) => res.sendFile(path.join(BASE_DIR, 'legal', 'privacy.html')));
 app.get('/terms',       (req, res) => res.sendFile(path.join(BASE_DIR, 'legal', 'terms.html')));
 app.get('/wallet-info', (req, res) => res.sendFile(path.join(BASE_DIR, 'legal', 'wallet-info.html')));
@@ -8956,6 +8957,28 @@ app.post('/api/admin/recall-broadcast', async (req, res) => {
             ts: { $gte: cutoff },
         });
         res.json({ success: true, message: `Deleted ${result.deletedCount} broadcast messages from the last ${minutesAgo || 30} minutes.`, deleted: result.deletedCount });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// ── Delete Account ───────────────────────────────────────────────────────────
+app.post('/api/account/delete', async (req, res) => {
+    const { userId, password } = req.body;
+    if (!userId || !password) return res.status(400).json({ success: false, message: 'Missing fields' });
+    try {
+        const bcrypt = require('bcryptjs');
+        const user = await User.findOne({ xameId: userId });
+        if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+        const match = await bcrypt.compare(password, user.password);
+        if (!match) return res.status(401).json({ success: false, message: 'Incorrect password' });
+        // Delete all user data
+        await Promise.all([
+            Message.deleteMany({ $or: [{ senderId: userId }, { recipientId: userId }] }),
+            Wallet.deleteOne({ xameId: userId }),
+            CallHistory.deleteMany({ $or: [{ callerId: userId }, { recipientId: userId }] }),
+            Group.updateMany({ 'members.userId': userId }, { $pull: { members: { userId } } }),
+            User.deleteOne({ xameId: userId }),
+        ]);
+        res.json({ success: true, message: 'Account deleted successfully' });
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
