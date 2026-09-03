@@ -39,6 +39,7 @@ const { createClient } = require('@supabase/supabase-js');
 const supabase = createClient(process.env.SUPABASE_URL || '', process.env.SUPABASE_SERVICE_KEY || '');
 const webpush    = require('web-push');
 require('dotenv').config();
+const xameTvService = require('./xametv_service');
 const admin = require('firebase-admin');
 const basicAuth = require('express-basic-auth');
 try {
@@ -582,6 +583,33 @@ app.use(express.static(BASE_DIR, { etag: false, lastModified: false, setHeaders:
 // Uploaded files are served via authenticated /api/file/:filename route only
 // ── Cloudinary signed upload (duplicate for reliability) ─────────────────────
 // ── Fix existing broken thumbnail URLs ───────────────────────────────────────
+
+// XameTV catalogue API
+// Kept separate from the existing XameTV implementation.
+app.get('/api/xametv/channels', async (req, res) => {
+  try {
+    const force =
+      req.query.refresh === '1' ||
+      req.query.refresh === 'true';
+
+    const channels =
+      await xameTvService.loadCatalogue(force);
+
+    res.json({
+      success: true,
+      count: channels.length,
+      channels,
+    });
+  } catch (err) {
+    console.error('XameTV catalogue error:', err);
+
+    res.status(502).json({
+      success: false,
+      error: 'XameTV catalogue unavailable',
+    });
+  }
+});
+
 app.post('/api/admin/fix-thumbnails', async (req, res) => {
     if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
         return res.status(401).json({ success: false, message: 'Unauthorized' });
