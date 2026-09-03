@@ -8976,6 +8976,9 @@ app.post('/api/account/delete', async (req, res) => {
             Wallet.deleteOne({ xameId: userId }),
             CallHistory.deleteMany({ $or: [{ callerId: userId }, { recipientId: userId }] }),
             Group.updateMany({ 'members.userId': userId }, { $pull: { members: { userId } } }),
+            DiscoveryPost.deleteMany({ userId }),
+            RewardAccount.deleteOne({ userId }),
+            RewardTransaction.deleteMany({ userId }),
             User.deleteOne({ xameId: userId }),
         ]);
         res.json({ success: true, message: 'Account deleted successfully' });
