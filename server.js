@@ -4900,23 +4900,47 @@ socket = io('https://app.xamepage.com', {
   transports: ['websocket','polling']
 });
 socket.on('receive-message', (msg) => {
-  const text = msg.message?.text || msg.text;
-  if (text && (msg.senderId === XAME_ID || msg.recipientId === guestId)) {
-    appendReply(text);
+  const senderId = msg.senderId;
+  const message = msg.message || msg;
+  const text = message.text || msg.text || '';
+  const media = message.file || null;
+  if (senderId === XAME_ID || msg.recipientId === guestId) {
+    appendMsg(text, false, media);
   }
 });
 
 function connectSocket(name, gId) { /* already connected */ }
 
-function appendMsg(text, isSelf) {
+function appendMsg(text, isSelf, media) {
   const box = document.getElementById('replyBox');
   if (!box) return;
   const div = document.createElement('div');
   div.style.cssText = isSelf
     ? 'background:#00B0A0;color:#000;padding:10px 14px;border-radius:14px 14px 4px 14px;font-size:14px;align-self:flex-end;max-width:85%;word-break:break-word'
     : 'background:#1a2e42;color:#EDF3F8;padding:10px 14px;border-radius:14px 14px 14px 4px;font-size:14px;align-self:flex-start;max-width:85%;word-break:break-word';
-  const clean = text.replace(/^\[Web message from [^\]]+\]: /, '');
-  div.textContent = clean;
+  if (media) {
+    const mime = media.mime || '';
+    if (mime.startsWith('image/')) {
+      const img = document.createElement('img');
+      img.src = media.url;
+      img.style.cssText = 'max-width:100%;border-radius:8px;display:block';
+      div.appendChild(img);
+    } else if (mime.startsWith('video/')) {
+      const vid = document.createElement('video');
+      vid.src = media.url; vid.controls = true;
+      vid.style.cssText = 'max-width:100%;border-radius:8px;display:block';
+      div.appendChild(vid);
+    } else {
+      const a = document.createElement('a');
+      a.href = media.url; a.target = '_blank';
+      a.textContent = '📎 ' + (media.name || 'File');
+      a.style.cssText = 'color:#00B0A0;text-decoration:underline';
+      div.appendChild(a);
+    }
+  } else {
+    const clean = text ? text.replace(/^\[Web message from [^\]]+\]: /, '') : '';
+    if (clean) div.textContent = clean;
+  }
   box.appendChild(div);
   box.scrollTop = box.scrollHeight;
 }
