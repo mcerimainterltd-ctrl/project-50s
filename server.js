@@ -1665,6 +1665,7 @@ io.on('connection', (socket) => {
     // Register web guest sockets separately
     if (socket.handshake?.query?.webGuest === '1' && userId?.startsWith('web_')) {
         const webGuestSockets = global.__xamePageWebGuestSockets || (global.__xamePageWebGuestSockets = new Map());
+        // Always update map with latest socket ID (handles reconnects)
         webGuestSockets.set(userId, socket.id);
         // Flush any buffered messages for this guest
         const webGuestBuffer = global.__xamePageWebGuestBuffer || (global.__xamePageWebGuestBuffer = new Map());
@@ -4848,7 +4849,10 @@ textarea.input{min-height:90px;resize:none}
         <button onclick="hidePanel('msg')" style="background:none;border:none;color:#8aafc8;cursor:pointer;font-size:20px">✕</button>
       </div>
       <div id="replyBox" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:4px 0;min-height:0"></div>
-      <div style="display:flex;gap:8px;margin-top:10px">
+      <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
+        <label style="cursor:pointer;color:#00B0A0;font-size:20px" title="Attach file">
+          📎<input type="file" id="replyFile" accept="image/*,video/*,.pdf,.doc,.docx" style="display:none" onchange="sendFileReply()">
+        </label>
         <input id="replyInput" placeholder="Reply..." maxlength="500"
           style="flex:1;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,0.1);background:#07101c;color:#fff;font-size:14px"
           onkeydown="if(event.key==='Enter')sendReply()">
@@ -4918,6 +4922,25 @@ function appendMsg(text, isSelf) {
 }
 
 function appendReply(text) { appendMsg(text, false); }
+
+async function sendFileReply() {
+  const fileInput = document.getElementById('replyFile');
+  const file = fileInput?.files?.[0];
+  if (!file) return;
+  const senderName = document.getElementById('msgName')?.value?.trim() || 'Guest';
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('toXameId', XAME_ID);
+  formData.append('fromName', senderName);
+  formData.append('guestId', guestId);
+  appendMsg('[Sending: ' + file.name + '...]', true);
+  try {
+    const r = await fetch(API+'/api/web/message/file', { method:'POST', body: formData });
+    const d = await r.json();
+    if (!d.success) appendMsg('[Failed to send file]', true);
+  } catch(e) { appendMsg('[File send error]', true); }
+  fileInput.value = '';
+}
 
 async function sendReply() {
   const input = document.getElementById('replyInput');
@@ -9561,6 +9584,48 @@ app.post('/api/web/message', async (req, res) => {
 
     res.json({ success: true });
   } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+});
+
+// POST /api/web/message/file — deliver a file/media from web visitor to XamePage user
+app.post('/api/web/message/file', memoryUpload.single('file'), async (req, res) => {
+  try {
+    const { toXameId, fromName, guestId } = req.body;
+    if (!toXameId || !fromName || !req.file)
+      return res.json({ success: false, message: 'Missing fields.' });
+    const recipient = await User.findOne({ xameId: toXameId }).lean();
+    if (!recipient) return res.json({ success: false, message: 'User not found.' });
+    // Upload to ImageKit
+    const mime = req.file.mimetype;
+    const isImage = mime.startsWith('image/');
+    const isVideo = mime.startsWith('video/');
+    const folder = isImage ? 'web-messages/images' : isVideo ? 'web-messages/videos' : 'web-messages/files';
+    const uploaded = await imagekit.upload({
+      file: req.file.buffer,
+      fileName: req.file.originalname || 'web-file',
+      folder,
+      useUniqueFileName: true,
+    });
+    const fileUrl = uploaded.url;
+    const msgId = require('uuid').v4();
+    const msgObj = {
+      messageId: msgId,
+      senderId: guestId || ('web_' + toXameId + '_' + Date.now()),
+      recipientId: toXameId,
+      text: `[Web file from ${fromName.trim()}]`,
+      file: { url: fileUrl, mime, name: req.file.originalname, size: req.file.size },
+      ts: new Date(), status: 'delivered',
+    };
+    await new Message(msgObj).save();
+    const recipSocketId = findSocketId(toXameId);
+    if (recipSocketId) {
+      io.to(recipSocketId).emit('receive-message', {
+        id: msgId, senderId: msgObj.senderId, recipientId: toXameId,
+        text: msgObj.text, file: msgObj.file, ts: msgObj.ts, status: 'delivered',
+        type: isImage ? 'image' : isVideo ? 'video' : 'file',
+      });
+    }
+    res.json({ success: true, fileUrl });
+  } catch(e) { res.status(500).json({ success: false, message: e.message }); }
 });
 
 // POST /api/web/call-request — notify XamePage user of a web call request
