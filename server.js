@@ -4868,22 +4868,20 @@ textarea.input{min-height:90px;resize:none}
 const XAME_ID = '${xameId}';
 const API = 'https://app.xamepage.com';
 let socket = null;
-let guestId = null;
-let msgName = null;
+const guestId = 'web_' + XAME_ID + '_' + Date.now();
 
-function connectSocket(name, gId) {
-  if (socket) return;
-  guestId = gId; msgName = name;
-  socket = io('https://app.xamepage.com', {
-    query: { userId: gId, webGuest: '1' },
-    transports: ['websocket','polling']
-  });
-  socket.on('receive-message', (msg) => {
-    if (msg.senderId === XAME_ID || msg.recipientId === gId) {
-      appendReply(msg.text);
-    }
-  });
-}
+// Connect socket immediately on page load
+socket = io('https://app.xamepage.com', {
+  query: { userId: guestId, webGuest: '1' },
+  transports: ['websocket','polling']
+});
+socket.on('receive-message', (msg) => {
+  if (msg.senderId === XAME_ID || msg.recipientId === guestId) {
+    appendReply(msg.text);
+  }
+});
+
+function connectSocket(name, gId) { /* already connected */ }
 
 function appendReply(text) {
   const box = document.getElementById('replyBox');
@@ -4912,12 +4910,10 @@ async function sendMsg() {
   try {
     const r = await fetch(API+'/api/web/message', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ toXameId: XAME_ID, fromName: name, text })
+      body: JSON.stringify({ toXameId: XAME_ID, fromName: name, text, guestId })
     });
     const d = await r.json();
     if (d.success) {
-      const gId = 'web_' + XAME_ID + '_' + Date.now();
-      connectSocket(name, gId);
       document.getElementById('msgForm').style.display='none';
       document.getElementById('msgSuccess').style.display='';
     } else { alert(d.message || 'Failed to send. Try again.'); }
@@ -9471,14 +9467,14 @@ app.get('/web-call/:xameId', async (req, res) => {
 
 app.post('/api/web/message', async (req, res) => {
   try {
-    const { toXameId, fromName, text } = req.body;
+    const { toXameId, fromName, text, guestId: clientGuestId } = req.body;
     if (!toXameId || !fromName?.trim() || !text?.trim())
       return res.json({ success: false, message: 'Missing fields.' });
 
     const recipient = await User.findOne({ xameId: toXameId }).lean();
     if (!recipient) return res.json({ success: false, message: 'User not found.' });
 
-    const guestId  = 'web_' + toXameId + '_' + Date.now();
+    const guestId = clientGuestId || 'web_' + toXameId + '_' + Date.now();
     const msgId    = require('uuid').v4();
     const msgObj   = {
       messageId:   msgId,
