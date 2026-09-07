@@ -4828,14 +4828,20 @@ textarea.input{min-height:90px;resize:none}
         <button class="btn btn-primary" onclick="sendMsg()" id="msgBtn" style="flex:2">Send Message</button>
       </div>
     </div>
-    <div class="success-msg" id="msgSuccess" style="display:none">
-      <div class="icon">✅</div>
-      <h3>Message Sent!</h3>
-      <p>${name.split(' ')[0]} will receive your message on XamePage.</p>
-      <div id="replyBox" style="display:none;margin:12px 0;text-align:left;max-height:200px;overflow-y:auto"></div>
-      <p style="margin-bottom:16px">Replies will appear above. Or get XamePage for full conversations:</p>
-      <a href="${downloadUrl}" class="btn btn-primary">⬇ Get XamePage Free</a>
-      <button class="btn btn-cancel" onclick="hidePanel('msg')" style="margin-top:10px">Close</button>
+    <div id="msgSuccess" style="display:none;flex-direction:column;height:420px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <span style="font-weight:700;font-size:15px;color:#EDF3F8">💬 ${name.split(' ')[0]}</span>
+        <button onclick="hidePanel('msg')" style="background:none;border:none;color:#8aafc8;cursor:pointer;font-size:20px">✕</button>
+      </div>
+      <div id="replyBox" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:4px 0;min-height:0"></div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <input id="replyInput" placeholder="Reply..." maxlength="500"
+          style="flex:1;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,0.1);background:#07101c;color:#fff;font-size:14px"
+          onkeydown="if(event.key==='Enter')sendReply()">
+        <button onclick="sendReply()"
+          style="background:#00B0A0;border:none;border-radius:10px;padding:0 16px;color:#000;font-weight:700;cursor:pointer;font-size:18px">➤</button>
+      </div>
+      <a href="${downloadUrl}" style="display:block;text-align:center;margin-top:8px;font-size:12px;color:#4A6E88;text-decoration:none">⬇ Get XamePage for full experience</a>
     </div>
   </div>
 </div>
@@ -4883,15 +4889,35 @@ socket.on('receive-message', (msg) => {
 
 function connectSocket(name, gId) { /* already connected */ }
 
-function appendReply(text) {
+function appendMsg(text, isSelf) {
   const box = document.getElementById('replyBox');
   if (!box) return;
-  box.style.display = 'block';
   const div = document.createElement('div');
-  div.style.cssText = 'background:#00B0A020;border-left:3px solid #00B0A0;padding:10px;border-radius:8px;margin-bottom:8px;font-size:14px;color:#EDF3F8';
+  div.style.cssText = isSelf
+    ? 'background:#00B0A0;color:#000;padding:10px 14px;border-radius:14px 14px 4px 14px;font-size:14px;align-self:flex-end;max-width:85%;word-break:break-word'
+    : 'background:#1a2e42;color:#EDF3F8;padding:10px 14px;border-radius:14px 14px 14px 4px;font-size:14px;align-self:flex-start;max-width:85%;word-break:break-word';
   div.textContent = text.replace(/^\[Web message from [^\]]+\]: /, '');
   box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
 }
+
+function appendReply(text) { appendMsg(text, false); }
+
+async function sendReply() {
+  const input = document.getElementById('replyInput');
+  const text = input?.value?.trim();
+  if (!text) return;
+  const senderName = document.getElementById('msgName')?.value?.trim() || 'Guest';
+  input.value = '';
+  appendMsg(text, true);
+  try {
+    await fetch(API+'/api/web/message', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ toXameId: XAME_ID, fromName: senderName, text, guestId })
+    });
+  } catch(e) { console.error('Reply error:', e); }
+}
+
 
 function showPanel(type) { document.getElementById(type+'Overlay').classList.add('active'); }
 function hidePanel(type) {
@@ -4915,7 +4941,9 @@ async function sendMsg() {
     const d = await r.json();
     if (d.success) {
       document.getElementById('msgForm').style.display='none';
-      document.getElementById('msgSuccess').style.display='';
+      const s = document.getElementById('msgSuccess');
+      s.style.display='flex';
+      appendMsg(text, true);
     } else { alert(d.message || 'Failed to send. Try again.'); }
   } catch(e) { alert('Connection error. Try again.'); }
   btn.textContent = 'Send Message'; btn.disabled = false;
