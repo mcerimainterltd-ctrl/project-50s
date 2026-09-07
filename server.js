@@ -1897,6 +1897,7 @@ io.on('connection', (socket) => {
         const webGuestSockets = global.__xamePageWebGuestSockets || new Map();
         const webGuestSocketId = recipientId?.startsWith('web_') ? webGuestSockets.get(recipientId) : null;
         const recipSocketId = findSocketId(recipientId) || webGuestSocketId;
+        if (recipientId?.startsWith('web_')) console.log('[WEB-MSG] guest=' + recipientId + ' socketId=' + webGuestSocketId + ' mapSize=' + webGuestSockets.size);
 
         try {
             const newMsg = new Message({
@@ -4882,8 +4883,9 @@ socket = io('https://app.xamepage.com', {
   transports: ['websocket','polling']
 });
 socket.on('receive-message', (msg) => {
-  if (msg.senderId === XAME_ID || msg.recipientId === guestId) {
-    appendReply(msg.text);
+  const text = msg.message?.text || msg.text;
+  if (text && (msg.senderId === XAME_ID || msg.recipientId === guestId)) {
+    appendReply(text);
   }
 });
 
