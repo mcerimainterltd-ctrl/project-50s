@@ -1666,13 +1666,17 @@ io.on('connection', (socket) => {
     if (socket.handshake?.query?.webGuest === '1' && userId?.startsWith('web_')) {
         const webGuestSockets = global.__xamePageWebGuestSockets || (global.__xamePageWebGuestSockets = new Map());
         webGuestSockets.set(userId, socket.id);
+        // Flush any buffered messages for this guest
+        const webGuestBuffer = global.__xamePageWebGuestBuffer || (global.__xamePageWebGuestBuffer = new Map());
+        const buffered = webGuestBuffer.get(userId) || [];
+        buffered.forEach(msg => socket.emit('receive-message', msg));
+        webGuestBuffer.delete(userId);
         // Notify the Flutter user this guest is online
         const targetXameId = userId.split('_')[1];
         const flutterSock = findSocketId(targetXameId);
         if (flutterSock) io.to(flutterSock).emit('user-online', { userId });
         socket.on('disconnect', () => {
             webGuestSockets.delete(userId);
-            // Notify Flutter user this guest went offline
             if (flutterSock) io.to(flutterSock).emit('user-offline', { userId });
         });
     }
@@ -1897,7 +1901,16 @@ io.on('connection', (socket) => {
         const webGuestSockets = global.__xamePageWebGuestSockets || new Map();
         const webGuestSocketId = recipientId?.startsWith('web_') ? webGuestSockets.get(recipientId) : null;
         const recipSocketId = findSocketId(recipientId) || webGuestSocketId;
-        if (recipientId?.startsWith('web_')) console.log('[WEB-MSG] guest=' + recipientId + ' socketId=' + webGuestSocketId + ' mapSize=' + webGuestSockets.size);
+        if (recipientId?.startsWith('web_')) {
+            console.log('[WEB-MSG] guest=' + recipientId + ' socketId=' + webGuestSocketId + ' mapSize=' + webGuestSockets.size);
+            // Buffer message if guest socket not yet connected
+            if (!webGuestSocketId) {
+                const webGuestBuffer = global.__xamePageWebGuestBuffer || (global.__xamePageWebGuestBuffer = new Map());
+                const buf = webGuestBuffer.get(recipientId) || [];
+                buf.push({ senderId, message });
+                webGuestBuffer.set(recipientId, buf);
+            }
+        }
 
         try {
             const newMsg = new Message({
