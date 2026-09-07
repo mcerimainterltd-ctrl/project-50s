@@ -1662,6 +1662,21 @@ io.on('connection', (socket) => {
 
     socket.userId = userId;
 
+    // Register web guest sockets separately
+    if (socket.handshake?.query?.webGuest === '1' && userId?.startsWith('web_')) {
+        const webGuestSockets = global.__xamePageWebGuestSockets || (global.__xamePageWebGuestSockets = new Map());
+        webGuestSockets.set(userId, socket.id);
+        // Notify the Flutter user this guest is online
+        const targetXameId = userId.split('_')[1];
+        const flutterSock = findSocketId(targetXameId);
+        if (flutterSock) io.to(flutterSock).emit('user-online', { userId });
+        socket.on('disconnect', () => {
+            webGuestSockets.delete(userId);
+            // Notify Flutter user this guest went offline
+            if (flutterSock) io.to(flutterSock).emit('user-offline', { userId });
+        });
+    }
+
     if (userId) {
         if (disconnectTimeouts.has(userId)) {
             clearTimeout(disconnectTimeouts.get(userId));
@@ -1878,7 +1893,10 @@ io.on('connection', (socket) => {
     socket.on('send-message', async (data, callback) => {
         const { recipientId, message } = data;
         const senderId      = socketToUserMap.get(socket.id);
-        const recipSocketId = findSocketId(recipientId);
+        // Check web guest sockets too (web profile visitors)
+        const webGuestSockets = global.__xamePageWebGuestSockets || new Map();
+        const webGuestSocketId = recipientId?.startsWith('web_') ? webGuestSockets.get(recipientId) : null;
+        const recipSocketId = findSocketId(recipientId) || webGuestSocketId;
 
         try {
             const newMsg = new Message({
@@ -1975,7 +1993,10 @@ io.on('connection', (socket) => {
 
     socket.on('message-seen', async ({ recipientId, messageIds }) => {
         const senderId      = socketToUserMap.get(socket.id);
-        const recipSocketId = findSocketId(recipientId);
+        // Check web guest sockets too (web profile visitors)
+        const webGuestSockets = global.__xamePageWebGuestSockets || new Map();
+        const webGuestSocketId = recipientId?.startsWith('web_') ? webGuestSockets.get(recipientId) : null;
+        const recipSocketId = findSocketId(recipientId) || webGuestSocketId;
         try {
             await Message.updateMany(
                 { messageId: { $in: messageIds }, recipientId: senderId, senderId: recipientId },
@@ -4811,7 +4832,8 @@ textarea.input{min-height:90px;resize:none}
       <div class="icon">✅</div>
       <h3>Message Sent!</h3>
       <p>${name.split(' ')[0]} will receive your message on XamePage.</p>
-      <p style="margin-bottom:16px">Want to continue the conversation?</p>
+      <div id="replyBox" style="display:none;margin:12px 0;text-align:left;max-height:200px;overflow-y:auto"></div>
+      <p style="margin-bottom:16px">Replies will appear above. Or get XamePage for full conversations:</p>
       <a href="${downloadUrl}" class="btn btn-primary">⬇ Get XamePage Free</a>
       <button class="btn btn-cancel" onclick="hidePanel('msg')" style="margin-top:10px">Close</button>
     </div>
@@ -4841,9 +4863,37 @@ textarea.input{min-height:90px;resize:none}
   </div>
 </div>
 
+<script src="/socket.io/socket.io.js"></script>
 <script>
 const XAME_ID = '${xameId}';
-const API = 'https://project-50s.onrender.com';
+const API = 'https://app.xamepage.com';
+let socket = null;
+let guestId = null;
+let msgName = null;
+
+function connectSocket(name, gId) {
+  if (socket) return;
+  guestId = gId; msgName = name;
+  socket = io('https://app.xamepage.com', {
+    query: { userId: gId, webGuest: '1' },
+    transports: ['websocket','polling']
+  });
+  socket.on('receive-message', (msg) => {
+    if (msg.senderId === XAME_ID || msg.recipientId === gId) {
+      appendReply(msg.text);
+    }
+  });
+}
+
+function appendReply(text) {
+  const box = document.getElementById('replyBox');
+  if (!box) return;
+  box.style.display = 'block';
+  const div = document.createElement('div');
+  div.style.cssText = 'background:#00B0A020;border-left:3px solid #00B0A0;padding:10px;border-radius:8px;margin-bottom:8px;font-size:14px;color:#EDF3F8';
+  div.textContent = text.replace(/^\[Web message from [^\]]+\]: /, '');
+  box.appendChild(div);
+}
 
 function showPanel(type) { document.getElementById(type+'Overlay').classList.add('active'); }
 function hidePanel(type) {
@@ -4866,6 +4916,8 @@ async function sendMsg() {
     });
     const d = await r.json();
     if (d.success) {
+      const gId = 'web_' + XAME_ID + '_' + Date.now();
+      connectSocket(name, gId);
       document.getElementById('msgForm').style.display='none';
       document.getElementById('msgSuccess').style.display='';
     } else { alert(d.message || 'Failed to send. Try again.'); }
