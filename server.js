@@ -4911,7 +4911,8 @@ function appendMsg(text, isSelf) {
   div.style.cssText = isSelf
     ? 'background:#00B0A0;color:#000;padding:10px 14px;border-radius:14px 14px 4px 14px;font-size:14px;align-self:flex-end;max-width:85%;word-break:break-word'
     : 'background:#1a2e42;color:#EDF3F8;padding:10px 14px;border-radius:14px 14px 14px 4px;font-size:14px;align-self:flex-start;max-width:85%;word-break:break-word';
-  div.textContent = text.replace(/^\[Web message from [^\]]+\]: /, '');
+  const clean = text.replace(/^\[Web message from [^\]]+\]: /, '');
+  div.textContent = clean;
   box.appendChild(div);
   box.scrollTop = box.scrollHeight;
 }
