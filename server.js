@@ -115,14 +115,18 @@ if (!process.env.IMAGEKIT_PUBLIC_KEY) {
 }
 
 // ── ImageKit upload helper ─────────────────────────────────────────────────
-async function uploadToImageKit(buffer, fileName, folder) {
+async function uploadToImageKit(buffer, fileName, folder, fileType = null) {
     try {
-        const result = await imagekit.upload({
+        const uploadOptions = {
             file:              buffer.toString('base64'),
             fileName:          fileName,
             folder:            `/xamepage/${folder}`,
             useUniqueFileName: true,
-        });
+        };
+
+        if (fileType) uploadOptions.fileType = fileType;
+
+        const result = await imagekit.upload(uploadOptions);
         console.log('✅ ImageKit upload:', result.url);
         return result.url;
     } catch (err) {
@@ -1566,7 +1570,12 @@ app.post('/api/upload-file', memoryUpload.single('file'), async (req, res) => {
         const isAudio = req.file.mimetype.startsWith('audio');
         const isImage = req.file.mimetype.startsWith('image');
         const folder  = (isVideo || isAudio || isImage) ? 'chat' : 'chat_documents';
-        const url = await uploadToImageKit(req.file.buffer, `chat_${Date.now()}_${req.file.originalname}`, folder);
+        const url = await uploadToImageKit(
+            req.file.buffer,
+            `chat_${Date.now()}_${req.file.originalname}`,
+            folder,
+            (isVideo || isAudio) ? 'non-image' : (isImage ? 'image' : null)
+        );
         res.json({ success: true, url });
     } catch (err) {
         console.error('File upload error:', err);
@@ -7182,7 +7191,12 @@ app.post('/api/discover/post', memoryUpload.array('media', 10), async (req, res)
         if (files.length > 0) {
             // Upload each file to Cloudinary in order
             for (const file of files) {
-                const uploadedUrl = await uploadToImageKit(file.buffer, `post_${authorId}_${Date.now()}_${mediaUrls.length}_${file.originalname}`, 'discovery');
+                const uploadedUrl = await uploadToImageKit(
+                    file.buffer,
+                    `post_${authorId}_${Date.now()}_${mediaUrls.length}_${file.originalname}`,
+                    'discovery',
+                    mediaType === 'video' ? 'non-image' : 'image'
+                );
                 mediaUrls.push({ url: uploadedUrl, type: mediaType === 'video' ? 'video' : 'image' });
             }
             mediaUrl = mediaUrls[0].url;
@@ -7247,7 +7261,14 @@ app.post('/api/discover/story', memoryUpload.single('media'), async (req, res) =
 
         let mediaUrl = '';
         if (req.file) {
-            const uploadResult = { secure_url: await uploadToImageKit(req.file.buffer, `story_${authorId}_${Date.now()}_${req.file.originalname}`, 'stories') };
+            const uploadResult = {
+                secure_url: await uploadToImageKit(
+                    req.file.buffer,
+                    `story_${authorId}_${Date.now()}_${req.file.originalname}`,
+                    'stories',
+                    mediaType === 'video' ? 'non-image' : 'image'
+                )
+            };
             mediaUrl = uploadResult.secure_url;
         } else if (req.body.mediaUrl) {
             mediaUrl = req.body.mediaUrl;
