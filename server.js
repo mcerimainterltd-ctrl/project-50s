@@ -642,6 +642,169 @@ const GalleryView = mongoose.model('GalleryView', galleryViewSchema);
 const Group            = mongoose.model('Group',            groupSchema);
 const GroupMessage     = mongoose.model('GroupMessage',     groupMessageSchema);
 
+
+// ── Session authentication helper ─────────────────────────────────────────
+// Validates the existing XamePage session token without exposing any
+// server-side media credentials to the client.
+async function getAuthenticatedUserFromSession(req) {
+    const authorization = req.headers.authorization || '';
+    const match = authorization.match(/^Bearer\s+(.+)$/i);
+
+    if (!match) return null;
+
+    const token = match[1].trim();
+    if (!token) return null;
+
+    return User.findOne({
+        sessions: { $elemMatch: { token } }
+    });
+}
+
+// ── Direct large-media upload initialization ───────────────────────────────
+// Authenticates the existing XamePage session, then asks the Media Worker
+// to create a short-lived R2 multipart upload capability. The actual media
+// bytes are uploaded directly from the client to Cloudflare.
+app.post('/api/media/upload-init', async (req, res) => {
+    try {
+        const authUser = await getAuthenticatedUserFromSession(req);
+
+        if (!authUser) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized.'
+            });
+        }
+
+        const {
+            fileName,
+            contentType,
+            size,
+            folder
+        } = req.body || {};
+
+        if (!fileName || typeof fileName !== 'string') {
+            return res.status(400).json({
+                success: false,
+                message: 'fileName is required.'
+            });
+        }
+
+        if (!contentType || typeof contentType !== 'string') {
+            return res.status(400).json({
+                success: false,
+                message: 'contentType is required.'
+            });
+        }
+
+        if (
+            !Number.isFinite(Number(size)) ||
+            Number(size) <= 0
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: 'A valid file size is required.'
+            });
+        }
+
+        if (
+            folder !== 'chat' &&
+            folder !== 'discovery'
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid media folder.'
+            });
+        }
+
+        if (!MEDIA_API_SECRET) {
+            console.error('❌ MEDIA_API_SECRET is not configured');
+            return res.status(500).json({
+                success: false,
+                message: 'Media upload service is not configured.'
+            });
+        }
+
+        const safeName = fileName
+            .replace(/[^a-zA-Z0-9._-]/g, '_')
+            .replace(/^_+/, '') || 'file';
+
+        const key =
+            `xamepage/${folder}/${Date.now()}_${safeName}`;
+
+        const workerResponse = await fetch(
+            `${MEDIA_WORKER_URL}/multipart/init`,
+            {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${MEDIA_API_SECRET}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    key,
+                    contentType,
+                    metadata: {
+                        xameId: String(authUser.xameId || ''),
+                        folder,
+                        originalFileName: safeName
+                    }
+                })
+            }
+        );
+
+        const responseText =
+            await workerResponse.text();
+
+        let result;
+
+        try {
+            result = JSON.parse(responseText);
+        } catch {
+            result = null;
+        }
+
+        if (
+            !workerResponse.ok ||
+            !result ||
+            !result.success ||
+            !result.uploadId ||
+            !result.capability
+        ) {
+            console.error(
+                '❌ Media Worker multipart init failed:',
+                workerResponse.status,
+                responseText
+            );
+
+            return res.status(502).json({
+                success: false,
+                message: 'Media upload initialization failed.'
+            });
+        }
+
+        return res.json({
+            success: true,
+            key: result.key || key,
+            uploadId: result.uploadId,
+            capability: result.capability,
+            expiresAt: result.expiresAt,
+            contentType
+        });
+
+    } catch (err) {
+        console.error(
+            '❌ Direct media upload initialization error:',
+            err
+        );
+
+        return res.status(500).json({
+            success: false,
+            message: 'Media upload initialization failed.'
+        });
+    }
+});
+
+
+
 // ── Broadcast List Schema ─────────────────────────────────────────────────
 const broadcastListSchema = new mongoose.Schema({
   listId:    { type: String, required: true, unique: true },
