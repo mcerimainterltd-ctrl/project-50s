@@ -5,6 +5,7 @@ class AppConstants {
   // ── Server ────────────────────────────────────────────────────────────────
   // Matches: const serverURL = 'https://project-50s.onrender.com'
   static const serverUrl = 'https://project-50s.onrender.com';
+  static const mediaWorkerUrl = 'https://media.xamepage.com';
 
   // ── App version ───────────────────────────────────────────────────────────
   // Matches: const APP_VERSION = '2.1'
