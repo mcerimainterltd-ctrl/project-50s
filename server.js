@@ -114,23 +114,176 @@ if (!process.env.IMAGEKIT_PUBLIC_KEY) {
     console.log('✅ ImageKit configured:', process.env.IMAGEKIT_URL_ENDPOINT);
 }
 
-// ── ImageKit upload helper ─────────────────────────────────────────────────
-async function uploadToImageKit(buffer, fileName, folder, fileType = null) {
+// ── Cloudflare R2 storage
+const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+
+const r2 = new S3Client({
+    region: 'auto',
+    endpoint: process.env.R2_ENDPOINT || '',
+    credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY_ID || '',
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '',
+    },
+});
+
+const R2_BUCKET = process.env.R2_BUCKET || 'xamepage-media';
+
+if (!process.env.R2_ENDPOINT ||
+    !process.env.R2_ACCESS_KEY_ID ||
+    !process.env.R2_SECRET_ACCESS_KEY) {
+    console.warn('⚠️  Cloudflare R2 env vars missing — R2 uploads disabled');
+} else {
+    console.log('✅ Cloudflare R2 configured:', R2_BUCKET);
+}
+
+async function uploadToR2(buffer, fileName, folder, contentType = 'application/octet-stream') {
+    const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const key = `xamepage/${folder}/${Date.now()}_${safeName}`;
+
     try {
-        const uploadOptions = {
-            file:              buffer.toString('base64'),
-            fileName:          fileName,
-            folder:            `/xamepage/${folder}`,
-            useUniqueFileName: true,
-        };
+        await r2.send(new PutObjectCommand({
+            Bucket: R2_BUCKET,
+            Key: key,
+            Body: buffer,
+            ContentType: contentType,
+        }));
 
-        if (fileType) uploadOptions.fileType = fileType;
-
-        const result = await imagekit.upload(uploadOptions);
-        console.log('✅ ImageKit upload:', result.url);
-        return result.url;
+        console.log('✅ R2 upload:', key);
+        return key;
     } catch (err) {
-        console.error('❌ ImageKit upload error:', err);
+        console.error('❌ R2 upload error:', err);
+        throw err;
+    }
+}
+
+// ── Cloudflare Worker / R2 upload helper ───────────────────────────────────
+const MEDIA_WORKER_URL =
+    process.env.MEDIA_WORKER_URL || 'https://media.xamepage.com';
+
+const MEDIA_API_SECRET =
+    process.env.MEDIA_API_SECRET || '';
+
+function buildMediaWorkerUrl(key) {
+    return `${MEDIA_WORKER_URL}/media/${key
+        .split('/')
+        .map(encodeURIComponent)
+        .join('/')}`;
+}
+
+async function uploadToMediaWorker(
+    buffer,
+    fileName,
+    folder,
+    contentType = 'application/octet-stream'
+) {
+    if (!MEDIA_API_SECRET) {
+        throw new Error('MEDIA_API_SECRET is not configured');
+    }
+
+    const safeName = String(fileName || 'file')
+        .replace(/[^a-zA-Z0-9._-]/g, '_');
+
+    const safeFolder = String(folder || 'media')
+        .split('/')
+        .filter(Boolean)
+        .map(part => part.replace(/[^a-zA-Z0-9._-]/g, '_'))
+        .join('/');
+
+    const key = `xamepage/${safeFolder}/${Date.now()}_${safeName}`;
+
+    const response = await fetch(buildMediaWorkerUrl(key), {
+        method: 'PUT',
+        headers: {
+            'Authorization': `Bearer ${MEDIA_API_SECRET}`,
+            'Content-Type': contentType || 'application/octet-stream',
+        },
+        body: buffer,
+    });
+
+    const responseText = await response.text();
+
+    if (!response.ok) {
+        throw new Error(
+            `Media Worker upload failed (${response.status}): ${responseText}`
+        );
+    }
+
+    let result;
+    try {
+        result = JSON.parse(responseText);
+    } catch {
+        throw new Error(
+            `Media Worker returned invalid JSON: ${responseText}`
+        );
+    }
+
+    if (!result.success || !result.url) {
+        throw new Error(
+            `Media Worker upload failed: ${responseText}`
+        );
+    }
+
+    console.log('✅ R2/Worker upload:', result.url);
+
+    return result.url;
+}
+
+// ── Media upload compatibility wrapper ─────────────────────────────────────
+// Keeps the existing uploadToImageKit() interface so existing API/database
+// contracts remain unchanged while new media is stored in Cloudflare R2.
+async function uploadToImageKit(
+    buffer,
+    fileName,
+    folder,
+    fileType = null,
+    contentType = null
+) {
+    try {
+        if (!contentType) {
+            const ext = String(fileName || '')
+                .toLowerCase()
+                .split('.')
+                .pop();
+
+            const mimeMap = {
+                jpg: 'image/jpeg',
+                jpeg: 'image/jpeg',
+                png: 'image/png',
+                gif: 'image/gif',
+                webp: 'image/webp',
+                svg: 'image/svg+xml',
+                mp4: 'video/mp4',
+                webm: 'video/webm',
+                mov: 'video/quicktime',
+                avi: 'video/x-msvideo',
+                mp3: 'audio/mpeg',
+                wav: 'audio/wav',
+                m4a: 'audio/mp4',
+                ogg: 'audio/ogg',
+                pdf: 'application/pdf',
+                txt: 'text/plain',
+                json: 'application/json',
+                zip: 'application/zip',
+            };
+
+            contentType = mimeMap[ext] || 'application/octet-stream';
+
+            if (fileType === 'image' && contentType === 'application/octet-stream') {
+                contentType = 'image/jpeg';
+            }
+        }
+
+        const url = await uploadToMediaWorker(
+            buffer,
+            fileName,
+            folder,
+            contentType
+        );
+
+        console.log('✅ Cloudflare R2 media upload:', url);
+        return url;
+    } catch (err) {
+        console.error('❌ Cloudflare R2 media upload error:', err);
         throw err;
     }
 }
@@ -1574,7 +1727,8 @@ app.post('/api/upload-file', memoryUpload.single('file'), async (req, res) => {
             req.file.buffer,
             `chat_${Date.now()}_${req.file.originalname}`,
             folder,
-            (isVideo || isAudio) ? 'non-image' : (isImage ? 'image' : null)
+            (isVideo || isAudio) ? 'non-image' : (isImage ? 'image' : null),
+            req.file.mimetype
         );
         res.json({ success: true, url });
     } catch (err) {
