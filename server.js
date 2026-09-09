@@ -114,48 +114,6 @@ if (!process.env.IMAGEKIT_PUBLIC_KEY) {
     console.log('✅ ImageKit configured:', process.env.IMAGEKIT_URL_ENDPOINT);
 }
 
-// ── Cloudflare R2 storage
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
-
-const r2 = new S3Client({
-    region: 'auto',
-    endpoint: process.env.R2_ENDPOINT || '',
-    credentials: {
-        accessKeyId: process.env.R2_ACCESS_KEY_ID || '',
-        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '',
-    },
-});
-
-const R2_BUCKET = process.env.R2_BUCKET || 'xamepage-media';
-
-if (!process.env.R2_ENDPOINT ||
-    !process.env.R2_ACCESS_KEY_ID ||
-    !process.env.R2_SECRET_ACCESS_KEY) {
-    console.warn('⚠️  Cloudflare R2 env vars missing — R2 uploads disabled');
-} else {
-    console.log('✅ Cloudflare R2 configured:', R2_BUCKET);
-}
-
-async function uploadToR2(buffer, fileName, folder, contentType = 'application/octet-stream') {
-    const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const key = `xamepage/${folder}/${Date.now()}_${safeName}`;
-
-    try {
-        await r2.send(new PutObjectCommand({
-            Bucket: R2_BUCKET,
-            Key: key,
-            Body: buffer,
-            ContentType: contentType,
-        }));
-
-        console.log('✅ R2 upload:', key);
-        return key;
-    } catch (err) {
-        console.error('❌ R2 upload error:', err);
-        throw err;
-    }
-}
-
 // ── Cloudflare Worker / R2 upload helper ───────────────────────────────────
 const MEDIA_WORKER_URL =
     process.env.MEDIA_WORKER_URL || 'https://media.xamepage.com';
