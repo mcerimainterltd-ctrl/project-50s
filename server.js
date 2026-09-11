@@ -7450,7 +7450,19 @@ app.get('/api/discover/collab/my-threads', async (req, res) => {
 // Create a new discovery post — upload media to Cloudinary
 app.post('/api/discover/post', memoryUpload.array('media', 10), async (req, res) => {
     try {
-        const { authorId, title, caption, region, category, mediaType, musicUrl, musicTitle } = req.body;
+        const {
+            authorId,
+            title,
+            caption,
+            region,
+            category,
+            mediaType,
+            musicUrl,
+            musicTitle,
+            mediaUrl: submittedMediaUrl,
+            mediaUrls: submittedMediaUrls,
+            thumbnailUrl: submittedThumbnailUrl,
+        } = req.body;
         if (!authorId || !title) {
             return res.json({ success: false, message: 'authorId and title required' });
         }
@@ -7462,9 +7474,15 @@ app.post('/api/discover/post', memoryUpload.array('media', 10), async (req, res)
         let thumbnailUrl = '';
         let mediaUrls    = [];
 
+        if (typeof submittedThumbnailUrl === 'string' &&
+            submittedThumbnailUrl.trim()) {
+            thumbnailUrl = submittedThumbnailUrl.trim();
+        }
+
         const files = req.files || [];
+
         if (files.length > 0) {
-            // Upload each file to Cloudinary in order
+            // Legacy fallback for clients that still upload through Render.
             for (const file of files) {
                 const uploadedUrl = await uploadToImageKit(
                     file.buffer,
@@ -7472,14 +7490,38 @@ app.post('/api/discover/post', memoryUpload.array('media', 10), async (req, res)
                     'discovery',
                     mediaType === 'video' ? 'non-image' : 'image'
                 );
-                mediaUrls.push({ url: uploadedUrl, type: mediaType === 'video' ? 'video' : 'image' });
+                mediaUrls.push({
+                    url: uploadedUrl,
+                    type: mediaType === 'video' ? 'video' : 'image'
+                });
             }
+
             mediaUrl = mediaUrls[0].url;
+
             if (mediaType === 'video') {
                 thumbnailUrl = `${mediaUrl}/ik-thumbnail.jpg`;
             }
-        } else if (req.body.mediaUrl) {
-            mediaUrl = req.body.mediaUrl;
+        } else if (Array.isArray(submittedMediaUrls) && submittedMediaUrls.length > 0) {
+            mediaUrls = submittedMediaUrls
+                .filter(item =>
+                    item &&
+                    typeof item.url === 'string' &&
+                    item.url.trim()
+                )
+                .map(item => ({
+                    url: item.url.trim(),
+                    type: item.type === 'video' ? 'video' : 'image'
+                }));
+
+            if (mediaUrls.length > 0) {
+                mediaUrl = mediaUrls[0].url;
+
+                if (mediaType === 'video' && !thumbnailUrl) {
+                    thumbnailUrl = `${mediaUrl}/ik-thumbnail.jpg`;
+                }
+            }
+        } else if (submittedMediaUrl) {
+            mediaUrl = submittedMediaUrl;
         }
 
         if (!mediaUrl) {
