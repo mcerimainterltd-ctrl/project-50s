@@ -1318,13 +1318,13 @@ app.post('/api/set-password',
 app.post('/api/login', async (req, res) => {
     const { xameId, password } = req.body;
     const phone = normalizeInternationalPhone(req.body.phone);
-    if (!xameId && !phone) return res.status(400).json({
-        success: false,
-        message: 'Xame-ID or phone number required.'
-    });
     if (req.body.phone && !phone) return res.status(400).json({
         success: false,
         message: 'Phone number must be in international format starting with +.'
+    });
+    if (!xameId && !phone) return res.status(400).json({
+        success: false,
+        message: 'Xame-ID or phone number required.'
     });
 
     try {
