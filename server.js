@@ -468,7 +468,7 @@ const userSchema = new mongoose.Schema({
     dob:                { type: String, required: true },
     password:           { type: String },
     profilePic:         { type: String, default: '' },
-    phone:              { type: String, default: '', unique: true, sparse: true },
+    phone:              { type: String, unique: true, sparse: true },
     referralCode:       { type: String, default: '' },
     hidePreferredName:  { type: Boolean, default: false },
     hideProfilePicture: { type: Boolean, default: false },
