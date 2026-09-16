@@ -352,6 +352,7 @@ const userSchema = new mongoose.Schema({
     dob:                { type: String, required: true },
     password:           { type: String },
     profilePic:         { type: String, default: '' },
+    phone:              { type: String, default: '', unique: true, sparse: true },
     referralCode:       { type: String, default: '' },
     hidePreferredName:  { type: Boolean, default: false },
     hideProfilePicture: { type: Boolean, default: false },
@@ -802,6 +803,16 @@ async function broadcastOnlineUsers() {
 }
 
 // ============================================================
+// PHONE — canonical international format
+// ============================================================
+function normalizeInternationalPhone(value) {
+    if (value == null) return null;
+    const phone = String(value).trim().replace(/[\s().-]/g, '');
+    if (!/^\+[1-9]\d{6,14}$/.test(phone)) return null;
+    return phone;
+}
+
+// ============================================================
 // API — AUTH
 // ============================================================
 
@@ -814,7 +825,14 @@ app.post('/api/register',
         const errs = validationResult(req);
         if (!errs.isEmpty()) return res.status(400).json({ success: false, errors: errs.array() });
 
-        const { firstName, lastName, dob, password, phone } = req.body;
+        const { firstName, lastName, dob, password } = req.body;
+        const phone = normalizeInternationalPhone(req.body.phone);
+        if (req.body.phone && !phone) {
+            return res.status(400).json({
+                success: false,
+                message: 'Phone number must be in international format starting with +.'
+            });
+        }
         try {
             // If phone provided, verify it was OTP-verified
             if (phone) {
@@ -899,8 +917,11 @@ app.post('/api/contacts/match', async (req, res) => {
 });
 
 app.post('/api/auth/send-otp', async (req, res) => {
-    const { phone } = req.body;
-    if (!phone) return res.status(400).json({ success: false, message: 'Phone number required.' });
+    const phone = normalizeInternationalPhone(req.body.phone);
+    if (!phone) return res.status(400).json({
+        success: false,
+        message: 'Phone number must be in international format starting with +.'
+    });
     try {
         // Check if phone already registered
         const existing = await User.findOne({ phone });
@@ -935,8 +956,12 @@ app.post('/api/auth/send-otp', async (req, res) => {
 
 // ── 3.0: Verify OTP for phone registration ────────────────────────────────────
 app.post('/api/auth/verify-otp', async (req, res) => {
-    const { phone, otp } = req.body;
-    if (!phone || !otp) return res.status(400).json({ success: false, message: 'Phone and OTP required.' });
+    const phone = normalizeInternationalPhone(req.body.phone);
+    const { otp } = req.body;
+    if (!phone || !otp) return res.status(400).json({
+        success: false,
+        message: 'Phone number must be in international format starting with + and OTP is required.'
+    });
     try {
         global.phoneOtps = global.phoneOtps || {};
         const record = global.phoneOtps[phone];
@@ -984,8 +1009,16 @@ app.post('/api/set-password',
 );
 
 app.post('/api/login', async (req, res) => {
-    const { xameId, password, phone } = req.body;
-    if (!xameId && !phone) return res.status(400).json({ success: false, message: 'Xame-ID or phone number required.' });
+    const { xameId, password } = req.body;
+    const phone = normalizeInternationalPhone(req.body.phone);
+    if (!xameId && !phone) return res.status(400).json({
+        success: false,
+        message: 'Xame-ID or phone number required.'
+    });
+    if (req.body.phone && !phone) return res.status(400).json({
+        success: false,
+        message: 'Phone number must be in international format starting with +.'
+    });
 
     try {
         // Support login by phone number (3.0) or Xame-ID (existing)
