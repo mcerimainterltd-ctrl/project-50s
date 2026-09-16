@@ -946,6 +946,11 @@ const socketToUserMap      = new Map();   // socketId → userId
 const onlineUserTimestamps = new Map();
 const disconnectTimeouts   = new Map();
 
+// Presence lease: users must refresh within this window to remain discoverable.
+// Deliberately longer than the 5-minute background recovery safeguard.
+const PRESENCE_LEASE_MS = 7 * 60 * 1000;
+const PRESENCE_SWEEP_MS = 60 * 1000;
+
 // v2.1.1: Conference room membership (in-memory for speed)
 // roomId → Set<userId>
 const conferenceRooms      = new Map();
@@ -2040,7 +2045,7 @@ io.on('connection', (socket) => {
         clearTimeout(disconnectTimeouts.get(id));
         disconnectTimeouts.delete(id);
         onlineUsers.add(id);
-        onlineUserTimestamps.set(id, timestamp || Date.now());
+        onlineUserTimestamps.set(id, Date.now());
         if (id !== socket.userId) socket.userId = id;
         broadcastOnlineUsers();
     });
@@ -2048,7 +2053,7 @@ io.on('connection', (socket) => {
     socket.on('heartbeat', ({ userId: uid, timestamp }) => {
         const id = uid || socket.userId;
         if (!id) return;
-        onlineUserTimestamps.set(id, timestamp || Date.now());
+        onlineUserTimestamps.set(id, Date.now());
         if (!onlineUsers.has(id)) { onlineUsers.add(id); broadcastOnlineUsers(); }
         clearTimeout(disconnectTimeouts.get(id));
         disconnectTimeouts.delete(id);
@@ -3329,6 +3334,51 @@ io.on('connection', (socket) => {
 });
 
 // ============================================================
+// ONLINE PRESENCE — SERVER-SIDE LEASE WATCHDOG
+// A user remains discoverable only while the server has received
+// a recent presence refresh. This prevents stale "online" users
+// when a disconnect event is never delivered.
+// ============================================================
+
+setInterval(() => {
+    const now = Date.now();
+    let changed = false;
+
+    for (const userId of onlineUsers) {
+        const lastSeen = onlineUserTimestamps.get(userId);
+
+        if (lastSeen && (now - lastSeen) <= PRESENCE_LEASE_MS) {
+            continue;
+        }
+
+        // Never expire a user while at least one Socket.IO connection
+        // is still registered for that user.
+        let hasLiveSocket = false;
+        for (const [socketId, mappedUserId] of socketToUserMap) {
+            if (mappedUserId === userId && io.sockets.sockets.has(socketId)) {
+                hasLiveSocket = true;
+                break;
+            }
+        }
+
+        if (hasLiveSocket) {
+            continue;
+        }
+
+        onlineUsers.delete(userId);
+        onlineUserTimestamps.delete(userId);
+        userToSocketMap.delete(userId);
+        clearTimeout(disconnectTimeouts.get(userId));
+        disconnectTimeouts.delete(userId);
+        changed = true;
+    }
+
+    if (changed) {
+        broadcastOnlineUsers();
+    }
+}, PRESENCE_SWEEP_MS);
+
+// ============================================================
 // DISAPPEARING MESSAGES — SERVER-SIDE SWEEP
 // Runs every 60s. Finds expired messages, deletes them from DB,
 // and notifies online users.
@@ -3457,27 +3507,7 @@ setInterval(async () => {
     } catch (err) { console.error('Scheduled call sweep error:', err); }
 }, 15 * 1000);
 
-// ── Silent FCM keepalive — reconnects background sockets every 3 minutes ────
-setInterval(async () => {
-    if (mongoose.connection.readyState !== 1) return;
-    if (!admin.apps.length) return;
-    try {
-        const users = await User.find({ fcmToken: { $exists: true, $ne: '' } }, 'xameId fcmToken').lean();
-        if (!users.length) return;
-        const chunks = [];
-        for (let i = 0; i < users.length; i += 500) chunks.push(users.slice(i, i + 500));
-        for (const chunk of chunks) {
-            const tokens = chunk.map(u => u.fcmToken).filter(Boolean);
-            if (!tokens.length) continue;
-            await admin.messaging().sendEachForMulticast({
-                tokens,
-                data: { type: 'socket_keepalive', ts: String(Date.now()) },
-                android: { priority: 'high' },
-                apns: { headers: { 'apns-priority': '5', 'apns-push-type': 'background' }, payload: { aps: { 'content-available': 1 } } },
-            }).catch(() => {});
-        }
-    } catch (_) {}
-}, 180000); // every 3 minutes — balances background reconnect speed against push volume/battery cost
+
 
 // ============================================================
 // SPA CATCH-ALL
