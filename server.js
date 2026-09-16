@@ -1242,6 +1242,20 @@ app.post('/api/auth/send-otp', async (req, res) => {
         global.phoneOtps = global.phoneOtps || {};
         global.phoneOtps[phone] = { code, expires };
 
+        // Non-SMS test mode: return the generated OTP only for the
+        // explicitly configured test phone. Production SMS is unchanged.
+        const otpTestMode = process.env.XAMEPAGE_OTP_TEST_MODE === 'true';
+        const otpTestPhone = normalizeInternationalPhone(process.env.XAMEPAGE_OTP_TEST_PHONE);
+
+        if (otpTestMode && otpTestPhone === phone) {
+            console.warn(`🧪 OTP TEST MODE — code generated for ${phone}`);
+            return res.json({
+                success: true,
+                message: 'OTP generated successfully (test mode).',
+                testOtp: code,
+            });
+        }
+
         // Send OTP via Twilio SMS
         if (twilioClient) {
             await twilioClient.messages.create({
