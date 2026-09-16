@@ -39,6 +39,7 @@ const { createClient } = require('@supabase/supabase-js');
 const supabase = createClient(process.env.SUPABASE_URL || '', process.env.SUPABASE_SERVICE_KEY || '');
 const webpush    = require('web-push');
 require('dotenv').config();
+const xameTvService = require('./xametv_service');
 const admin = require('firebase-admin');
 const basicAuth = require('express-basic-auth');
 try {
@@ -113,19 +114,134 @@ if (!process.env.IMAGEKIT_PUBLIC_KEY) {
     console.log('✅ ImageKit configured:', process.env.IMAGEKIT_URL_ENDPOINT);
 }
 
-// ── ImageKit upload helper ─────────────────────────────────────────────────
-async function uploadToImageKit(buffer, fileName, folder) {
+// ── Cloudflare Worker / R2 upload helper ───────────────────────────────────
+const MEDIA_WORKER_URL =
+    process.env.MEDIA_WORKER_URL || 'https://media.xamepage.com';
+
+const MEDIA_API_SECRET =
+    process.env.MEDIA_API_SECRET || '';
+
+function buildMediaWorkerUrl(key) {
+    return `${MEDIA_WORKER_URL}/media/${key
+        .split('/')
+        .map(encodeURIComponent)
+        .join('/')}`;
+}
+
+async function uploadToMediaWorker(
+    buffer,
+    fileName,
+    folder,
+    contentType = 'application/octet-stream'
+) {
+    if (!MEDIA_API_SECRET) {
+        throw new Error('MEDIA_API_SECRET is not configured');
+    }
+
+    const safeName = String(fileName || 'file')
+        .replace(/[^a-zA-Z0-9._-]/g, '_');
+
+    const safeFolder = String(folder || 'media')
+        .split('/')
+        .filter(Boolean)
+        .map(part => part.replace(/[^a-zA-Z0-9._-]/g, '_'))
+        .join('/');
+
+    const key = `xamepage/${safeFolder}/${Date.now()}_${safeName}`;
+
+    const response = await fetch(buildMediaWorkerUrl(key), {
+        method: 'PUT',
+        headers: {
+            'Authorization': `Bearer ${MEDIA_API_SECRET}`,
+            'Content-Type': contentType || 'application/octet-stream',
+        },
+        body: buffer,
+    });
+
+    const responseText = await response.text();
+
+    if (!response.ok) {
+        throw new Error(
+            `Media Worker upload failed (${response.status}): ${responseText}`
+        );
+    }
+
+    let result;
     try {
-        const result = await imagekit.upload({
-            file:              buffer.toString('base64'),
-            fileName:          fileName,
-            folder:            `/xamepage/${folder}`,
-            useUniqueFileName: true,
-        });
-        console.log('✅ ImageKit upload:', result.url);
-        return result.url;
+        result = JSON.parse(responseText);
+    } catch {
+        throw new Error(
+            `Media Worker returned invalid JSON: ${responseText}`
+        );
+    }
+
+    if (!result.success || !result.url) {
+        throw new Error(
+            `Media Worker upload failed: ${responseText}`
+        );
+    }
+
+    console.log('✅ R2/Worker upload:', result.url);
+
+    return result.url;
+}
+
+// ── Media upload compatibility wrapper ─────────────────────────────────────
+// Keeps the existing uploadToImageKit() interface so existing API/database
+// contracts remain unchanged while new media is stored in Cloudflare R2.
+async function uploadToImageKit(
+    buffer,
+    fileName,
+    folder,
+    fileType = null,
+    contentType = null
+) {
+    try {
+        if (!contentType) {
+            const ext = String(fileName || '')
+                .toLowerCase()
+                .split('.')
+                .pop();
+
+            const mimeMap = {
+                jpg: 'image/jpeg',
+                jpeg: 'image/jpeg',
+                png: 'image/png',
+                gif: 'image/gif',
+                webp: 'image/webp',
+                svg: 'image/svg+xml',
+                mp4: 'video/mp4',
+                webm: 'video/webm',
+                mov: 'video/quicktime',
+                avi: 'video/x-msvideo',
+                mp3: 'audio/mpeg',
+                wav: 'audio/wav',
+                m4a: 'audio/mp4',
+                ogg: 'audio/ogg',
+                pdf: 'application/pdf',
+                txt: 'text/plain',
+                json: 'application/json',
+                zip: 'application/zip',
+            };
+
+            contentType = mimeMap[ext] || 'application/octet-stream';
+
+            if (fileType === 'image' && contentType === 'application/octet-stream') {
+                contentType = 'image/jpeg';
+            }
+        }
+
+        const url = await uploadToMediaWorker(
+            buffer,
+            fileName,
+            folder,
+            contentType
+        );
+
+        console.log('✅ Cloudflare R2 media upload:', url);
+        return url;
     } catch (err) {
-        console.error('❌ ImageKit upload error:', err);
+        console.error('❌ Cloudflare R2 media upload error:', err);
         throw err;
     }
 }
@@ -465,7 +581,8 @@ const groupSchema = new mongoose.Schema({
         userId:   { type: String, required: true },
         name:     { type: String, default: '' },
         role:     { type: String, enum: ['admin', 'member'], default: 'member' },
-        joinedAt: { type: Date, default: Date.now }
+        joinedAt: { type: Date, default: Date.now },
+        addedBy:  { type: String, default: '' }
     }],
     lastMessageTs:      { type: Number, default: 0 },
     lastMessagePreview: { type: String, default: '' },
@@ -526,6 +643,169 @@ const GalleryView = mongoose.model('GalleryView', galleryViewSchema);
 const Group            = mongoose.model('Group',            groupSchema);
 const GroupMessage     = mongoose.model('GroupMessage',     groupMessageSchema);
 
+
+// ── Session authentication helper ─────────────────────────────────────────
+// Validates the existing XamePage session token without exposing any
+// server-side media credentials to the client.
+async function getAuthenticatedUserFromSession(req) {
+    const authorization = req.headers.authorization || '';
+    const match = authorization.match(/^Bearer\s+(.+)$/i);
+
+    if (!match) return null;
+
+    const token = match[1].trim();
+    if (!token) return null;
+
+    return User.findOne({
+        sessions: { $elemMatch: { token } }
+    });
+}
+
+// ── Direct large-media upload initialization ───────────────────────────────
+// Authenticates the existing XamePage session, then asks the Media Worker
+// to create a short-lived R2 multipart upload capability. The actual media
+// bytes are uploaded directly from the client to Cloudflare.
+app.post('/api/media/upload-init', async (req, res) => {
+    try {
+        const authUser = await getAuthenticatedUserFromSession(req);
+
+        if (!authUser) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized.'
+            });
+        }
+
+        const {
+            fileName,
+            contentType,
+            size,
+            folder
+        } = req.body || {};
+
+        if (!fileName || typeof fileName !== 'string') {
+            return res.status(400).json({
+                success: false,
+                message: 'fileName is required.'
+            });
+        }
+
+        if (!contentType || typeof contentType !== 'string') {
+            return res.status(400).json({
+                success: false,
+                message: 'contentType is required.'
+            });
+        }
+
+        if (
+            !Number.isFinite(Number(size)) ||
+            Number(size) <= 0
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: 'A valid file size is required.'
+            });
+        }
+
+        if (
+            folder !== 'chat' &&
+            folder !== 'discovery'
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid media folder.'
+            });
+        }
+
+        if (!MEDIA_API_SECRET) {
+            console.error('❌ MEDIA_API_SECRET is not configured');
+            return res.status(500).json({
+                success: false,
+                message: 'Media upload service is not configured.'
+            });
+        }
+
+        const safeName = fileName
+            .replace(/[^a-zA-Z0-9._-]/g, '_')
+            .replace(/^_+/, '') || 'file';
+
+        const key =
+            `xamepage/${folder}/${Date.now()}_${safeName}`;
+
+        const workerResponse = await fetch(
+            `${MEDIA_WORKER_URL}/multipart/init`,
+            {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${MEDIA_API_SECRET}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    key,
+                    contentType,
+                    metadata: {
+                        xameId: String(authUser.xameId || ''),
+                        folder,
+                        originalFileName: safeName
+                    }
+                })
+            }
+        );
+
+        const responseText =
+            await workerResponse.text();
+
+        let result;
+
+        try {
+            result = JSON.parse(responseText);
+        } catch {
+            result = null;
+        }
+
+        if (
+            !workerResponse.ok ||
+            !result ||
+            !result.success ||
+            !result.uploadId ||
+            !result.capability
+        ) {
+            console.error(
+                '❌ Media Worker multipart init failed:',
+                workerResponse.status,
+                responseText
+            );
+
+            return res.status(502).json({
+                success: false,
+                message: 'Media upload initialization failed.'
+            });
+        }
+
+        return res.json({
+            success: true,
+            key: result.key || key,
+            uploadId: result.uploadId,
+            capability: result.capability,
+            expiresAt: result.expiresAt,
+            contentType
+        });
+
+    } catch (err) {
+        console.error(
+            '❌ Direct media upload initialization error:',
+            err
+        );
+
+        return res.status(500).json({
+            success: false,
+            message: 'Media upload initialization failed.'
+        });
+    }
+});
+
+
+
 // ── Broadcast List Schema ─────────────────────────────────────────────────
 const broadcastListSchema = new mongoose.Schema({
   listId:    { type: String, required: true, unique: true },
@@ -582,6 +862,33 @@ app.use(express.static(BASE_DIR, { etag: false, lastModified: false, setHeaders:
 // Uploaded files are served via authenticated /api/file/:filename route only
 // ── Cloudinary signed upload (duplicate for reliability) ─────────────────────
 // ── Fix existing broken thumbnail URLs ───────────────────────────────────────
+
+// XameTV catalogue API
+// Kept separate from the existing XameTV implementation.
+app.get('/api/xametv/channels', async (req, res) => {
+  try {
+    const force =
+      req.query.refresh === '1' ||
+      req.query.refresh === 'true';
+
+    const channels =
+      await xameTvService.loadCatalogue(force);
+
+    res.json({
+      success: true,
+      count: channels.length,
+      channels,
+    });
+  } catch (err) {
+    console.error('XameTV catalogue error:', err);
+
+    res.status(502).json({
+      success: false,
+      error: 'XameTV catalogue unavailable',
+    });
+  }
+});
+
 app.post('/api/admin/fix-thumbnails', async (req, res) => {
     if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
         return res.status(401).json({ success: false, message: 'Unauthorized' });
@@ -1570,7 +1877,13 @@ app.post('/api/upload-file', memoryUpload.single('file'), async (req, res) => {
         const isAudio = req.file.mimetype.startsWith('audio');
         const isImage = req.file.mimetype.startsWith('image');
         const folder  = (isVideo || isAudio || isImage) ? 'chat' : 'chat_documents';
-        const url = await uploadToImageKit(req.file.buffer, `chat_${Date.now()}_${req.file.originalname}`, folder);
+        const url = await uploadToImageKit(
+            req.file.buffer,
+            `chat_${Date.now()}_${req.file.originalname}`,
+            folder,
+            (isVideo || isAudio) ? 'non-image' : (isImage ? 'image' : null),
+            req.file.mimetype
+        );
         res.json({ success: true, url });
     } catch (err) {
         console.error('File upload error:', err);
@@ -1665,6 +1978,26 @@ io.on('connection', (socket) => {
     console.log(`✅ Connected: ${userId} (${io.engine.clientsCount} total)`);
 
     socket.userId = userId;
+
+    // Register web guest sockets separately
+    if (socket.handshake?.query?.webGuest === '1' && userId?.startsWith('web_')) {
+        const webGuestSockets = global.__xamePageWebGuestSockets || (global.__xamePageWebGuestSockets = new Map());
+        // Always update map with latest socket ID (handles reconnects)
+        webGuestSockets.set(userId, socket.id);
+        // Flush any buffered messages for this guest
+        const webGuestBuffer = global.__xamePageWebGuestBuffer || (global.__xamePageWebGuestBuffer = new Map());
+        const buffered = webGuestBuffer.get(userId) || [];
+        buffered.forEach(msg => socket.emit('receive-message', msg));
+        webGuestBuffer.delete(userId);
+        // Notify the Flutter user this guest is online
+        const targetXameId = userId.split('_')[1];
+        const flutterSock = findSocketId(targetXameId);
+        if (flutterSock) io.to(flutterSock).emit('user-online', { userId });
+        socket.on('disconnect', () => {
+            webGuestSockets.delete(userId);
+            if (flutterSock) io.to(flutterSock).emit('user-offline', { userId });
+        });
+    }
 
     if (userId) {
         if (disconnectTimeouts.has(userId)) {
@@ -1767,6 +2100,57 @@ io.on('connection', (socket) => {
                         userToSocketMap.delete(uid);
                         broadcastOnlineUsers();
                     }
+
+                    // Clean up any accepted native call left behind by an
+                    // unexpected socket disconnect.
+                    if (!Array.from(socketToUserMap.values()).includes(uid)) {
+                        (async () => {
+                            try {
+                                const callRecord = await CallHistory.findOne({
+                                    status: 'accepted',
+                                    $or: [
+                                        { callerId: uid },
+                                        { recipientId: uid }
+                                    ]
+                                });
+
+                                if (!callRecord) return;
+
+                                const otherUserId =
+                                    callRecord.callerId === uid
+                                        ? callRecord.recipientId
+                                        : callRecord.callerId;
+
+                                activeCalls.delete(uid);
+                                activeCalls.delete(otherUserId);
+
+                                await CallHistory.findOneAndUpdate(
+                                    { callId: callRecord.callId, status: 'accepted' },
+                                    {
+                                        status: 'ended',
+                                        endTime: new Date(),
+                                        duration: 0
+                                    }
+                                );
+
+                                const otherSid = findSocketId(otherUserId);
+                                if (otherSid) {
+                                    io.to(otherSid).emit('call-ended', {
+                                        senderId: uid,
+                                        callId: callRecord.callId
+                                    });
+                                }
+
+                                console.log(
+                                    `[CALL-CLEANUP] disconnected user=${uid} ` +
+                                    `callId=${callRecord.callId} other=${otherUserId}`
+                                );
+                            } catch (err) {
+                                console.error('[CALL-CLEANUP] disconnect cleanup error:', err);
+                            }
+                        })();
+                    }
+
                     disconnectTimeouts.delete(uid);
                 }, 3000); // 3 second grace period before marking offline
                 disconnectTimeouts.set(uid, t);
@@ -1831,7 +2215,20 @@ io.on('connection', (socket) => {
     socket.on('send-message', async (data, callback) => {
         const { recipientId, message } = data;
         const senderId      = socketToUserMap.get(socket.id);
-        const recipSocketId = findSocketId(recipientId);
+        // Check web guest sockets too (web profile visitors)
+        const webGuestSockets = global.__xamePageWebGuestSockets || new Map();
+        const webGuestSocketId = recipientId?.startsWith('web_') ? webGuestSockets.get(recipientId) : null;
+        const recipSocketId = findSocketId(recipientId) || webGuestSocketId;
+        if (recipientId?.startsWith('web_')) {
+            console.log('[WEB-MSG] guest=' + recipientId + ' socketId=' + webGuestSocketId + ' mapSize=' + webGuestSockets.size);
+            // Buffer message if guest socket not yet connected
+            if (!webGuestSocketId) {
+                const webGuestBuffer = global.__xamePageWebGuestBuffer || (global.__xamePageWebGuestBuffer = new Map());
+                const buf = webGuestBuffer.get(recipientId) || [];
+                buf.push({ senderId, message });
+                webGuestBuffer.set(recipientId, buf);
+            }
+        }
 
         try {
             const newMsg = new Message({
@@ -1928,7 +2325,10 @@ io.on('connection', (socket) => {
 
     socket.on('message-seen', async ({ recipientId, messageIds }) => {
         const senderId      = socketToUserMap.get(socket.id);
-        const recipSocketId = findSocketId(recipientId);
+        // Check web guest sockets too (web profile visitors)
+        const webGuestSockets = global.__xamePageWebGuestSockets || new Map();
+        const webGuestSocketId = recipientId?.startsWith('web_') ? webGuestSockets.get(recipientId) : null;
+        const recipSocketId = findSocketId(recipientId) || webGuestSocketId;
         try {
             await Message.updateMany(
                 { messageId: { $in: messageIds }, recipientId: senderId, senderId: recipientId },
@@ -2518,6 +2918,40 @@ io.on('connection', (socket) => {
     });
 
     socket.on('make-answer', ({ recipientId, answer }) => {
+        console.log('[WEB-CALL DEBUG] make-answer RECEIVED:', {
+            fromSocket: socket.id,
+            recipientId,
+            isWebCallSocket: webCallSockets?.has(recipientId),
+            hasAnswer: !!answer,
+            answerType: answer?.type,
+            sdpLength: answer?.sdp ? String(answer.sdp).length : 0,
+        });
+
+        // TEMPORARY WEB-CALL AUDIO DIAGNOSTIC:
+        // Inspect the native Flutter answer before forwarding it to the browser.
+        if (webCallSockets?.has(recipientId) && answer?.sdp) {
+            const sdp = String(answer.sdp);
+            const mediaSections = sdp
+                .split(/(?=m=)/)
+                .filter(section => section.startsWith('m=audio ') || section.startsWith('m=video '));
+
+            console.log('[WEB-CALL] FLUTTER ANSWER SDP MEDIA:');
+            for (const section of mediaSections) {
+                const lines = section
+                    .split('\\n')
+                    .filter(line =>
+                        line.startsWith('m=') ||
+                        line.startsWith('a=sendrecv') ||
+                        line.startsWith('a=sendonly') ||
+                        line.startsWith('a=recvonly') ||
+                        line.startsWith('a=inactive') ||
+                        line.startsWith('a=rtpmap:')
+                    );
+
+                console.log(lines.join(' | '));
+            }
+        }
+
         // Web caller: recipientId is the temporary browser socket ID.
         if (webCallSockets?.has(recipientId)) {
             const webSocket = io.sockets.sockets.get(recipientId);
@@ -3046,7 +3480,7 @@ app.post('/api/groups/create', async (req, res) => {
         if (Array.isArray(memberIds)) {
             const users = await User.find({ xameId: { $in: memberIds } });
             users.forEach(u => {
-                if (u.xameId !== userId) members.push({ userId: u.xameId, name: u.preferredName || u.firstName, role: 'member', joinedAt: new Date() });
+                if (u.xameId !== userId) members.push({ userId: u.xameId, name: u.preferredName || u.firstName, role: 'member', joinedAt: new Date(), addedBy: userId });
             });
         }
         const user = await User.findOne({ xameId: userId });
@@ -3087,7 +3521,7 @@ app.post('/api/groups/add-member', async (req, res) => {
         if (!requester || requester.role !== 'admin') return res.status(403).json({ success: false, message: 'Only admins can add members' });
         if (group.members.find(m => m.userId === userId)) return res.status(400).json({ success: false, message: 'Already a member' });
         const user = await User.findOne({ xameId: userId });
-        group.members.push({ userId, name: user?.preferredName || user?.firstName || userId, role: 'member', joinedAt: new Date() });
+        group.members.push({ userId, name: user?.preferredName || user?.firstName || userId, role: 'member', joinedAt: new Date(), addedBy: requesterId });
         await group.save();
         res.json({ success: true, group });
     } catch (err) {
@@ -3138,7 +3572,23 @@ app.post('/api/groups/upload-avatar', memoryUpload.single('avatar'), async (req,
     }
 });
 
-app.delete('/api/groups/:groupId', async (req, res) => {
+// Leave group
+app.post('/api/groups/:groupId/leave', async (req, res) => {
+    const { groupId } = req.params;
+    const { userId } = req.body;
+    if (!userId) return res.status(400).json({ success: false, message: 'Missing userId' });
+    try {
+        const group = await Group.findOne({ groupId });
+        if (!group) return res.status(404).json({ success: false, message: 'Group not found' });
+        if (group.createdBy === userId)
+            return res.status(403).json({ success: false, message: 'Creator cannot leave. Delete the group instead.' });
+        group.members = group.members.filter(m => m.userId !== userId);
+        await group.save();
+        res.json({ success: true, message: 'Left group successfully' });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+app.post('/api/groups/:groupId/delete', async (req, res) => {
     try {
         const { groupId } = req.params;
         const { userId } = req.body;
@@ -4322,6 +4772,304 @@ app.get('/.well-known/assetlinks.json', (req, res) => {
   }]);
 });
 
+
+// ── Public Web Send Money Page ───────────────────────────────────────────────
+app.get('/web/pay/:xameId', async (req, res) => {
+    try {
+        const user = await User.findOne({ xameId: req.params.xameId })
+            .select('xameId firstName lastName profilePic')
+            .lean();
+
+        if (!user) {
+            return res.status(404).send(`<!DOCTYPE html>
+<html><head><title>XamePage — User Not Found</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{background:#07101C;color:#EDF3F8;font-family:sans-serif;display:flex;
+align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center}
+.card{background:#0F1E2E;border:1px solid rgba(255,255,255,.08);border-radius:20px;
+padding:32px;max-width:360px;width:calc(100% - 48px)}
+a{color:#00B0A0;text-decoration:none}
+</style></head>
+<body><div class="card"><h2>User not found</h2>
+<p>This XamePage profile does not exist.</p>
+<a href="https://xamepage.com">← Back to XamePage</a></div></body></html>`);
+        }
+
+        const name = `${user.firstName} ${user.lastName}`.trim();
+        const firstName = user.firstName || 'User';
+        const pic = user.profilePic || '';
+        const xameId = user.xameId;
+
+        res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Send Money to ${name} — XamePage</title>
+<meta name="description" content="Send money securely to ${name} on XamePage.">
+<link href="https://fonts.googleapis.com/css2?family=Cabinet+Grotesk:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#07101C;color:#EDF3F8;font-family:'Cabinet Grotesk',sans-serif;
+min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.card{background:#0F1E2E;border:1px solid rgba(255,255,255,.06);border-radius:24px;
+padding:32px;max-width:390px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+.avatar{width:82px;height:82px;border-radius:50%;object-fit:cover;
+border:3px solid #00B0A0;margin:0 auto 14px;display:block}
+.avatar-placeholder{width:82px;height:82px;border-radius:50%;
+background:linear-gradient(135deg,#00B0A0,#007A6E);display:flex;
+align-items:center;justify-content:center;font-size:32px;font-weight:800;
+color:#fff;margin:0 auto 14px}
+h1{text-align:center;font-size:22px;font-weight:800;margin-bottom:4px}
+.handle{text-align:center;font-size:13px;color:#4A6E88;margin-bottom:28px}
+.label{display:block;font-size:13px;color:#8AAFC8;margin:0 0 7px;font-weight:600}
+.input{width:100%;background:#07101C;border:1px solid rgba(255,255,255,.1);
+border-radius:11px;padding:13px 14px;color:#EDF3F8;font-size:15px;
+margin-bottom:15px;font-family:inherit}
+.input:focus{outline:none;border-color:#00B0A0}
+.payment-methods{display:grid;gap:9px;margin-bottom:15px}
+.payment-method{display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;background:#07101C;border:1px solid rgba(255,255,255,.1);border-radius:11px;padding:12px;cursor:pointer;color:#EDF3F8;font:inherit;text-align:left}
+.payment-method input{margin:0;flex:0 0 auto}
+.payment-method:has(input:checked){border-color:#00B0A0}
+.amount-wrap{position:relative}
+.amount-wrap span{position:absolute;left:14px;top:13px;color:#8AAFC8;font-size:15px}
+.amount{padding-left:34px}
+.btn{display:block;width:100%;padding:14px;border-radius:12px;border:none;
+font-family:inherit;font-size:15px;font-weight:800;cursor:pointer}
+.btn-primary{background:#00B0A0;color:#000;margin-top:4px}
+.btn-primary:disabled{opacity:.55;cursor:not-allowed}
+.note{text-align:center;font-size:12px;color:#4A6E88;margin-top:16px;line-height:1.5}
+.error{display:none;background:rgba(255,70,70,.08);border:1px solid rgba(255,70,70,.2);
+color:#ff8f8f;border-radius:10px;padding:10px;font-size:13px;margin-bottom:14px;text-align:center}
+.back{display:block;text-align:center;color:#00B0A0;text-decoration:none;
+font-size:13px;margin-top:18px}
+.account-screen{display:none}
+.account-screen.active{display:block}
+.account-title{text-align:center;font-size:20px;font-weight:800;margin-bottom:8px}
+.account-note{text-align:center;font-size:12px;color:#8AAFC8;line-height:1.5;margin-bottom:22px}
+.account-row{background:#07101C;border:1px solid rgba(255,255,255,.1);
+border-radius:12px;padding:13px 14px;margin-bottom:10px}
+.account-label{display:block;font-size:12px;color:#4A6E88;margin-bottom:5px;font-weight:600}
+.account-value{display:block;font-size:15px;color:#EDF3F8;word-break:break-word}
+.copy-btn{display:block;width:100%;padding:12px;border-radius:11px;border:1px solid rgba(255,255,255,.1);
+background:#07101C;color:#EDF3F8;font-family:inherit;font-size:14px;font-weight:700;
+cursor:pointer;margin-top:8px}
+.copy-btn:active{opacity:.75}
+.account-back{display:block;width:100%;padding:13px;border-radius:12px;border:0;
+background:#00B0A0;color:#000;font-family:inherit;font-size:15px;font-weight:800;
+cursor:pointer;margin-top:18px}
+</style>
+</head>
+<body>
+<div class="card">
+${pic
+    ? `<img src="${pic}" class="avatar" alt="${name}">`
+    : `<div class="avatar-placeholder">${name.charAt(0).toUpperCase()}</div>`}
+<h1>Send Money to ${name}</h1>
+<div class="handle">@${xameId}</div>
+
+<div class="error" id="error"></div>
+
+<form id="payForm">
+<label class="label" for="amount">Amount</label>
+<div class="amount-wrap">
+<span>₦</span>
+<input class="input amount" id="amount" type="number" min="100" step="1"
+placeholder="0.00" required>
+</div>
+
+<label class="label" for="senderName">Your name</label>
+<input class="input" id="senderName" type="text" maxlength="80"
+placeholder="Enter your name" required>
+
+<label class="label" for="senderEmail">Your email</label>
+<input class="input" id="senderEmail" type="email" maxlength="120"
+placeholder="you@example.com" required>
+
+<label class="label">Payment method</label>
+<div class="payment-methods">
+<div class="payment-method">
+<input type="radio" name="method" value="flw-card" checked>
+<span>💳 Flutterwave Card</span>
+</div>
+<div class="payment-method">
+<input type="radio" name="method" value="flw-va">
+<span>🏦 Flutterwave Virtual Account</span>
+</div>
+<div class="payment-method">
+<input type="radio" name="method" value="squad">
+<span>🌍 Squad International Card/USSD</span>
+</div>
+</div>
+<button class="btn btn-primary" id="payBtn" type="submit">💳 Continue</button>
+</form>
+
+<div class="account-screen" id="accountScreen">
+<h2 class="account-title">Payment Account</h2>
+<p class="account-note">Transfer the amount to the account below to complete your payment.</p>
+
+<div class="account-row">
+<span class="account-label">Bank</span>
+<span class="account-value" id="accountBank"></span>
+</div>
+
+<div class="account-row">
+<span class="account-label">Account Number</span>
+<span class="account-value" id="accountNumber"></span>
+<button type="button" class="copy-btn" id="copyAccountNumber">📋 Copy Account Number</button>
+</div>
+
+<div class="account-row">
+<span class="account-label">Account Name</span>
+<span class="account-value" id="accountName"></span>
+<button type="button" class="copy-btn" id="copyAccountName">📋 Copy Account Name</button>
+</div>
+
+<button type="button" class="account-back" id="accountBack">← Back to Payment Options</button>
+</div>
+
+<p class="note">Choose a payment method above to complete your payment securely.</p>
+<a class="back" href="/u/${xameId}">← Back to ${firstName}'s profile</a>
+</div>
+
+<script>
+const form = document.getElementById('payForm');
+const btn = document.getElementById('payBtn');
+const error = document.getElementById('error');
+
+form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    error.style.display = 'none';
+
+    const amount = Number(document.getElementById('amount').value);
+    const senderName = document.getElementById('senderName').value.trim();
+    const email = document.getElementById('senderEmail').value.trim();
+
+    if (!Number.isFinite(amount) || amount < 100) {
+        error.textContent = 'Please enter an amount of at least ₦100.';
+        error.style.display = 'block';
+        return;
+    }
+
+    if (!senderName || !email) {
+        error.textContent = 'Please enter your name and email.';
+        error.style.display = 'block';
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Preparing payment...';
+
+    try {
+        const method = document.querySelector('input[name="method"]:checked')?.value;
+        let endpoint;
+
+        if (method === 'flw-card') {
+            endpoint = '/api/wallet/flw/init-payment';
+        } else if (method === 'flw-va') {
+            endpoint = '/api/wallet/flw/virtual-account';
+        } else if (method === 'squad') {
+            endpoint = '/api/wallet/squad/init-payment';
+        } else {
+            throw new Error('Please select a payment method.');
+        }
+
+        const r = await fetch(endpoint, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                userId: '${xameId}',
+                amount: amount,
+                currency: 'NGN',
+                email: email,
+                name: senderName
+            })
+        });
+
+        const d = await r.json();
+
+        if (d.success && d.paymentLink) {
+            window.location.href = d.paymentLink;
+            return;
+        }
+
+        if (d.success && d.account) {
+            const a = d.account;
+
+            document.getElementById('accountBank').textContent =
+                a.bank_name || '';
+            document.getElementById('accountNumber').textContent =
+                a.account_number || '';
+            document.getElementById('accountName').textContent =
+                a.account_name || '';
+
+            form.style.display = 'none';
+            document.getElementById('accountScreen').classList.add('active');
+            return;
+        }
+
+        throw new Error(d.message || 'Unable to start payment.');
+    } catch (err) {
+        error.textContent = err.message || 'Unable to start payment. Please try again.';
+        error.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = '💳 Continue to Payment';
+    }
+});
+
+async function copyAccountValue(elementId, buttonId, defaultText) {
+    const value = document.getElementById(elementId).textContent.trim();
+    const button = document.getElementById(buttonId);
+
+    if (!value) return;
+
+    try {
+        await navigator.clipboard.writeText(value);
+        button.textContent = '✓ Copied';
+        setTimeout(() => {
+            button.textContent = defaultText;
+        }, 1500);
+    } catch (err) {
+        button.textContent = 'Copy failed';
+        setTimeout(() => {
+            button.textContent = defaultText;
+        }, 1500);
+    }
+}
+
+document.getElementById('copyAccountNumber').addEventListener('click', () => {
+    copyAccountValue(
+        'accountNumber',
+        'copyAccountNumber',
+        '📋 Copy Account Number'
+    );
+});
+
+document.getElementById('copyAccountName').addEventListener('click', () => {
+    copyAccountValue(
+        'accountName',
+        'copyAccountName',
+        '📋 Copy Account Name'
+    );
+});
+
+document.getElementById('accountBack').addEventListener('click', () => {
+    document.getElementById('accountScreen').classList.remove('active');
+    form.style.display = '';
+    btn.disabled = false;
+    btn.textContent = '💳 Continue to Payment';
+});
+</script>
+</body>
+</html>`);
+} catch (err) {
+    console.error('Web payment page error:', err);
+    res.status(500).send('Server error');
+}
+});
+
 // ── 3.0 Block 6: Public Profile Page ─────────────────────────────────────────
 app.get('/u/:xameId', async (req, res) => {
     try {
@@ -4334,7 +5082,7 @@ app.get('/u/:xameId', async (req, res) => {
         const xameId     = user.xameId;
         const msgUrl      = `https://app.xamepage.com/chat/${xameId}`;
         const callUrl     = `https://app.xamepage.com/web-call/${xameId}`;
-        const payUrl      = `xamepage://add/${xameId}`;
+        const payUrl      = `/web/pay/${xameId}`;
         const downloadUrl = `https://app.xamepage.com/api/app/download`;
 
         res.send(`<!DOCTYPE html>
@@ -4412,13 +5160,23 @@ textarea.input{min-height:90px;resize:none}
         <button class="btn btn-primary" onclick="sendMsg()" id="msgBtn" style="flex:2">Send Message</button>
       </div>
     </div>
-    <div class="success-msg" id="msgSuccess" style="display:none">
-      <div class="icon">✅</div>
-      <h3>Message Sent!</h3>
-      <p>${name.split(' ')[0]} will receive your message on XamePage.</p>
-      <p style="margin-bottom:16px">Want to continue the conversation?</p>
-      <a href="${downloadUrl}" class="btn btn-primary">⬇ Get XamePage Free</a>
-      <button class="btn btn-cancel" onclick="hidePanel('msg')" style="margin-top:10px">Close</button>
+    <div id="msgSuccess" style="display:none;flex-direction:column;height:420px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <span style="font-weight:700;font-size:15px;color:#EDF3F8">💬 ${name.split(' ')[0]}</span>
+        <button onclick="hidePanel('msg')" style="background:none;border:none;color:#8aafc8;cursor:pointer;font-size:20px">✕</button>
+      </div>
+      <div id="replyBox" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:4px 0;min-height:0"></div>
+      <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
+        <label style="cursor:pointer;color:#00B0A0;font-size:20px" title="Attach file">
+          📎<input type="file" id="replyFile" accept="image/*,video/*,.pdf,.doc,.docx" style="display:none" onchange="sendFileReply()">
+        </label>
+        <input id="replyInput" placeholder="Reply..." maxlength="500"
+          style="flex:1;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,0.1);background:#07101c;color:#fff;font-size:14px"
+          onkeydown="if(event.key==='Enter')sendReply()">
+        <button onclick="sendReply()"
+          style="background:#00B0A0;border:none;border-radius:10px;padding:0 16px;color:#000;font-weight:700;cursor:pointer;font-size:18px">➤</button>
+      </div>
+      <a href="${downloadUrl}" style="display:block;text-align:center;margin-top:8px;font-size:12px;color:#4A6E88;text-decoration:none">⬇ Get XamePage for full experience</a>
     </div>
   </div>
 </div>
@@ -4446,9 +5204,100 @@ textarea.input{min-height:90px;resize:none}
   </div>
 </div>
 
+<script src="/socket.io/socket.io.js"></script>
 <script>
 const XAME_ID = '${xameId}';
-const API = 'https://project-50s.onrender.com';
+const API = 'https://app.xamepage.com';
+let socket = null;
+const guestId = 'web_' + XAME_ID + '_' + Date.now();
+
+// Connect socket immediately on page load
+socket = io('https://app.xamepage.com', {
+  query: { userId: guestId, webGuest: '1' },
+  transports: ['websocket','polling']
+});
+socket.on('receive-message', (msg) => {
+  const senderId = msg.senderId;
+  const message = msg.message || msg;
+  const text = message.text || msg.text || '';
+  const media = message.file || null;
+  if (senderId === XAME_ID || msg.recipientId === guestId) {
+    appendMsg(text, false, media);
+  }
+});
+
+function connectSocket(name, gId) { /* already connected */ }
+
+function appendMsg(text, isSelf, media) {
+  const box = document.getElementById('replyBox');
+  if (!box) return;
+  const div = document.createElement('div');
+  div.style.cssText = isSelf
+    ? 'background:#00B0A0;color:#000;padding:10px 14px;border-radius:14px 14px 4px 14px;font-size:14px;align-self:flex-end;max-width:85%;word-break:break-word'
+    : 'background:#1a2e42;color:#EDF3F8;padding:10px 14px;border-radius:14px 14px 14px 4px;font-size:14px;align-self:flex-start;max-width:85%;word-break:break-word';
+  if (media) {
+    const mime = media.mime || '';
+    if (mime.startsWith('image/')) {
+      const img = document.createElement('img');
+      img.src = media.url;
+      img.style.cssText = 'max-width:100%;border-radius:8px;display:block';
+      div.appendChild(img);
+    } else if (mime.startsWith('video/')) {
+      const vid = document.createElement('video');
+      vid.src = media.url; vid.controls = true;
+      vid.style.cssText = 'max-width:100%;border-radius:8px;display:block';
+      div.appendChild(vid);
+    } else {
+      const a = document.createElement('a');
+      a.href = media.url; a.target = '_blank';
+      a.textContent = '📎 ' + (media.name || 'File');
+      a.style.cssText = 'color:#00B0A0;text-decoration:underline';
+      div.appendChild(a);
+    }
+  } else {
+    const clean = text ? text.replace(/^\[Web message from [^\]]+\]: /, '') : '';
+    if (clean) div.textContent = clean;
+  }
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+function appendReply(text) { appendMsg(text, false); }
+
+async function sendFileReply() {
+  const fileInput = document.getElementById('replyFile');
+  const file = fileInput?.files?.[0];
+  if (!file) return;
+  const senderName = document.getElementById('msgName')?.value?.trim() || 'Guest';
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('toXameId', XAME_ID);
+  formData.append('fromName', senderName);
+  formData.append('guestId', guestId);
+  appendMsg('[Sending: ' + file.name + '...]', true);
+  try {
+    const r = await fetch(API+'/api/web/message/file', { method:'POST', body: formData });
+    const d = await r.json();
+    if (!d.success) appendMsg('[Failed to send file]', true);
+  } catch(e) { appendMsg('[File send error]', true); }
+  fileInput.value = '';
+}
+
+async function sendReply() {
+  const input = document.getElementById('replyInput');
+  const text = input?.value?.trim();
+  if (!text) return;
+  const senderName = document.getElementById('msgName')?.value?.trim() || 'Guest';
+  input.value = '';
+  appendMsg(text, true);
+  try {
+    await fetch(API+'/api/web/message', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ toXameId: XAME_ID, fromName: senderName, text, guestId })
+    });
+  } catch(e) { console.error('Reply error:', e); }
+}
+
 
 function showPanel(type) { document.getElementById(type+'Overlay').classList.add('active'); }
 function hidePanel(type) {
@@ -4467,12 +5316,14 @@ async function sendMsg() {
   try {
     const r = await fetch(API+'/api/web/message', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ toXameId: XAME_ID, fromName: name, text })
+      body: JSON.stringify({ toXameId: XAME_ID, fromName: name, text, guestId })
     });
     const d = await r.json();
     if (d.success) {
       document.getElementById('msgForm').style.display='none';
-      document.getElementById('msgSuccess').style.display='';
+      const s = document.getElementById('msgSuccess');
+      s.style.display='flex';
+      appendMsg(text, true);
     } else { alert(d.message || 'Failed to send. Try again.'); }
   } catch(e) { alert('Connection error. Try again.'); }
   btn.textContent = 'Send Message'; btn.disabled = false;
@@ -6632,7 +7483,19 @@ app.get('/api/discover/collab/my-threads', async (req, res) => {
 // Create a new discovery post — upload media to Cloudinary
 app.post('/api/discover/post', memoryUpload.array('media', 10), async (req, res) => {
     try {
-        const { authorId, title, caption, region, category, mediaType, musicUrl, musicTitle } = req.body;
+        const {
+            authorId,
+            title,
+            caption,
+            region,
+            category,
+            mediaType,
+            musicUrl,
+            musicTitle,
+            mediaUrl: submittedMediaUrl,
+            mediaUrls: submittedMediaUrls,
+            thumbnailUrl: submittedThumbnailUrl,
+        } = req.body;
         if (!authorId || !title) {
             return res.json({ success: false, message: 'authorId and title required' });
         }
@@ -6644,19 +7507,54 @@ app.post('/api/discover/post', memoryUpload.array('media', 10), async (req, res)
         let thumbnailUrl = '';
         let mediaUrls    = [];
 
+        if (typeof submittedThumbnailUrl === 'string' &&
+            submittedThumbnailUrl.trim()) {
+            thumbnailUrl = submittedThumbnailUrl.trim();
+        }
+
         const files = req.files || [];
+
         if (files.length > 0) {
-            // Upload each file to Cloudinary in order
+            // Legacy fallback for clients that still upload through Render.
             for (const file of files) {
-                const uploadedUrl = await uploadToImageKit(file.buffer, `post_${authorId}_${Date.now()}_${mediaUrls.length}_${file.originalname}`, 'discovery');
-                mediaUrls.push({ url: uploadedUrl, type: mediaType === 'video' ? 'video' : 'image' });
+                const uploadedUrl = await uploadToImageKit(
+                    file.buffer,
+                    `post_${authorId}_${Date.now()}_${mediaUrls.length}_${file.originalname}`,
+                    'discovery',
+                    mediaType === 'video' ? 'non-image' : 'image'
+                );
+                mediaUrls.push({
+                    url: uploadedUrl,
+                    type: mediaType === 'video' ? 'video' : 'image'
+                });
             }
+
             mediaUrl = mediaUrls[0].url;
+
             if (mediaType === 'video') {
                 thumbnailUrl = `${mediaUrl}/ik-thumbnail.jpg`;
             }
-        } else if (req.body.mediaUrl) {
-            mediaUrl = req.body.mediaUrl;
+        } else if (Array.isArray(submittedMediaUrls) && submittedMediaUrls.length > 0) {
+            mediaUrls = submittedMediaUrls
+                .filter(item =>
+                    item &&
+                    typeof item.url === 'string' &&
+                    item.url.trim()
+                )
+                .map(item => ({
+                    url: item.url.trim(),
+                    type: item.type === 'video' ? 'video' : 'image'
+                }));
+
+            if (mediaUrls.length > 0) {
+                mediaUrl = mediaUrls[0].url;
+
+                if (mediaType === 'video' && !thumbnailUrl) {
+                    thumbnailUrl = `${mediaUrl}/ik-thumbnail.jpg`;
+                }
+            }
+        } else if (submittedMediaUrl) {
+            mediaUrl = submittedMediaUrl;
         }
 
         if (!mediaUrl) {
@@ -6713,7 +7611,14 @@ app.post('/api/discover/story', memoryUpload.single('media'), async (req, res) =
 
         let mediaUrl = '';
         if (req.file) {
-            const uploadResult = { secure_url: await uploadToImageKit(req.file.buffer, `story_${authorId}_${Date.now()}_${req.file.originalname}`, 'stories') };
+            const uploadResult = {
+                secure_url: await uploadToImageKit(
+                    req.file.buffer,
+                    `story_${authorId}_${Date.now()}_${req.file.originalname}`,
+                    'stories',
+                    mediaType === 'video' ? 'non-image' : 'image'
+                )
+            };
             mediaUrl = uploadResult.secure_url;
         } else if (req.body.mediaUrl) {
             mediaUrl = req.body.mediaUrl;
@@ -7214,6 +8119,7 @@ app.get('/join/:code', async (req, res) => {
     }
 });
 
+app.get('/delete-account', (req, res) => res.sendFile(path.join(BASE_DIR, 'public', 'delete-account.html')));
 app.get('/privacy',     (req, res) => res.sendFile(path.join(BASE_DIR, 'legal', 'privacy.html')));
 app.get('/terms',       (req, res) => res.sendFile(path.join(BASE_DIR, 'legal', 'terms.html')));
 app.get('/wallet-info', (req, res) => res.sendFile(path.join(BASE_DIR, 'legal', 'wallet-info.html')));
@@ -8592,6 +9498,31 @@ app.post('/api/admin/recall-broadcast', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
+// ── Delete Account ───────────────────────────────────────────────────────────
+app.post('/api/account/delete', async (req, res) => {
+    const { userId, password } = req.body;
+    if (!userId || !password) return res.status(400).json({ success: false, message: 'Missing fields' });
+    try {
+        const bcrypt = require('bcryptjs');
+        const user = await User.findOne({ xameId: userId });
+        if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+        const match = await bcrypt.compare(password, user.password);
+        if (!match) return res.status(401).json({ success: false, message: 'Incorrect password' });
+        // Delete all user data
+        await Promise.all([
+            Message.deleteMany({ $or: [{ senderId: userId }, { recipientId: userId }] }),
+            Wallet.deleteOne({ xameId: userId }),
+            CallHistory.deleteMany({ $or: [{ callerId: userId }, { recipientId: userId }] }),
+            Group.updateMany({ 'members.userId': userId }, { $pull: { members: { userId } } }),
+            DiscoveryPost.deleteMany({ userId }),
+            RewardAccount.deleteOne({ userId }),
+            RewardTransaction.deleteMany({ userId }),
+            User.deleteOne({ xameId: userId }),
+        ]);
+        res.json({ success: true, message: 'Account deleted successfully' });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
 // ── END ADMIN ENDPOINTS ───────────────────────────────────────────────────────
 
 // ── Referral landing page ─────────────────────────────────────────────────────
@@ -8998,14 +9929,14 @@ app.get('/web-call/:xameId', async (req, res) => {
 
 app.post('/api/web/message', async (req, res) => {
   try {
-    const { toXameId, fromName, text } = req.body;
+    const { toXameId, fromName, text, guestId: clientGuestId } = req.body;
     if (!toXameId || !fromName?.trim() || !text?.trim())
       return res.json({ success: false, message: 'Missing fields.' });
 
     const recipient = await User.findOne({ xameId: toXameId }).lean();
     if (!recipient) return res.json({ success: false, message: 'User not found.' });
 
-    const guestId  = 'web_' + toXameId + '_' + Date.now();
+    const guestId = clientGuestId || 'web_' + toXameId + '_' + Date.now();
     const msgId    = require('uuid').v4();
     const msgObj   = {
       messageId:   msgId,
@@ -9048,6 +9979,48 @@ app.post('/api/web/message', async (req, res) => {
 
     res.json({ success: true });
   } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+});
+
+// POST /api/web/message/file — deliver a file/media from web visitor to XamePage user
+app.post('/api/web/message/file', memoryUpload.single('file'), async (req, res) => {
+  try {
+    const { toXameId, fromName, guestId } = req.body;
+    if (!toXameId || !fromName || !req.file)
+      return res.json({ success: false, message: 'Missing fields.' });
+    const recipient = await User.findOne({ xameId: toXameId }).lean();
+    if (!recipient) return res.json({ success: false, message: 'User not found.' });
+    // Upload to ImageKit
+    const mime = req.file.mimetype;
+    const isImage = mime.startsWith('image/');
+    const isVideo = mime.startsWith('video/');
+    const folder = isImage ? 'web-messages/images' : isVideo ? 'web-messages/videos' : 'web-messages/files';
+    const uploaded = await imagekit.upload({
+      file: req.file.buffer,
+      fileName: req.file.originalname || 'web-file',
+      folder,
+      useUniqueFileName: true,
+    });
+    const fileUrl = uploaded.url;
+    const msgId = require('uuid').v4();
+    const msgObj = {
+      messageId: msgId,
+      senderId: guestId || ('web_' + toXameId + '_' + Date.now()),
+      recipientId: toXameId,
+      text: `[Web file from ${fromName.trim()}]`,
+      file: { url: fileUrl, mime, name: req.file.originalname, size: req.file.size },
+      ts: new Date(), status: 'delivered',
+    };
+    await new Message(msgObj).save();
+    const recipSocketId = findSocketId(toXameId);
+    if (recipSocketId) {
+      io.to(recipSocketId).emit('receive-message', {
+        id: msgId, senderId: msgObj.senderId, recipientId: toXameId,
+        text: msgObj.text, file: msgObj.file, ts: msgObj.ts, status: 'delivered',
+        type: isImage ? 'image' : isVideo ? 'video' : 'file',
+      });
+    }
+    res.json({ success: true, fileUrl });
+  } catch(e) { res.status(500).json({ success: false, message: e.message }); }
 });
 
 // POST /api/web/call-request — notify XamePage user of a web call request

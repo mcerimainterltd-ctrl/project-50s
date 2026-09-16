@@ -103,6 +103,69 @@ html, body {
   width: 100%;
 }
 
+/* ── Active call minimize/restore UI ─────────────────────────────────── */
+
+#minimizeCallBtn {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  z-index: 101;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: 50%;
+}
+
+#activeCallBar {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 9100;
+  min-height: 54px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 16px;
+  background: rgba(10, 22, 40, 0.96);
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.30);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#activeCallBar.hidden {
+  display: none;
+}
+
+#activeCallBar .active-call-icon {
+  font-size: 24px;
+  line-height: 1;
+}
+
+#activeCallBar .active-call-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+#activeCallBar #activeCallTimer {
+  margin-left: auto;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5px;
+}
+
+#activeCallBar:active {
+  transform: scale(0.99);
+}
+
 .hidden { 
   display: none !important; 
 }

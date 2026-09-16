@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Delete XamePage Account</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#07101c;color:#edf3f8;font-family:Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:#0f1e2e;border-radius:20px;padding:32px;max-width:420px;width:100%;border:1px solid rgba(255,255,255,0.08)}
+h1{font-size:22px;font-weight:700;margin-bottom:8px;color:#fff}
+p{color:#8aafc8;font-size:14px;line-height:1.6;margin-bottom:20px}
+input{width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.1);background:#07101c;color:#fff;font-size:14px;margin-bottom:12px}
+.btn{width:100%;padding:14px;border-radius:10px;border:0;font-size:15px;font-weight:700;cursor:pointer}
+.btn-delete{background:#ef4444;color:#fff;margin-bottom:8px}
+.btn-cancel{background:transparent;color:#8aafc8;border:1px solid rgba(255,255,255,0.1)}
+#msg{margin-top:12px;padding:10px;border-radius:8px;font-size:13px;display:none}
+.success{background:rgba(0,176,160,0.15);color:#00b0a0}
+.error{background:rgba(239,68,68,0.15);color:#ef4444}
+.logo{font-size:22px;font-weight:800;color:#00b0a0;margin-bottom:24px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">XamePage</div>
+  <h1>Delete Account</h1>
+  <p>This will permanently delete your account and all associated data including messages, wallet, and call history. This action cannot be undone.</p>
+  <input id="userId" placeholder="Your XameID (e.g. 058476230554)" type="text">
+  <input id="password" placeholder="Your password" type="password">
+  <button class="btn btn-delete" onclick="deleteAccount()">🗑 Delete My Account</button>
+  <button class="btn btn-cancel" onclick="history.back()">Cancel</button>
+  <div id="msg"></div>
+</div>
+<script>
+async function deleteAccount() {
+  const userId = document.getElementById('userId').value.trim();
+  const password = document.getElementById('password').value.trim();
+  const msg = document.getElementById('msg');
+  if (!userId || !password) { showMsg('Please fill in all fields', 'error'); return; }
+  try {
+    const res = await fetch('/api/account/delete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({userId, password})
+    });
+    const d = await res.json();
+    if (d.success) {
+      showMsg('✅ Your account has been permanently deleted.', 'success');
+      document.querySelectorAll('input,button').forEach(el => el.disabled = true);
+    } else {
+      showMsg('❌ ' + (d.message || 'Failed to delete account'), 'error');
+    }
+  } catch(e) { showMsg('❌ Network error. Please try again.', 'error'); }
+}
+function showMsg(text, type) {
+  const msg = document.getElementById('msg');
+  msg.textContent = text;
+  msg.className = type;
+  msg.style.display = 'block';
+}
+</script>
+</body>
+</html>

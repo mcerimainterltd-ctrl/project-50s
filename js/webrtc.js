@@ -14,24 +14,38 @@ let _callTimerInterval = null;
 let _callTimerSeconds = 0;
 
 function _startCallTimer() {
-  const display = document.getElementById('callTimerDisplay');
-  if (!display) return;
   _callTimerSeconds = 0;
-  display.textContent = '00:00';
   clearInterval(_callTimerInterval);
+
+  const updateDisplays = () => {
+    const m = String(Math.floor(_callTimerSeconds / 60)).padStart(2, '0');
+    const sec = String(_callTimerSeconds % 60).padStart(2, '0');
+    const text = m + ':' + sec;
+
+    const display = document.getElementById('callTimerDisplay');
+    const miniDisplay = document.getElementById('activeCallTimer');
+
+    if (display) display.textContent = text;
+    if (miniDisplay) miniDisplay.textContent = text;
+  };
+
+  updateDisplays();
+
   _callTimerInterval = setInterval(() => {
     _callTimerSeconds++;
-    const m = String(Math.floor(_callTimerSeconds / 60)).padStart(2, '0');
-    const s = String(_callTimerSeconds % 60).padStart(2, '0');
-    display.textContent = m + ':' + s;
+    updateDisplays();
   }, 1000);
 }
 
 function _stopCallTimer() {
   clearInterval(_callTimerInterval);
   _callTimerInterval = null;
+
   const display = document.getElementById('callTimerDisplay');
+  const miniDisplay = document.getElementById('activeCallTimer');
+
   if (display) display.textContent = '';
+  if (miniDisplay) miniDisplay.textContent = '00:00';
 }
 
 // ── Draggable local video ─────────────────────────────────────────────────
@@ -301,6 +315,39 @@ function handleNewIceCandidate(candidate, fromUserId) {
   } else { pendingIceCandidates.push(candidate); }
 }
 
+// ── Minimize / restore active call UI ─────────────────────────────────────
+// These functions ONLY change the visible UI.
+// They do NOT close peers, stop media tracks, or emit call-ended.
+function minimizeCallUI() {
+  if (!callActive) return;
+
+  const overlay = document.getElementById('videoCallOverlay');
+  const bar = document.getElementById('activeCallBar');
+
+  overlay?.classList.add('hidden');
+  bar?.classList.remove('hidden');
+
+  // Restore the normal XamePage interface underneath the active call.
+  elChatHeader?.classList.remove('hidden');
+  composer?.classList.remove('hidden');
+}
+
+function restoreCallUI() {
+  if (!callActive) {
+    document.getElementById('activeCallBar')?.classList.add('hidden');
+    return;
+  }
+
+  const overlay = document.getElementById('videoCallOverlay');
+  const bar = document.getElementById('activeCallBar');
+
+  bar?.classList.add('hidden');
+  overlay?.classList.remove('hidden');
+
+  elChatHeader?.classList.add('hidden');
+  composer?.classList.add('hidden');
+}
+
 // ── End call ──────────────────────────────────────────────────────────────
 function endCall() {
   peers.forEach((peer) => {
@@ -335,6 +382,7 @@ function exitVideoCall() {
   endCall();
   videoCallOverlay?.classList.add('hidden');
   elChatHeader?.classList.remove('hidden'); composer?.classList.remove('hidden');
+  document.getElementById('activeCallBar')?.classList.add('hidden');
   document.getElementById('callParticipantsBar')?.remove();
   document.getElementById('addCallBtn')?.remove();
   document.getElementById('mergeCallBtn')?.remove();
@@ -471,6 +519,17 @@ function toggleFrontBackCamera() {
     .catch(err => { showNotification('Failed to switch camera'); });
 }
 
+document.getElementById('minimizeCallBtn')?.addEventListener('click', minimizeCallUI);
+
+document.getElementById('activeCallBar')?.addEventListener('click', restoreCallUI);
+
+document.getElementById('activeCallBar')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    restoreCallUI();
+  }
+});
+
 exitCallBtn?.addEventListener('click', exitVideoCall);
 cameraToggleBtn?.addEventListener('click', toggleFrontBackCamera);
 micMuteBtn?.addEventListener('click', () => {
@@ -494,11 +553,13 @@ loudSpeakerBtn?.addEventListener('click', () => {
   loudSpeakerBtn.textContent = isLoudspeakerOn ? '🔊' : '🔈';
 });
 
-// Handle Android back button to close call/camera overlay
+// Handle Android Back while an active call is displayed.
+// Back/minimize changes only the UI; the call itself continues.
 document.addEventListener('backbutton', function(e) {
   const overlay = document.getElementById('videoCallOverlay');
-  if (overlay && !overlay.classList.contains('hidden')) {
+
+  if (overlay && !overlay.classList.contains('hidden') && callActive) {
     e.preventDefault();
-    endCall();
+    minimizeCallUI();
   }
 }, false);

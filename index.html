@@ -412,6 +412,7 @@
       <video id="remoteVideo" autoplay playsinline></video>
       <video id="localVideo"  autoplay playsinline muted></video>
 
+      <button id="minimizeCallBtn" class="icon-btn" title="Minimize Call" aria-label="Minimize Call">⌄</button>
       <button id="cameraToggleBtn" class="icon-btn">🔄</button>
 
       <div id="callTimerDisplay" style="position:absolute;top:60px;left:50%;transform:translateX(-50%);color:white;font-size:15px;font-weight:600;text-shadow:0 1px 4px rgba(0,0,0,0.7);letter-spacing:1px;z-index:1001;pointer-events:none;"></div>
@@ -422,6 +423,14 @@
         <button id="screenShareBtn" class="icon-btn" title="Share Screen">🖥️</button>
         <button id="exitCallBtn"    class="icon-btn danger">📞</button>
       </div>
+    </div>
+
+    <!-- Persistent indicator shown while an active call is minimized -->
+    <div id="activeCallBar" class="active-call-bar hidden"
+         role="button" tabindex="0" aria-label="Return to active call">
+      <span class="active-call-icon">📞</span>
+      <span class="active-call-label">Active call</span>
+      <span id="activeCallTimer">00:00</span>
     </div>
   </div><!-- /#chat -->
 
