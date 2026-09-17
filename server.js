@@ -2711,7 +2711,7 @@ io.on('connection', (socket) => {
 
                     await new CallHistory({
                         callId,
-                        callerId: socket.id,
+                        callerId: String(socket.userId || socket.id),
                         recipientId: targetId,
                         callType,
                         status: 'pending',
