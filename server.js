@@ -647,13 +647,17 @@ const GroupMessage     = mongoose.model('GroupMessage',     groupMessageSchema);
 // ── Session authentication helper ─────────────────────────────────────────
 // Validates the existing XamePage session token without exposing any
 // server-side media credentials to the client.
-async function getAuthenticatedUserFromSession(req) {
+function getSessionToken(req) {
     const authorization = req.headers.authorization || '';
     const match = authorization.match(/^Bearer\s+(.+)$/i);
-
     if (!match) return null;
 
     const token = match[1].trim();
+    return token || null;
+}
+
+async function getAuthenticatedUserFromSession(req) {
+    const token = getSessionToken(req);
     if (!token) return null;
 
     return User.findOne({
@@ -1016,6 +1020,7 @@ const onlineUsers          = new Set();
 const activeCalls          = new Set(); // tracks xameIds currently in a call
 const userToSocketMap      = new Map();   // userId  → socketId
 const socketToUserMap      = new Map();   // socketId → userId
+const sessionTokenToSocketMap = new Map(); // sessionToken → socketId
 const onlineUserTimestamps = new Map();
 const disconnectTimeouts   = new Map();
 
@@ -1549,15 +1554,25 @@ app.get('/api/extra-security/:userId', async (req, res) => {
 app.get('/api/sessions/:userId', async (req, res) => {
     const { userId } = req.params;
     try {
-        const user = await User.findOne({ xameId: userId });
+        const authUser = await getAuthenticatedUserFromSession(req);
+        if (!authUser) {
+            return res.status(401).json({ success: false, message: 'Unauthorized.' });
+        }
+        if (authUser.xameId !== userId) {
+            return res.status(403).json({ success: false, message: 'Forbidden.' });
+        }
+
+        const user = authUser;
         if (!user) return res.status(404).json({ success: false });
+        const currentToken = getSessionToken(req);
         const sessions = (user.sessions || []).map((s, i) => ({
             id: s._id,
             deviceInfo: s.deviceInfo,
             location: s.location || '',
             createdAt: s.createdAt,
             lastSeen: s.lastSeen,
-            index: i
+            index: i,
+            isCurrent: !!currentToken && s.token === currentToken
         }));
         res.json({ success: true, sessions });
     } catch (err) { res.status(500).json({ success: false }); }
@@ -1567,14 +1582,39 @@ app.get('/api/sessions/:userId', async (req, res) => {
 app.post('/api/sessions/kill', async (req, res) => {
     const { userId, sessionId } = req.body;
     try {
-        const user = await User.findOne({ xameId: userId });
+        const authUser = await getAuthenticatedUserFromSession(req);
+        if (!authUser) {
+            return res.status(401).json({ success: false, message: 'Unauthorized.' });
+        }
+        if (authUser.xameId !== userId) {
+            return res.status(403).json({ success: false, message: 'Forbidden.' });
+        }
+
+        const user = authUser;
         if (!user) return res.status(404).json({ success: false });
-        user.sessions = (user.sessions || []).filter(s => s._id.toString() !== sessionId);
+
+        const targetSession = (user.sessions || []).find(
+            s => s._id.toString() === String(sessionId)
+        );
+
+        user.sessions = (user.sessions || []).filter(
+            s => s._id.toString() !== String(sessionId)
+        );
         await user.save();
-        // Force logout the target socket
-        const targetSocketId = findSocketId(userId);
+
+        // Force logout only the socket authenticated with the terminated session.
+        const targetSocketId = targetSession?.token
+            ? sessionTokenToSocketMap.get(targetSession.token)
+            : null;
+
         if (targetSocketId) {
-            io.to(targetSocketId).emit('force-logout', { reason: 'Session terminated remotely' });
+            io.to(targetSocketId).emit('force-logout', {
+                reason: 'Session terminated remotely'
+            });
+
+            if (sessionTokenToSocketMap.get(targetSession.token) === targetSocketId) {
+                sessionTokenToSocketMap.delete(targetSession.token);
+            }
         }
         res.json({ success: true });
     } catch (err) { res.status(500).json({ success: false }); }
@@ -1582,16 +1622,38 @@ app.post('/api/sessions/kill', async (req, res) => {
 
 // Kill ALL other sessions (stolen device)
 app.post('/api/sessions/kill-all', async (req, res) => {
-    const { userId, keepToken } = req.body;
+    const { userId } = req.body;
     try {
-        const user = await User.findOne({ xameId: userId });
+        const authUser = await getAuthenticatedUserFromSession(req);
+        const currentToken = getSessionToken(req);
+
+        if (!authUser || !currentToken) {
+            return res.status(401).json({ success: false, message: 'Unauthorized.' });
+        }
+        if (authUser.xameId !== userId) {
+            return res.status(403).json({ success: false, message: 'Forbidden.' });
+        }
+
+        const user = authUser;
         if (!user) return res.status(404).json({ success: false });
-        user.sessions = (user.sessions || []).filter(s => s.token === keepToken || s._id.toString() === keepToken);
+
+        const sessionsToTerminate = (user.sessions || []).filter(
+            s => s.token !== currentToken
+        );
+
+        user.sessions = (user.sessions || []).filter(
+            s => s.token === currentToken
+        );
         await user.save();
-        // Force logout all sockets for this user
-        const targetSocketId = findSocketId(userId);
-        if (targetSocketId) {
-            io.to(targetSocketId).emit('force-logout', { reason: 'All sessions terminated. Please log in again.' });
+
+        // Force logout sockets authenticated with the terminated sessions.
+        for (const session of sessionsToTerminate) {
+            const targetSocketId = sessionTokenToSocketMap.get(session.token);
+            if (targetSocketId) {
+                io.to(targetSocketId).emit('force-logout', {
+                    reason: 'All sessions terminated. Please log in again.'
+                });
+            }
         }
         res.json({ success: true });
     } catch (err) { res.status(500).json({ success: false }); }
@@ -1599,11 +1661,59 @@ app.post('/api/sessions/kill-all', async (req, res) => {
 
 app.post('/api/logout', async (req, res) => {
     const { userId } = req.body;
-    if (!userId) return res.status(400).json({ success: false, message: 'User ID required.' });
-    onlineUsers.delete(userId);
-    userToSocketMap.delete(userId);
-    broadcastOnlineUsers();
-    res.json({ success: true, message: 'Logged out.' });
+    if (!userId) {
+        return res.status(400).json({
+            success: false,
+            message: 'User ID required.'
+        });
+    }
+
+    try {
+        const authUser = await getAuthenticatedUserFromSession(req);
+        const currentToken = getSessionToken(req);
+
+        if (!authUser || !currentToken) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized.'
+            });
+        }
+
+        if (authUser.xameId !== userId) {
+            return res.status(403).json({
+                success: false,
+                message: 'Forbidden.'
+            });
+        }
+
+        authUser.sessions = (authUser.sessions || []).filter(
+            s => s.token !== currentToken
+        );
+        await authUser.save();
+
+        const currentSocketId = sessionTokenToSocketMap.get(currentToken);
+        if (currentSocketId &&
+            socketToUserMap.get(currentSocketId) === userId) {
+            sessionTokenToSocketMap.delete(currentToken);
+        }
+
+        const hasOtherSocket = Array.from(socketToUserMap.entries()).some(
+            ([socketId, mappedUserId]) =>
+                socketId !== currentSocketId && mappedUserId === userId
+        );
+
+        if (!hasOtherSocket) {
+            onlineUsers.delete(userId);
+            userToSocketMap.delete(userId);
+            onlineUserTimestamps.delete(userId);
+            broadcastOnlineUsers();
+        }
+
+        res.json({ success: true, message: 'Logged out.' });
+    } catch (err) {
+        console.error('Logout error:', err);
+        res.status(500).json({ success: false });
+    }
 });
 
 // ============================================================
@@ -2061,12 +2171,59 @@ app.post('/api/settings', async (req, res) => {
 // SOCKET.IO
 // ============================================================
 
+io.use(async (socket, next) => {
+    try {
+        const queryUserId = socket.handshake?.query?.userId;
+        const isWebGuest =
+            socket.handshake?.query?.webGuest === '1' &&
+            typeof queryUserId === 'string' &&
+            queryUserId.startsWith('web_');
+
+        // Web guests intentionally do not have authenticated user sessions.
+        if (isWebGuest) {
+            socket.isWebGuest = true;
+            return next();
+        }
+
+        const token = socket.handshake?.auth?.token;
+        if (!token || typeof token !== 'string' || !token.trim()) {
+            return next(new Error('Authentication required'));
+        }
+
+        const authUser = await User.findOne({
+            sessions: { $elemMatch: { token: token.trim() } }
+        }).select('xameId settings');
+
+        if (!authUser) {
+            return next(new Error('Invalid session'));
+        }
+
+        socket.authenticatedUserId = authUser.xameId;
+        socket.sessionToken = token.trim();
+        socket.userSettings = authUser.settings || {};
+
+        next();
+    } catch (err) {
+        console.error('❌ Socket authentication error:', err.message);
+        next(new Error('Authentication failed'));
+    }
+});
+
 io.on('connection', (socket) => {
   socket.use(([event, ...args], next) => {
     console.log(`📨 ${event}`, ...args);
     next();
   });
-    const userId = socket.handshake.query.userId;
+    const isWebGuest =
+        socket.isWebGuest === true &&
+        socket.handshake?.query?.webGuest === '1' &&
+        typeof socket.handshake?.query?.userId === 'string' &&
+        socket.handshake.query.userId.startsWith('web_');
+
+    const userId = isWebGuest
+        ? socket.handshake.query.userId
+        : socket.authenticatedUserId;
+
     console.log(`✅ Connected: ${userId} (${io.engine.clientsCount} total)`);
 
     socket.userId = userId;
@@ -2098,6 +2255,9 @@ io.on('connection', (socket) => {
         }
         socketToUserMap.set(socket.id, userId);
         userToSocketMap.set(userId, socket.id);
+        if (socket.sessionToken) {
+            sessionTokenToSocketMap.set(socket.sessionToken, socket.id);
+        }
         onlineUsers.add(userId);
         onlineUserTimestamps.set(userId, Date.now());
         broadcastOnlineUsers();
@@ -2112,31 +2272,47 @@ io.on('connection', (socket) => {
 
     // ── Presence ──────────────────────────────────────────
 
-    socket.on('user-online', ({ userId: uid, timestamp }) => {
-        const id = uid || socket.userId;
-        if (!id) return;
+    socket.on('user-online', () => {
+        const id = socket.userId;
+        if (!id || isWebGuest) return;
+
         clearTimeout(disconnectTimeouts.get(id));
         disconnectTimeouts.delete(id);
+
         onlineUsers.add(id);
         onlineUserTimestamps.set(id, Date.now());
-        if (id !== socket.userId) socket.userId = id;
         broadcastOnlineUsers();
     });
 
-    socket.on('heartbeat', ({ userId: uid, timestamp }) => {
-        const id = uid || socket.userId;
-        if (!id) return;
+    socket.on('heartbeat', () => {
+        const id = socket.userId;
+        if (!id || isWebGuest) return;
+
         onlineUserTimestamps.set(id, Date.now());
-        if (!onlineUsers.has(id)) { onlineUsers.add(id); broadcastOnlineUsers(); }
+
+        if (!onlineUsers.has(id)) {
+            onlineUsers.add(id);
+            broadcastOnlineUsers();
+        }
+
         clearTimeout(disconnectTimeouts.get(id));
         disconnectTimeouts.delete(id);
     });
 
-    socket.on('user-offline', ({ userId: uid }) => {
-        const id = uid || socket.userId;
-        if (!id) return;
+    socket.on('user-offline', () => {
+        const id = socket.userId;
+        if (!id || isWebGuest) return;
+
         clearTimeout(disconnectTimeouts.get(id));
         disconnectTimeouts.delete(id);
+
+        const hasOtherSocket = Array.from(socketToUserMap.entries()).some(
+            ([socketId, mappedUserId]) =>
+                socketId !== socket.id && mappedUserId === id
+        );
+
+        if (hasOtherSocket) return;
+
         onlineUsers.delete(id);
         onlineUserTimestamps.delete(id);
         broadcastOnlineUsers();
@@ -2180,10 +2356,30 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
         const uid = socket.userId || socketToUserMap.get(socket.id);
+
+        if (socket.sessionToken &&
+            sessionTokenToSocketMap.get(socket.sessionToken) === socket.id) {
+            sessionTokenToSocketMap.delete(socket.sessionToken);
+        }
+
         socketToUserMap.delete(socket.id);
 
         if (uid) {
             const hasOther = Array.from(socketToUserMap.values()).includes(uid);
+
+            // Keep userToSocketMap pointed at a live socket when multiple
+            // devices/sockets are connected for the same user.
+            if (userToSocketMap.get(uid) === socket.id) {
+                const replacement = Array.from(socketToUserMap.entries())
+                    .find(([socketId, mappedUserId]) => mappedUserId === uid);
+
+                if (replacement) {
+                    userToSocketMap.set(uid, replacement[0]);
+                } else {
+                    userToSocketMap.delete(uid);
+                }
+            }
+
             if (!hasOther) {
                 const t = setTimeout(() => {
                     if (!Array.from(socketToUserMap.values()).includes(uid) && onlineUsers.has(uid)) {

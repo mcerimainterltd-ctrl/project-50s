@@ -151,10 +151,13 @@ logoutBtn?.addEventListener('click', () => {
   const _token = persistentStorage.get('xame:sessionToken');
   const _userId = USER?.xameId;
   if (_token && _userId) {
-    fetch(`${serverURL}/api/sessions/kill`, {
+    fetch(`${serverURL}/api/logout`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: _userId, sessionId: _token })
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${_token}`
+      },
+      body: JSON.stringify({ userId: _userId })
     }).catch(() => {});
   }
   persistentStorage.set('xame:sessionToken', null);

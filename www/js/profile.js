@@ -292,7 +292,14 @@ async function showActiveSessions() {
 
   // Load sessions
   try {
-    const res = await fetch(`${serverURL}/api/sessions/${USER.xameId}`);
+    const token = persistentStorage.get('xame:sessionToken');
+    if (!token) {
+      dlg.querySelector('#sessionsList').innerHTML = '<p style="color:#e53935;text-align:center;">Session not found. Please log out and log back in.</p>';
+      return;
+    }
+    const res = await fetch(`${serverURL}/api/sessions/${USER.xameId}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
     const data = await res.json();
     const list = dlg.querySelector('#sessionsList');
     if (!data.success) {
@@ -330,8 +337,7 @@ async function showActiveSessions() {
       } else if (ua.includes('Linux')) {
         device = 'Linux';
       }
-      const currentToken = persistentStorage.get('xame:sessionToken');
-      const isCurrent = s.id === currentToken || false;
+      const isCurrent = s.isCurrent === true;
       return `
         <div style="background:rgba(255,255,255,0.05);border-radius:12px;padding:16px;border:1px solid rgba(255,255,255,0.08);">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
@@ -352,9 +358,13 @@ async function showActiveSessions() {
     list.querySelectorAll('.kill-session-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         btn.textContent = '...';
+        const token = persistentStorage.get('xame:sessionToken');
         const r = await fetch(`${serverURL}/api/sessions/kill`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
           body: JSON.stringify({ userId: USER.xameId, sessionId: btn.dataset.id })
         });
         const d = await r.json();
@@ -370,9 +380,11 @@ async function showActiveSessions() {
   dlg.querySelector('#killAllSessions').addEventListener('click', async () => {
     const token = persistentStorage.get('xame:sessionToken');
     // Check if there are other sessions to kill
-    const sessRes = await fetch(`${serverURL}/api/sessions/${USER.xameId}`);
+    const sessRes = await fetch(`${serverURL}/api/sessions/${USER.xameId}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
     const sessData = await sessRes.json();
-    const otherSessions = (sessData.sessions || []).filter(s => s.id !== token);
+    const otherSessions = (sessData.sessions || []).filter(s => s.isCurrent !== true);
     if (otherSessions.length === 0) {
       showNotification('No other devices connected at the moment.');
       return;
@@ -381,8 +393,11 @@ async function showActiveSessions() {
     if (!token) { showNotification('Session not found. Please log out and log back in.'); return; }
     const r = await fetch(`${serverURL}/api/sessions/kill-all`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: USER.xameId, keepToken: token })
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ userId: USER.xameId })
     });
     const d = await r.json();
     if (d.success) { showNotification('All other devices logged out.'); dlg.remove(); }

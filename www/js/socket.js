@@ -32,11 +32,18 @@ function connectSocket() {
     socket.removeAllListeners(); socket.disconnect(); socket = null;
   }
 
-  console.log('🔌 Connecting socket for user:', USER.xameId);
+  const sessionToken = persistentStorage.get('xame:sessionToken');
+  if (!sessionToken) {
+    console.warn('⚠️ Socket authentication token missing - aborting');
+    return;
+  }
+
+  console.log('🔌 Connecting authenticated socket for user:', USER.xameId);
 
   try {
     socket = io(serverURL, {
       query:                  { userId: USER.xameId },
+      auth:                   { token: sessionToken },
       transports:             ['polling', 'websocket'],
       path:                   '/socket.io/',
       reconnection:           true,
@@ -248,10 +255,10 @@ function registerSocketHandlers(socket) {
       if (localStorage.getItem('xame:stealth') === 'true') {
         // In stealth mode: briefly connected but immediately go offline
         setTimeout(() => {
-          if (socket?.connected) socket.emit('user-offline', { userId: USER.xameId });
+          if (socket?.connected) socket.emit('user-offline');
         }, 500);
       } else {
-        socket.emit('user-online', { userId: USER.xameId, timestamp: Date.now() });
+        socket.emit('user-online');
       }
     }
     setTimeout(() => {
@@ -263,7 +270,36 @@ function registerSocketHandlers(socket) {
     }, 100);
   });
 
-  socket.on('connect_error',     (err)           => { console.error('Socket connection error:', err.message); showNotification('Connection error. Retrying...'); });
+  socket.on('connect_error', (err) => {
+    console.error('Socket connection error:', err.message);
+
+    const errorText = String(err?.message || err || '');
+    const authFailure =
+      errorText.includes('Invalid session') ||
+      errorText.includes('Authentication required') ||
+      errorText.includes('Authentication failed');
+
+    if (authFailure) {
+      console.warn('🔐 Socket session rejected — clearing local session');
+
+      persistentStorage.set('xame:sessionToken', null);
+      persistentStorage.set(KEYS.user, null);
+      persistentStorage.set(KEYS.contacts, null);
+      storage.clear();
+
+      if (socket) {
+        socket.removeAllListeners();
+        socket.disconnect();
+        socket = null;
+      }
+
+      alert('Security alert: Your session has expired or was logged out remotely.');
+      window.location.reload();
+      return;
+    }
+
+    showNotification('Connection error. Retrying...');
+  });
   socket.on('connect_timeout',   ()              => { console.error('Socket connection timeout'); showNotification('Connection is slow. Please check your network.'); });
   socket.on('reconnect_attempt', (attemptNumber) => { console.log(`Reconnection attempt ${attemptNumber}`); showNotification(`Reconnecting... (attempt ${attemptNumber})`); });
 
@@ -274,9 +310,9 @@ function registerSocketHandlers(socket) {
     showNotification('Reconnected successfully!');
     if (USER?.xameId) {
       if (localStorage.getItem('xame:stealth') === 'true') {
-        setTimeout(() => { if (socket?.connected) socket.emit('user-offline', { userId: USER.xameId }); }, 500);
+        setTimeout(() => { if (socket?.connected) socket.emit('user-offline'); }, 500);
       } else {
-        socket.emit('user-online', { userId: USER.xameId, timestamp: Date.now() });
+        socket.emit('user-online');
       }
       socket.emit('request_online_users');
     }
@@ -445,9 +481,9 @@ let stealthInterval = null;
 
 function startStealthMode() {
   stopStealthMode();
-  if (socket?.connected && USER?.xameId) socket.emit('user-offline', { userId: USER.xameId });
+  if (socket?.connected && USER?.xameId) socket.emit('user-offline');
   stealthInterval = setInterval(() => {
-    if (socket?.connected && USER?.xameId) socket.emit('user-offline', { userId: USER.xameId });
+    if (socket?.connected && USER?.xameId) socket.emit('user-offline');
   }, 8000);
 }
 
@@ -461,13 +497,13 @@ function startHeartbeat() {
   console.log('💓 Starting presence heartbeat');
   heartbeatInterval = setInterval(() => {
     if (socket?.connected && USER?.xameId) {
-      if (localStorage.getItem('xame:stealth') !== 'true') socket.emit('heartbeat', { userId: USER.xameId, timestamp: Date.now() });
+      if (localStorage.getItem('xame:stealth') !== 'true') socket.emit('heartbeat');
     } else if (!socket?.connected) {
       console.log('💔 Heartbeat: socket disconnected, letting socket.io handle reconnect');
       // Don't manually reconnect - socket.io handles this automatically
     }
   }, HEARTBEAT_INTERVAL);
-  if (socket?.connected && localStorage.getItem('xame:stealth') !== 'true') socket.emit('heartbeat', { userId: USER.xameId, timestamp: Date.now() });
+  if (socket?.connected && localStorage.getItem('xame:stealth') !== 'true') socket.emit('heartbeat');
 }
 
 function stopHeartbeat() {
