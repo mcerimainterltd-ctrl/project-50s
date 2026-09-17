@@ -889,6 +889,38 @@ app.get('/api/xametv/channels', async (req, res) => {
   }
 });
 
+app.post('/api/admin/cleanup-old-web-calls', async (req, res) => {
+    if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
+        return res.status(401).json({ success: false, message: 'Unauthorized' });
+
+    const { userId, confirm } = req.body;
+
+    if (!/^\d{12}$/.test(String(userId || '')))
+        return res.status(400).json({ success: false, message: 'Invalid XameID.' });
+
+    if (confirm !== true)
+        return res.status(400).json({ success: false, message: 'Confirmation required.' });
+
+    try {
+        const result = await CallHistory.deleteMany({
+            recipientId: String(userId),
+            type: 'xamepage',
+            callerId: { $not: /^\d{12}$/ }
+        });
+
+        console.log(`[ADMIN] Removed ${result.deletedCount} old web-profile calls for ${userId}`);
+
+        res.json({
+            success: true,
+            deleted: result.deletedCount,
+            userId: String(userId)
+        });
+    } catch (err) {
+        console.error('Old web-call cleanup error:', err);
+        res.status(500).json({ success: false, message: 'Server error.' });
+    }
+});
+
 app.post('/api/admin/fix-thumbnails', async (req, res) => {
     if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
         return res.status(401).json({ success: false, message: 'Unauthorized' });
