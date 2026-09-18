@@ -3740,6 +3740,15 @@ setInterval(() => {
             continue;
         }
 
+        // Keep the user online while an authenticated native
+        // presence session is actively refreshing its lease.
+        const hasNativePresence =
+            Array.from(nativePresenceSessions.values()).includes(userId);
+
+        if (hasNativePresence) {
+            continue;
+        }
+
         onlineUsers.delete(userId);
         onlineUserTimestamps.delete(userId);
         userToSocketMap.delete(userId);
