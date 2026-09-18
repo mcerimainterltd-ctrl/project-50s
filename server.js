@@ -1021,6 +1021,7 @@ const activeCalls          = new Set(); // tracks xameIds currently in a call
 const userToSocketMap      = new Map();   // userId  → socketId
 const socketToUserMap      = new Map();   // socketId → userId
 const sessionTokenToSocketMap = new Map(); // sessionToken → socketId
+const nativePresenceSessions = new Map(); // sessionToken → xameId
 const onlineUserTimestamps = new Map();
 const disconnectTimeouts   = new Map();
 
@@ -1690,6 +1691,8 @@ app.post('/api/logout', async (req, res) => {
             s => s.token !== currentToken
         );
         await authUser.save();
+
+        nativePresenceSessions.delete(currentToken);
 
         const currentSocketId = sessionTokenToSocketMap.get(currentToken);
         if (currentSocketId &&
@@ -3600,6 +3603,109 @@ io.on('connection', (socket) => {
     socket.on('space:reaction', ({ spaceSlug, msgId, emoji, userId }) => {
         io.to(`space:${spaceSlug}`).emit('space:reaction', { msgId, emoji, userId });
     });
+});
+
+
+// ============================================================
+// AUTHENTICATED NATIVE PRESENCE LEASE
+// Used by the Android messaging presence service when the
+// Flutter Activity/process is removed from Recents.
+// ============================================================
+app.post('/api/presence/heartbeat', async (req, res) => {
+    try {
+        const token = typeof req.body?.token === 'string'
+            ? req.body.token.trim()
+            : '';
+
+        if (!token) {
+            return res.status(401).json({
+                success: false,
+                message: 'Session token required.'
+            });
+        }
+
+        const user = await User.findOne({
+            sessions: { $elemMatch: { token } }
+        }).select('xameId');
+
+        if (!user) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid session.'
+            });
+        }
+
+        const id = user.xameId;
+        nativePresenceSessions.set(token, id);
+
+        onlineUsers.add(id);
+        onlineUserTimestamps.set(id, Date.now());
+
+        clearTimeout(disconnectTimeouts.get(id));
+        disconnectTimeouts.delete(id);
+
+        broadcastOnlineUsers();
+
+        return res.json({
+            success: true,
+            xameId: id,
+            leaseMs: PRESENCE_LEASE_MS
+        });
+    } catch (err) {
+        console.error('❌ Native presence heartbeat error:', err.message);
+        return res.status(500).json({
+            success: false,
+            message: 'Presence refresh failed.'
+        });
+    }
+});
+
+app.post('/api/presence/offline', async (req, res) => {
+    try {
+        const token = typeof req.body?.token === 'string'
+            ? req.body.token.trim()
+            : '';
+
+        if (!token) {
+            return res.status(401).json({
+                success: false,
+                message: 'Session token required.'
+            });
+        }
+
+        const user = await User.findOne({
+            sessions: { $elemMatch: { token } }
+        }).select('xameId');
+
+        if (!user) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid session.'
+            });
+        }
+
+        const id = user.xameId;
+        nativePresenceSessions.delete(token);
+
+        const hasLiveSocket = Array.from(socketToUserMap.values()).includes(id);
+        const hasNativePresence = Array.from(nativePresenceSessions.values()).includes(id);
+
+        if (!hasLiveSocket && !hasNativePresence) {
+            onlineUsers.delete(id);
+            onlineUserTimestamps.delete(id);
+            clearTimeout(disconnectTimeouts.get(id));
+            disconnectTimeouts.delete(id);
+            broadcastOnlineUsers();
+        }
+
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('❌ Native presence offline error:', err.message);
+        return res.status(500).json({
+            success: false,
+            message: 'Presence shutdown failed.'
+        });
+    }
 });
 
 // ============================================================
