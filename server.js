@@ -1803,7 +1803,7 @@ app.post('/api/save-fcm-token', async (req, res) => {
     } catch(e) { res.status(500).json({ success: false }); }
 });
 
-async function sendCallNotification(recipientId, callerName, callType) {
+async function sendCallNotification(recipientId, callerName, callType, callerId) {
     try {
         const user = await User.findOne({ xameId: recipientId });
         if (!user || !user.fcmToken) {
@@ -1835,7 +1835,7 @@ async function sendCallNotification(recipientId, callerName, callType) {
             },
             data: {
                 type: 'incoming_call',
-                callerId: recipientId,
+                callerId: callerId || '',
                 callerName,
                 callType
             }
@@ -3269,7 +3269,7 @@ io.on('connection', (socket) => {
                 } catch (_) { /* non-fatal */ }
 
                 // FCM notification for lock screen
-                await sendCallNotification(recipientId, incomingName, callType);
+                await sendCallNotification(recipientId, incomingName, callType, callerId);
 
             } catch (err) {
                 console.error('call-user error:', err);
@@ -3295,7 +3295,7 @@ io.on('connection', (socket) => {
                             const incomingName = getContactDisplayName(callerId, fc, saved);
 
                             socket.emit('call-ringing', { recipientId, callId });
-                            await sendCallNotification(recipientId, incomingName, callType);
+                            await sendCallNotification(recipientId, incomingName, callType, callerId);
                             return;
                         }
                     } catch (err) {
