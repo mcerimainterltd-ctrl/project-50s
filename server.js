@@ -1021,7 +1021,17 @@ const activeCalls          = new Set(); // tracks xameIds currently in a call
 const userToSocketMap      = new Map();   // userId  → socketId
 const socketToUserMap      = new Map();   // socketId → userId
 const sessionTokenToSocketMap = new Map(); // sessionToken → socketId
-const nativePresenceSessions = new Map(); // sessionToken → xameId
+const nativePresenceSessions = new Map(); // sessionToken -> { xameId, lastSeen }
+
+function hasFreshNativePresence(userId) {
+    const now = Date.now();
+    for (const session of nativePresenceSessions.values()) {
+        if (session && session.xameId === userId && (now - session.lastSeen) <= PRESENCE_LEASE_MS) {
+            return true;
+        }
+    }
+    return false;
+}
 const onlineUserTimestamps = new Map();
 const disconnectTimeouts   = new Map();
 
@@ -2385,7 +2395,7 @@ io.on('connection', (socket) => {
 
             if (!hasOther) {
                 const t = setTimeout(() => {
-                    if (!Array.from(socketToUserMap.values()).includes(uid) && onlineUsers.has(uid) && !Array.from(nativePresenceSessions.values()).includes(uid)) {
+                    if (!Array.from(socketToUserMap.values()).includes(uid) && onlineUsers.has(uid) && !hasFreshNativePresence(uid)) {
                         onlineUsers.delete(uid);
                         onlineUserTimestamps.delete(uid);
                         userToSocketMap.delete(uid);
@@ -3177,8 +3187,7 @@ io.on('connection', (socket) => {
             }
         } else {
             try {
-                const hasNativePresence =
-                    Array.from(nativePresenceSessions.values()).includes(recipientId);
+                const hasNativePresence = hasFreshNativePresence(recipientId);
 
                 if (hasNativePresence) {
                     try {
@@ -3663,7 +3672,7 @@ app.post('/api/presence/heartbeat', async (req, res) => {
         }
 
         const id = user.xameId;
-        nativePresenceSessions.set(token, id);
+        nativePresenceSessions.set(token, { xameId: id, lastSeen: Date.now() });
 
         onlineUsers.add(id);
         onlineUserTimestamps.set(id, Date.now());
@@ -3715,7 +3724,7 @@ app.post('/api/presence/offline', async (req, res) => {
         nativePresenceSessions.delete(token);
 
         const hasLiveSocket = Array.from(socketToUserMap.values()).includes(id);
-        const hasNativePresence = Array.from(nativePresenceSessions.values()).includes(id);
+        const hasNativePresence = hasFreshNativePresence(id);
 
         if (!hasLiveSocket && !hasNativePresence) {
             onlineUsers.delete(id);
@@ -3769,8 +3778,7 @@ setInterval(() => {
 
         // Keep the user online while an authenticated native
         // presence session is actively refreshing its lease.
-        const hasNativePresence =
-            Array.from(nativePresenceSessions.values()).includes(userId);
+        const hasNativePresence = hasFreshNativePresence(userId);
 
         if (hasNativePresence) {
             continue;
