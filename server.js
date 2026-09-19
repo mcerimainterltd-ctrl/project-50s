@@ -1047,7 +1047,20 @@ const conferenceRooms      = new Map();
 const conferenceRoomMeta   = new Map();
 
 function findSocketId(userId) {
-    return userToSocketMap.get(userId);
+    const socketId = userToSocketMap.get(userId);
+    if (!socketId) return undefined;
+
+    // Verify the socket is genuinely still connected before trusting the
+    // map entry. A stale entry can linger if Socket.IO's disconnect event
+    // is delayed (abrupt process kill, network drop without clean close),
+    // causing calls/messages to be routed into a dead socket instead of
+    // correctly falling back to offline/FCM handling.
+    if (!io.sockets.sockets.has(socketId)) {
+        userToSocketMap.delete(userId);
+        return undefined;
+    }
+
+    return socketId;
 }
 
 // ============================================================
