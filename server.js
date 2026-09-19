@@ -893,6 +893,52 @@ app.get('/api/xametv/channels', async (req, res) => {
   }
 });
 
+app.post('/api/admin/cleanup-stale-fcm-tokens', async (req, res) => {
+    if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
+        return res.status(401).json({ success: false, message: 'Unauthorized' });
+
+    const { confirm } = req.body;
+
+    if (confirm !== true)
+        return res.status(400).json({ success: false, message: 'Confirmation required.' });
+
+    if (!admin.apps.length)
+        return res.status(500).json({ success: false, message: 'Firebase Admin not initialized.' });
+
+    try {
+        const users = await User.find({ fcmToken: { $exists: true, $ne: null } })
+            .select('xameId fcmToken');
+
+        let checked = 0, cleared = 0;
+        const clearedIds = [];
+
+        for (const user of users) {
+            checked++;
+            try {
+                // dryRun: true — validates the token with Firebase without
+                // actually delivering a notification to the device.
+                await admin.messaging().send({
+                    token: user.fcmToken,
+                    data: { type: 'token_validation_check' },
+                }, true);
+            } catch (e) {
+                if (e.message && (e.message.includes('NotRegistered') || e.message.includes('InvalidRegistration'))) {
+                    await User.updateOne({ xameId: user.xameId }, { $unset: { fcmToken: 1 } });
+                    cleared++;
+                    clearedIds.push(user.xameId);
+                }
+                // Other errors (network blip, rate limit) are left alone —
+                // only a confirmed invalid-token error clears the field.
+            }
+        }
+
+        return res.json({ success: true, checked, cleared, clearedIds });
+    } catch (err) {
+        console.error('cleanup-stale-fcm-tokens error:', err);
+        return res.status(500).json({ success: false, message: 'Cleanup failed.' });
+    }
+});
+
 app.post('/api/admin/cleanup-old-web-calls', async (req, res) => {
     if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
         return res.status(401).json({ success: false, message: 'Unauthorized' });
