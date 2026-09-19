@@ -3177,6 +3177,33 @@ io.on('connection', (socket) => {
             }
         } else {
             try {
+                const hasNativePresence =
+                    Array.from(nativePresenceSessions.values()).includes(recipientId);
+
+                if (hasNativePresence) {
+                    try {
+                        const [caller, recipient] = await Promise.all([
+                            User.findOne({ xameId: callerId }),
+                            User.findOne({ xameId: recipientId }).populate('contacts.contactId')
+                        ]);
+
+                        if (caller && recipient) {
+                            const callId = uuidv4();
+                            await new CallHistory({ callId, callerId, recipientId, callType, status: 'pending' }).save();
+
+                            const fc    = getPrivacyFilteredContactData(caller.toObject());
+                            const saved = recipient.contacts.find(c => c.contactId?.xameId === callerId);
+                            const incomingName = getContactDisplayName(callerId, fc, saved);
+
+                            socket.emit('call-ringing', { recipientId, callId });
+                            await sendCallNotification(recipientId, incomingName, callType);
+                            return;
+                        }
+                    } catch (err) {
+                        console.error('Offline-call FCM wake error:', err);
+                    }
+                }
+
                 const offlineCallId = uuidv4();
                 await new CallHistory({ callId: offlineCallId, callerId, recipientId, callType, status: 'offline' }).save();
                 socket.emit('call-rejected', { senderId: recipientId, reason: 'offline' });
