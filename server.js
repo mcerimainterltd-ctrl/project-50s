@@ -1022,6 +1022,7 @@ const userToSocketMap      = new Map();   // userId  → socketId
 const socketToUserMap      = new Map();   // socketId → userId
 const sessionTokenToSocketMap = new Map(); // sessionToken → socketId
 const nativePresenceSessions = new Map(); // sessionToken -> { xameId, lastSeen }
+let lastCallPushOutcome = null; // { recipientId, success, error, timestamp } — debug only
 
 function hasFreshNativePresence(userId) {
     const now = Date.now();
@@ -1759,8 +1760,22 @@ app.post('/api/save-fcm-token', async (req, res) => {
 async function sendCallNotification(recipientId, callerName, callType) {
     try {
         const user = await User.findOne({ xameId: recipientId });
-        if (!user || !user.fcmToken) return;
-        if (!admin.apps.length) return;
+        if (!user || !user.fcmToken) {
+            lastCallPushOutcome = {
+                recipientId, success: false,
+                error: !user ? 'user not found' : 'no fcmToken on user',
+                timestamp: Date.now()
+            };
+            return;
+        }
+        if (!admin.apps.length) {
+            lastCallPushOutcome = {
+                recipientId, success: false,
+                error: 'admin.apps.length is 0 (Firebase Admin not initialized)',
+                timestamp: Date.now()
+            };
+            return;
+        }
         // Data-only message (no "notification" block): guarantees
         // onMessageReceived() fires in every app state, including fully
         // killed/swiped. A "notification" payload here would let Android
@@ -1780,7 +1795,11 @@ async function sendCallNotification(recipientId, callerName, callType) {
             }
         });
         console.log('FCM call notification sent to:', recipientId);
-    } catch(e) { console.warn('FCM notification failed:', e.message); }
+        lastCallPushOutcome = { recipientId, success: true, error: null, timestamp: Date.now() };
+    } catch(e) {
+        console.warn('FCM notification failed:', e.message);
+        lastCallPushOutcome = { recipientId, success: false, error: e.message, timestamp: Date.now() };
+    }
 }
 
 app.get('/api/check-fcm-token/:userId', async (req, res) => {
@@ -3706,6 +3725,10 @@ app.post('/api/presence/heartbeat', async (req, res) => {
             message: 'Presence refresh failed.'
         });
     }
+});
+
+app.get('/api/debug/last-call-push', (req, res) => {
+    res.json(lastCallPushOutcome || { message: 'No call push attempted yet since server start.' });
 });
 
 app.post('/api/presence/offline', async (req, res) => {
