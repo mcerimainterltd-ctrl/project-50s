@@ -1799,6 +1799,19 @@ async function sendCallNotification(recipientId, callerName, callType) {
     } catch(e) {
         console.warn('FCM notification failed:', e.message);
         lastCallPushOutcome = { recipientId, success: false, error: e.message, timestamp: Date.now() };
+
+        // A stale/invalid token will never succeed again on its own — clear
+        // it so the next login/token-refresh cycle can save a fresh one,
+        // and so future sends fail fast instead of repeatedly hitting a
+        // known-dead token.
+        if (e.message && (e.message.includes('NotRegistered') || e.message.includes('InvalidRegistration'))) {
+            try {
+                await User.updateOne({ xameId: recipientId }, { $unset: { fcmToken: 1 } });
+                console.log('Cleared stale fcmToken for:', recipientId);
+            } catch (cleanupErr) {
+                console.warn('Failed to clear stale fcmToken:', cleanupErr.message);
+            }
+        }
     }
 }
 
