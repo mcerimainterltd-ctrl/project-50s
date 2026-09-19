@@ -2385,7 +2385,7 @@ io.on('connection', (socket) => {
 
             if (!hasOther) {
                 const t = setTimeout(() => {
-                    if (!Array.from(socketToUserMap.values()).includes(uid) && onlineUsers.has(uid)) {
+                    if (!Array.from(socketToUserMap.values()).includes(uid) && onlineUsers.has(uid) && !Array.from(nativePresenceSessions.values()).includes(uid)) {
                         onlineUsers.delete(uid);
                         onlineUserTimestamps.delete(uid);
                         userToSocketMap.delete(uid);
