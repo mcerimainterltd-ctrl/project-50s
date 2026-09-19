@@ -1748,17 +1748,16 @@ async function sendCallNotification(recipientId, callerName, callType) {
         const user = await User.findOne({ xameId: recipientId });
         if (!user || !user.fcmToken) return;
         if (!admin.apps.length) return;
+        // Data-only message (no "notification" block): guarantees
+        // onMessageReceived() fires in every app state, including fully
+        // killed/swiped. A "notification" payload here would let Android
+        // auto-display a basic system-tray notification instead, silently
+        // skipping our custom heads-up/full-screen incoming-call UI.
         await admin.messaging().send({
             token: user.fcmToken,
             android: {
                 priority: 'high',
                 ttl: 30000, // 30 seconds — drop if not delivered (call already missed)
-                notification: {
-                    channelId: 'xamepage_headsup_v3',
-                    priority: 'max',
-                    visibility: 'public',
-                    sound: 'default',
-                },
             },
             data: {
                 type: 'incoming_call',
