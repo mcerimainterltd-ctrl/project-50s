@@ -1068,6 +1068,7 @@ const userToSocketMap      = new Map();   // userId  → socketId
 const socketToUserMap      = new Map();   // socketId → userId
 const sessionTokenToSocketMap = new Map(); // sessionToken → socketId
 const nativePresenceSessions = new Map(); // sessionToken -> { xameId, lastSeen }
+const pendingNativeCallOffers = new Map(); // recipientId -> { offer, callerId, callType, callId, caller, timestamp }
 let lastCallPushOutcome = null; // { recipientId, success, error, timestamp } — debug only
 
 function hasFreshNativePresence(userId) {
@@ -2371,6 +2372,20 @@ io.on('connection', (socket) => {
                 socket.emit('settings-sync', user.settings);
             }
         });
+
+        if (pendingNativeCallOffers.has(userId)) {
+            const pending = pendingNativeCallOffers.get(userId);
+            pendingNativeCallOffers.delete(userId);
+            if (Date.now() - pending.timestamp <= 45000) {
+                socket.emit('call-user', {
+                    offer: pending.offer,
+                    callerId: pending.callerId,
+                    callType: pending.callType,
+                    callId: pending.callId,
+                    caller: pending.caller
+                });
+            }
+        }
     }
 
     // ── Presence ──────────────────────────────────────────
@@ -3294,6 +3309,11 @@ io.on('connection', (socket) => {
                             const saved = recipient.contacts.find(c => c.contactId?.xameId === callerId);
                             const incomingName = getContactDisplayName(callerId, fc, saved);
 
+                            pendingNativeCallOffers.set(recipientId, {
+                                offer, callerId, callType, callId,
+                                caller: { xameId: fc.xameId, preferredName: fc.preferredName, profilePic: fc.profilePic, displayName: incomingName },
+                                timestamp: Date.now()
+                            });
                             socket.emit('call-ringing', { recipientId, callId });
                             await sendCallNotification(recipientId, incomingName, callType, callerId);
                             return;
