@@ -2672,6 +2672,47 @@ io.on('connection', (socket) => {
                 } catch (_) { /* non-fatal */ }
             }
 
+            // Native remote-messaging continuity:
+            // Socket.IO remains the primary real-time transport. If the
+            // recipient has no live socket, use FCM for background delivery.
+            if (!recipSocketId && recipientId && !recipientId.startsWith('web_')) {
+                try {
+                    const [recipient, sender] = await Promise.all([
+                        User.findOne({ xameId: recipientId }).select('fcmToken'),
+                        User.findOne({ xameId: senderId }).select('preferredName firstName lastName')
+                    ]);
+
+                    if (recipient?.fcmToken && admin.apps.length) {
+                        const senderName =
+                            sender?.preferredName ||
+                            `${sender?.firstName || ''} ${sender?.lastName || ''}`.trim() ||
+                            'XamePage';
+
+                        const messageBody = message.text
+                            ? String(message.text).slice(0, 200)
+                            : '📎 Attachment';
+
+                        await admin.messaging().send({
+                            token: recipient.fcmToken,
+                            android: {
+                                priority: 'high'
+                            },
+                            data: {
+                                type: 'message',
+                                senderId: String(senderId || ''),
+                                senderName: String(senderName),
+                                message: messageBody,
+                                messageId: String(message.id || '')
+                            }
+                        });
+
+                        console.log('FCM message notification sent to:', recipientId);
+                    }
+                } catch (e) {
+                    console.warn('FCM message notification failed:', e.message);
+                }
+            }
+
             if (typeof callback === 'function') callback({ success: true, messageId: message.id });
         } catch (err) {
             console.error('send-message error:', err);
