@@ -1072,9 +1072,8 @@ const pendingNativeCallOffers = new Map(); // recipientId -> { offer, callerId, 
 let lastCallPushOutcome = null; // { recipientId, success, error, timestamp } — debug only
 
 function hasFreshNativePresence(userId) {
-    const now = Date.now();
     for (const session of nativePresenceSessions.values()) {
-        if (session && session.xameId === userId && (now - session.lastSeen) <= PRESENCE_LEASE_MS) {
+        if (session && session.xameId === userId) {
             return true;
         }
     }
@@ -1083,9 +1082,7 @@ function hasFreshNativePresence(userId) {
 const onlineUserTimestamps = new Map();
 const disconnectTimeouts   = new Map();
 
-// Presence lease: users must refresh within this window to remain discoverable.
-// Deliberately longer than the 5-minute background recovery safeguard.
-const PRESENCE_LEASE_MS = 7 * 60 * 1000;
+// Native presence remains active until the session is explicitly removed.
 const PRESENCE_SWEEP_MS = 60 * 1000;
 
 // v2.1.1: Conference room membership (in-memory for speed)
@@ -3836,7 +3833,6 @@ app.post('/api/presence/heartbeat', async (req, res) => {
         return res.json({
             success: true,
             xameId: id,
-            leaseMs: PRESENCE_LEASE_MS
         });
     } catch (err) {
         console.error('❌ Native presence heartbeat error:', err.message);
@@ -3907,15 +3903,11 @@ app.post('/api/presence/offline', async (req, res) => {
 // ============================================================
 
 setInterval(() => {
-    const now = Date.now();
     let changed = false;
 
     for (const userId of onlineUsers) {
-        const lastSeen = onlineUserTimestamps.get(userId);
-
-        if (lastSeen && (now - lastSeen) <= PRESENCE_LEASE_MS) {
-            continue;
-        }
+        // Do not expire presence based on elapsed time.
+        // Socket/native session state below determines whether presence remains active.
 
         // Never expire a user while at least one Socket.IO connection
         // is still registered for that user.
