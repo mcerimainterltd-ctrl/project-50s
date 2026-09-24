@@ -1091,6 +1091,31 @@ const conferenceRooms      = new Map();
 // roomId → { hostId, displayNames: Map<userId, displayName> }
 const conferenceRoomMeta   = new Map();
 
+// Buffers ICE candidates that couldn't be delivered because the recipient's
+// socket wasn't connected yet (e.g. still cold-starting for a wake-up call).
+// Flushed the moment that user registers a socket again. Capped per-user so
+// a user who never comes online can't leak memory indefinitely.
+const pendingIceCandidates = new Map(); // userId -> [{candidate, senderId}]
+const MAX_PENDING_ICE_PER_USER = 20;
+
+function bufferIceCandidate(recipientId, payload) {
+    if (!pendingIceCandidates.has(recipientId)) {
+        pendingIceCandidates.set(recipientId, []);
+    }
+    const list = pendingIceCandidates.get(recipientId);
+    list.push(payload);
+    if (list.length > MAX_PENDING_ICE_PER_USER) list.shift();
+}
+
+function flushPendingIceCandidates(userId, socketId) {
+    const list = pendingIceCandidates.get(userId);
+    if (!list || list.length === 0) return;
+    pendingIceCandidates.delete(userId);
+    for (const payload of list) {
+        io.to(socketId).emit('ice-candidate', payload);
+    }
+}
+
 function findSocketId(userId) {
     const socketId = userToSocketMap.get(userId);
     if (!socketId) return undefined;
@@ -2356,6 +2381,7 @@ io.on('connection', (socket) => {
         }
         socketToUserMap.set(socket.id, userId);
         userToSocketMap.set(userId, socket.id);
+        flushPendingIceCandidates(userId, socket.id);
         if (socket.sessionToken) {
             sessionTokenToSocketMap.set(socket.sessionToken, socket.id);
         }
@@ -3463,10 +3489,18 @@ io.on('connection', (socket) => {
 
         // Normal Flutter ↔ Flutter call.
         const sid = findSocketId(recipientId);
-        if (sid) io.to(sid).emit('ice-candidate', {
-            candidate,
-            senderId: socketToUserMap.get(socket.id)
-        });
+        const payload = { candidate, senderId: socketToUserMap.get(socket.id) };
+        if (sid) {
+            io.to(sid).emit('ice-candidate', payload);
+        } else {
+            // Recipient not connected yet — very likely still cold-starting
+            // for a wake-up call. Buffer instead of silently dropping; a
+            // dropped candidate here previously meant the callee could
+            // receive zero ICE candidates for the whole call, causing ICE
+            // negotiation to never complete even though audio setup,
+            // TURN, and local candidate gathering all succeeded.
+            bufferIceCandidate(recipientId, payload);
+        }
     });
 
     socket.on('stream-ready', ({ recipientId, streamType }) => {
