@@ -1071,10 +1071,26 @@ const nativePresenceSessions = new Map(); // sessionToken -> { xameId, lastSeen 
 const pendingNativeCallOffers = new Map(); // recipientId -> { offer, callerId, callType, callId, caller, timestamp }
 let lastCallPushOutcome = null; // { recipientId, success, error, timestamp } — debug only
 
+// A native presence lease is refreshed every 3 minutes (see
+// NativePresenceService.REFRESH_MS on the client). If a device loses power
+// or connectivity, it stops calling /api/presence/heartbeat, but nothing
+// previously deleted its session from nativePresenceSessions except an
+// explicit logout — so a session for a now-dead device could sit here
+// indefinitely, and this function reported it as "fresh" forever, keeping
+// the user shown online with no way to expire. Now checks lastSeen against
+// a threshold generous enough to survive a couple of missed heartbeats
+// (network hiccup, brief backgrounding) without falsely marking a live
+// device offline, and self-heals by deleting any stale entry it finds.
+const NATIVE_PRESENCE_STALE_MS = 5 * 60 * 1000; // 5 minutes — allows one missed 3-minute heartbeat plus jitter, without lingering too long on a genuinely dead device
+
 function hasFreshNativePresence(userId) {
-    for (const session of nativePresenceSessions.values()) {
+    const now = Date.now();
+    for (const [token, session] of nativePresenceSessions) {
         if (session && session.xameId === userId) {
-            return true;
+            if (now - session.lastSeen <= NATIVE_PRESENCE_STALE_MS) {
+                return true;
+            }
+            nativePresenceSessions.delete(token);
         }
     }
     return false;
