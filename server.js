@@ -757,6 +757,213 @@ const liveSessionSchema = new mongoose.Schema({
 
 const LiveSession = mongoose.model('LiveSession', liveSessionSchema);
 
+
+// ── XameLive monetisation ──────────────────────────────────────────────────
+// Provider-independent entitlement layer.
+// Google Play will be connected later; XamePay remains disabled in XamePage.
+
+const goLivePlanSchema = new mongoose.Schema({
+    planId: {
+        type: String,
+        required: true,
+        unique: true,
+        index: true
+    },
+    name: {
+        type: String,
+        required: true,
+        trim: true
+    },
+    durationDays: {
+        type: Number,
+        required: true,
+        min: 1
+    },
+    includedMinutes: {
+        type: Number,
+        required: true,
+        min: 0
+    },
+    trial: {
+        type: Boolean,
+        default: false
+    },
+    active: {
+        type: Boolean,
+        default: true,
+        index: true
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now
+    }
+});
+
+const GoLivePlan = mongoose.model('GoLivePlan', goLivePlanSchema);
+
+const monetisationTransactionSchema = new mongoose.Schema({
+    transactionId: {
+        type: String,
+        required: true,
+        unique: true,
+        index: true
+    },
+    xameId: {
+        type: String,
+        required: true,
+        index: true
+    },
+    productId: {
+        type: String,
+        required: true,
+        index: true
+    },
+    provider: {
+        type: String,
+        required: true,
+        index: true
+    },
+    providerReference: {
+        type: String,
+        default: '',
+        index: true
+    },
+    amount: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    currency: {
+        type: String,
+        default: 'USD',
+        uppercase: true
+    },
+    status: {
+        type: String,
+        enum: ['PENDING', 'COMPLETED', 'FAILED', 'REFUNDED', 'CANCELLED'],
+        default: 'PENDING',
+        index: true
+    },
+    metadata: {
+        type: mongoose.Schema.Types.Mixed,
+        default: {}
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now
+    }
+});
+
+monetisationTransactionSchema.index(
+    { provider: 1, providerReference: 1 },
+    {
+        unique: true,
+        partialFilterExpression: {
+            providerReference: { $gt: '' }
+        }
+    }
+);
+
+const MonetisationTransaction =
+    mongoose.model('MonetisationTransaction', monetisationTransactionSchema);
+
+const goLiveEntitlementSchema = new mongoose.Schema({
+    xameId: {
+        type: String,
+        required: true,
+        index: true
+    },
+    planId: {
+        type: String,
+        required: true,
+        index: true
+    },
+    provider: {
+        type: String,
+        required: true,
+        index: true
+    },
+    sourceTransactionId: {
+        type: String,
+        default: '',
+        index: true
+    },
+    providerPurchaseToken: {
+        type: String,
+        default: '',
+        index: true
+    },
+    status: {
+        type: String,
+        enum: ['ACTIVE', 'EXPIRED', 'REVOKED'],
+        default: 'ACTIVE',
+        index: true
+    },
+    startedAt: {
+        type: Date,
+        required: true
+    },
+    expiresAt: {
+        type: Date,
+        required: true,
+        index: true
+    },
+    includedMinutes: {
+        type: Number,
+        required: true,
+        min: 0
+    },
+    usedMinutes: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    trial: {
+        type: Boolean,
+        default: false
+    },
+    autoRenewing: {
+        type: Boolean,
+        default: false
+    },
+    metadata: {
+        type: mongoose.Schema.Types.Mixed,
+        default: {}
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now
+    }
+});
+
+goLiveEntitlementSchema.index({
+    xameId: 1,
+    status: 1,
+    expiresAt: 1
+});
+
+goLiveEntitlementSchema.index(
+    { provider: 1, providerPurchaseToken: 1 },
+    {
+        unique: true,
+        partialFilterExpression: {
+            providerPurchaseToken: { $gt: '' }
+        }
+    }
+);
+
+goLiveEntitlementSchema.index(
+    { xameId: 1, trial: 1 },
+    {
+        unique: true,
+        partialFilterExpression: { trial: true }
+    }
+);
+
+const GoLiveEntitlement =
+    mongoose.model('GoLiveEntitlement', goLiveEntitlementSchema);
+
+
 const liveCommentSchema = new mongoose.Schema({
     sessionId: {
         type: String,
@@ -1024,6 +1231,382 @@ async function refreshLiveSessionStatus(session) {
 }
 
 // Start a live broadcast.
+
+async function ensureGoLiveTrial(xameId) {
+    const now = new Date();
+    const expiresAt = new Date(
+        now.getTime() + (3 * 24 * 60 * 60 * 1000)
+    );
+
+    return GoLiveEntitlement.findOneAndUpdate(
+        {
+            xameId: String(xameId),
+            trial: true
+        },
+        {
+            $setOnInsert: {
+                xameId: String(xameId),
+                planId: 'go_live_trial_3d',
+                provider: 'TRIAL',
+                status: 'ACTIVE',
+                startedAt: now,
+                expiresAt,
+                includedMinutes: 0,
+                usedMinutes: 0,
+                trial: true,
+                autoRenewing: false,
+                metadata: {
+                    reason: 'new_user_go_live_trial'
+                },
+                createdAt: now
+            }
+        },
+        {
+            new: true,
+            upsert: true,
+            setDefaultsOnInsert: true
+        }
+    );
+}
+
+async function getActiveGoLiveEntitlement(xameId) {
+    const now = new Date();
+
+    const entitlement = await GoLiveEntitlement.findOne({
+        xameId: String(xameId),
+        status: 'ACTIVE',
+        expiresAt: { $gt: now }
+    }).sort({
+        expiresAt: 1
+    });
+
+    if (!entitlement) {
+        await GoLiveEntitlement.updateMany(
+            {
+                xameId: String(xameId),
+                status: 'ACTIVE',
+                expiresAt: { $lte: now }
+            },
+            {
+                $set: {
+                    status: 'EXPIRED'
+                }
+            }
+        );
+
+        return null;
+    }
+
+    return entitlement;
+}
+
+async function requireGoLiveEntitlement(xameId) {
+    let entitlement = await getActiveGoLiveEntitlement(xameId);
+
+    if (!entitlement) {
+        const trial = await ensureGoLiveTrial(xameId);
+
+        if (trial.status === 'ACTIVE' && trial.expiresAt > new Date()) {
+            entitlement = trial;
+        }
+    }
+
+    return entitlement;
+}
+
+
+
+async function grantGoLiveEntitlement({
+    xameId,
+    plan,
+    provider,
+    sourceTransactionId = '',
+    providerPurchaseToken = '',
+    autoRenewing = false,
+    metadata = {},
+    amount = 0,
+    currency = 'USD'
+}) {
+    if (!xameId) {
+        throw new Error('Go Live entitlement requires xameId.');
+    }
+
+    if (!plan || !plan.planId) {
+        throw new Error('Go Live entitlement requires a valid plan.');
+    }
+
+    if (!provider) {
+        throw new Error('Go Live entitlement requires a provider.');
+    }
+
+    const normalizedProvider = String(provider).trim().toUpperCase();
+    const normalizedSourceTransactionId =
+        String(sourceTransactionId || '').trim();
+    const normalizedPurchaseToken =
+        String(providerPurchaseToken || '').trim();
+
+    if (!normalizedSourceTransactionId && !normalizedPurchaseToken) {
+        throw new Error(
+            'Go Live entitlement requires a verified provider transaction reference or purchase token.'
+        );
+    }
+
+    const providerReference =
+        normalizedSourceTransactionId || normalizedPurchaseToken;
+
+    const existingTransaction = await MonetisationTransaction.findOne({
+        provider: normalizedProvider,
+        providerReference
+    });
+
+    if (existingTransaction) {
+        if (existingTransaction.status === 'COMPLETED') {
+            const existingEntitlement =
+                await GoLiveEntitlement.findOne({
+                    sourceTransactionId: existingTransaction.transactionId,
+                    xameId: String(xameId)
+                });
+
+            if (existingEntitlement) {
+                return {
+                    transaction: existingTransaction,
+                    entitlement: existingEntitlement,
+                    alreadyGranted: true
+                };
+            }
+        }
+
+        throw new Error(
+            'This provider transaction has already been recorded.'
+        );
+    }
+
+    if (normalizedPurchaseToken) {
+        const existingEntitlement =
+            await GoLiveEntitlement.findOne({
+                provider: normalizedProvider,
+                providerPurchaseToken: normalizedPurchaseToken
+            });
+
+        if (existingEntitlement) {
+            if (existingEntitlement.xameId !== String(xameId)) {
+                throw new Error(
+                    'This provider purchase token is already linked to another XamePage account.'
+                );
+            }
+
+            return {
+                transaction: existingEntitlement.sourceTransactionId
+                    ? await MonetisationTransaction.findOne({
+                        transactionId:
+                            existingEntitlement.sourceTransactionId
+                    })
+                    : null,
+                entitlement: existingEntitlement,
+                alreadyGranted: true
+            };
+        }
+    }
+
+    const now = new Date();
+
+    const expiresAt = new Date(
+        now.getTime() +
+        (Number(plan.durationDays) * 24 * 60 * 60 * 1000)
+    );
+
+    const transactionId =
+        new mongoose.Types.ObjectId().toString();
+
+    const session = await mongoose.startSession();
+
+    try {
+        let transaction;
+        let entitlement;
+
+        await session.withTransaction(async () => {
+            const transactions = await MonetisationTransaction.create(
+                [{
+                    transactionId,
+                    xameId: String(xameId),
+                    productId: String(plan.planId),
+                    provider: normalizedProvider,
+                    providerReference,
+                    amount: Number(amount) || 0,
+                    currency: String(currency || 'USD').toUpperCase(),
+                    status: 'COMPLETED',
+                    metadata
+                }],
+                { session }
+            );
+
+            transaction = transactions[0];
+
+            const entitlements = await GoLiveEntitlement.create(
+                [{
+                    xameId: String(xameId),
+                    planId: plan.planId,
+                    provider: normalizedProvider,
+                    sourceTransactionId: transactionId,
+                    providerPurchaseToken: normalizedPurchaseToken,
+                    status: 'ACTIVE',
+                    startedAt: now,
+                    expiresAt,
+                    includedMinutes:
+                        Number(plan.includedMinutes) || 0,
+                    usedMinutes: 0,
+                    trial: plan.trial === true,
+                    autoRenewing: autoRenewing === true,
+                    metadata
+                }],
+                { session }
+            );
+
+            entitlement = entitlements[0];
+        });
+
+        return {
+            transaction,
+            entitlement,
+            alreadyGranted: false
+        };
+    } catch (err) {
+        if (err?.code === 11000) {
+            const existingEntitlement =
+                normalizedPurchaseToken
+                    ? await GoLiveEntitlement.findOne({
+                        provider: normalizedProvider,
+                        providerPurchaseToken:
+                            normalizedPurchaseToken
+                    })
+                    : null;
+
+            if (existingEntitlement) {
+                const existingTransaction =
+                    existingEntitlement.sourceTransactionId
+                        ? await MonetisationTransaction.findOne({
+                            transactionId:
+                                existingEntitlement.sourceTransactionId
+                        })
+                        : null;
+
+                return {
+                    transaction: existingTransaction,
+                    entitlement: existingEntitlement,
+                    alreadyGranted: true
+                };
+            }
+
+            const existingTransaction =
+                await MonetisationTransaction.findOne({
+                    provider: normalizedProvider,
+                    providerReference
+                });
+
+            if (existingTransaction) {
+                const linkedEntitlement =
+                    await GoLiveEntitlement.findOne({
+                        sourceTransactionId:
+                            existingTransaction.transactionId,
+                        xameId: String(xameId)
+                    });
+
+                if (linkedEntitlement) {
+                    return {
+                        transaction: existingTransaction,
+                        entitlement: linkedEntitlement,
+                        alreadyGranted: true
+                    };
+                }
+            }
+        }
+
+        throw err;
+    } finally {
+        await session.endSession();
+    }
+}
+
+app.get('/api/live/entitlement', async (req, res) => {
+    try {
+        const authUser = await getAuthenticatedUserFromSession(req);
+
+        if (!authUser) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized.'
+            });
+        }
+
+        const entitlement = await getActiveGoLiveEntitlement(
+            authUser.xameId
+        );
+
+        if (!entitlement) {
+            return res.json({
+                success: true,
+                hasAccess: false,
+                entitlement: null
+            });
+        }
+
+        return res.json({
+            success: true,
+            hasAccess: true,
+            entitlement: {
+                planId: entitlement.planId,
+                provider: entitlement.provider,
+                status: entitlement.status,
+                trial: entitlement.trial === true,
+                autoRenewing: entitlement.autoRenewing === true,
+                startedAt: entitlement.startedAt,
+                expiresAt: entitlement.expiresAt,
+                includedMinutes: entitlement.includedMinutes,
+                usedMinutes: entitlement.usedMinutes,
+                remainingMinutes: Math.max(
+                    0,
+                    entitlement.includedMinutes - entitlement.usedMinutes
+                )
+            }
+        });
+    } catch (err) {
+        console.error('[XAMELIVE] entitlement lookup failed:', err);
+
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to load Go Live entitlement.'
+        });
+    }
+});
+
+app.get('/api/live/plans', async (req, res) => {
+    try {
+        const plans = await GoLivePlan.find({
+            active: true
+        }).sort({
+            durationDays: 1
+        });
+
+        return res.json({
+            success: true,
+            plans: plans.map((plan) => ({
+                planId: plan.planId,
+                name: plan.name,
+                durationDays: plan.durationDays,
+                includedMinutes: plan.includedMinutes,
+                trial: plan.trial === true
+            }))
+        });
+    } catch (err) {
+        console.error('[XAMELIVE] plan lookup failed:', err);
+
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to load Go Live plans.'
+        });
+    }
+});
+
 app.post('/api/live/start', async (req, res) => {
     try {
         const authUser = await getAuthenticatedUserFromSession(req);
@@ -1041,6 +1624,19 @@ app.post('/api/live/start', async (req, res) => {
                 message: 'XameLive is not configured.'
             });
         }
+
+        const entitlement = await requireGoLiveEntitlement(
+            authUser.xameId
+        );
+
+        if (!entitlement) {
+            return res.status(402).json({
+                success: false,
+                code: 'GO_LIVE_SUBSCRIPTION_REQUIRED',
+                message: 'A Go Live subscription or active trial is required.'
+            });
+        }
+
 
         const title =
             typeof req.body?.title === 'string'
