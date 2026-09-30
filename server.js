@@ -121,6 +121,56 @@ const MEDIA_WORKER_URL =
 const MEDIA_API_SECRET =
     process.env.MEDIA_API_SECRET || '';
 
+// ── XameLive / Cloudflare Stream ─────────────────────────────────────────
+const CLOUDFLARE_ACCOUNT_ID =
+    process.env.CLOUDFLARE_ACCOUNT_ID || '';
+
+const CLOUDFLARE_STREAM_API_TOKEN =
+    process.env.CLOUDFLARE_STREAM_API_TOKEN || '';
+
+const CLOUDFLARE_STREAM_API_BASE =
+    'https://api.cloudflare.com/client/v4';
+
+async function cloudflareStreamRequest(pathname, options = {}) {
+    if (!CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_STREAM_API_TOKEN) {
+        throw new Error('Cloudflare Stream is not configured');
+    }
+
+    const response = await fetch(
+        `${CLOUDFLARE_STREAM_API_BASE}/accounts/${encodeURIComponent(CLOUDFLARE_ACCOUNT_ID)}${pathname}`,
+        {
+            ...options,
+            headers: {
+                'Authorization': `Bearer ${CLOUDFLARE_STREAM_API_TOKEN}`,
+                'Content-Type': 'application/json',
+                ...(options.headers || {})
+            }
+        }
+    );
+
+    const text = await response.text();
+
+    let data;
+    try {
+        data = JSON.parse(text);
+    } catch {
+        data = null;
+    }
+
+    if (!response.ok || !data?.success) {
+        const detail =
+            data?.errors?.map(e => e.message).join('; ') ||
+            text ||
+            `HTTP ${response.status}`;
+
+        throw new Error(
+            `Cloudflare Stream API error (${response.status}): ${detail}`
+        );
+    }
+
+    return data.result;
+}
+
 function buildMediaWorkerUrl(key) {
     return `${MEDIA_WORKER_URL}/media/${key
         .split('/')
@@ -643,6 +693,98 @@ const GalleryView = mongoose.model('GalleryView', galleryViewSchema);
 const Group            = mongoose.model('Group',            groupSchema);
 const GroupMessage     = mongoose.model('GroupMessage',     groupMessageSchema);
 
+// ── XameLive ─────────────────────────────────────────────────────────────
+const liveSessionSchema = new mongoose.Schema({
+    sessionId: {
+        type: String,
+        required: true,
+        unique: true,
+        index: true
+    },
+    broadcasterXameId: {
+        type: String,
+        required: true,
+        index: true
+    },
+    title: {
+        type: String,
+        required: true,
+        trim: true,
+        maxlength: 120
+    },
+    category: {
+        type: String,
+        default: 'General',
+        trim: true,
+        maxlength: 60
+    },
+    status: {
+        type: String,
+        enum: ['STARTING', 'LIVE', 'ENDED'],
+        default: 'STARTING',
+        index: true
+    },
+    startedAt: {
+        type: Date,
+        default: null
+    },
+    endedAt: {
+        type: Date,
+        default: null
+    },
+    viewerCount: {
+        type: Number,
+        default: 0
+    },
+    cloudflareLiveInputId: {
+        type: String,
+        required: true,
+        index: true
+    },
+    publishUrl: {
+        type: String,
+        default: ''
+    },
+    playbackUrl: {
+        type: String,
+        default: ''
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now
+    }
+});
+
+const LiveSession = mongoose.model('LiveSession', liveSessionSchema);
+
+const liveCommentSchema = new mongoose.Schema({
+    sessionId: {
+        type: String,
+        required: true,
+        index: true
+    },
+    userId: {
+        type: String,
+        required: true
+    },
+    text: {
+        type: String,
+        required: true,
+        trim: true,
+        maxlength: 500
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now
+    }
+});
+
+const LiveComment = mongoose.model('LiveComment', liveCommentSchema);
+
+// Active Socket.IO XameLive viewers.
+// sessionId -> Map(userId -> Set(socket.id))
+const liveViewerSockets = new Map();
+
 
 // ── Session authentication helper ─────────────────────────────────────────
 // Validates the existing XamePage session token without exposing any
@@ -809,6 +951,410 @@ app.post('/api/media/upload-init', async (req, res) => {
 });
 
 
+
+
+// ============================================================
+// XAMELIVE — Cloudflare Stream
+// ============================================================
+
+function liveSessionPublicData(session) {
+    return {
+        sessionId: session.sessionId,
+        broadcasterXameId: session.broadcasterXameId,
+        title: session.title,
+        category: session.category,
+        status: session.status,
+        startedAt: session.startedAt,
+        endedAt: session.endedAt,
+        viewerCount: session.viewerCount || 0,
+        playbackUrl: session.playbackUrl || ''
+    };
+}
+
+async function refreshLiveSessionStatus(session) {
+    if (!session || session.status === 'ENDED') {
+        return session;
+    }
+
+    try {
+        const input = await cloudflareStreamRequest(
+            `/stream/live_inputs/${encodeURIComponent(session.cloudflareLiveInputId)}`,
+            { method: 'GET' }
+        );
+
+        const cloudStatus = input?.status || '';
+
+        if (
+            (cloudStatus === 'connected' ||
+             cloudStatus === 'reconnected') &&
+            session.status !== 'LIVE'
+        ) {
+            session.status = 'LIVE';
+            session.startedAt = session.startedAt || new Date();
+            await session.save();
+
+            io.emit('live:started', liveSessionPublicData(session));
+        } else if (
+            (
+                cloudStatus === 'client_disconnect' ||
+                cloudStatus === 'ttl_exceeded' ||
+                cloudStatus === 'failed_to_connect' ||
+                cloudStatus === 'failed_to_reconnect'
+            ) &&
+            session.status !== 'ENDED'
+        ) {
+            session.status = 'ENDED';
+            session.endedAt = new Date();
+            session.viewerCount = 0;
+            await session.save();
+
+            liveViewerSockets.delete(session.sessionId);
+            io.emit('live:ended', {
+                sessionId: session.sessionId
+            });
+        }
+    } catch (err) {
+        console.error(
+            '[XAMELIVE] Cloudflare status check failed:',
+            err.message
+        );
+    }
+
+    return session;
+}
+
+// Start a live broadcast.
+app.post('/api/live/start', async (req, res) => {
+    try {
+        const authUser = await getAuthenticatedUserFromSession(req);
+
+        if (!authUser) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized.'
+            });
+        }
+
+        if (!CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_STREAM_API_TOKEN) {
+            return res.status(503).json({
+                success: false,
+                message: 'XameLive is not configured.'
+            });
+        }
+
+        const title =
+            typeof req.body?.title === 'string'
+                ? req.body.title.trim()
+                : '';
+
+        const category =
+            typeof req.body?.category === 'string' &&
+            req.body.category.trim()
+                ? req.body.category.trim()
+                : 'General';
+
+        if (!title) {
+            return res.status(400).json({
+                success: false,
+                message: 'Live title is required.'
+            });
+        }
+
+        if (title.length > 120) {
+            return res.status(400).json({
+                success: false,
+                message: 'Live title is too long.'
+            });
+        }
+
+        const existing = await LiveSession.findOne({
+            broadcasterXameId: authUser.xameId,
+            status: { $in: ['STARTING', 'LIVE'] }
+        });
+
+        if (existing) {
+            await refreshLiveSessionStatus(existing);
+
+            if (existing.status !== 'ENDED') {
+                return res.status(409).json({
+                    success: false,
+                    message: 'You already have an active live session.',
+                    session: liveSessionPublicData(existing)
+                });
+            }
+        }
+
+        const sessionId = `live_${uuidv4().replace(/-/g, '')}`;
+
+        const input = await cloudflareStreamRequest(
+            '/stream/live_inputs',
+            {
+                method: 'POST',
+                headers: {
+                    'Idempotency-Key': sessionId
+                },
+                body: JSON.stringify({
+                    meta: {
+                        sessionId,
+                        broadcasterXameId: String(authUser.xameId),
+                        title,
+                        category
+                    },
+                    recording: {
+                        mode: 'off'
+                    }
+                })
+            }
+        );
+
+        if (!input?.uid || !input?.webRTC?.url || !input?.webRTCPlayback?.url) {
+            throw new Error(
+                'Cloudflare returned an incomplete live input.'
+            );
+        }
+
+        const session = await LiveSession.create({
+            sessionId,
+            broadcasterXameId: authUser.xameId,
+            title,
+            category,
+            status: 'STARTING',
+            cloudflareLiveInputId: input.uid,
+            publishUrl: input.webRTC.url,
+            playbackUrl: input.webRTCPlayback.url,
+            viewerCount: 0
+        });
+
+        return res.json({
+            success: true,
+            session: liveSessionPublicData(session),
+            stream: {
+                publishUrl: input.webRTC.url
+            }
+        });
+
+    } catch (err) {
+        console.error('[XAMELIVE] start failed:', err);
+
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to start live broadcast.'
+        });
+    }
+});
+
+// End a live broadcast.
+app.post('/api/live/:sessionId/end', async (req, res) => {
+    try {
+        const authUser = await getAuthenticatedUserFromSession(req);
+
+        if (!authUser) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized.'
+            });
+        }
+
+        const session = await LiveSession.findOne({
+            sessionId: req.params.sessionId
+        });
+
+        if (!session) {
+            return res.status(404).json({
+                success: false,
+                message: 'Live session not found.'
+            });
+        }
+
+        if (session.broadcasterXameId !== authUser.xameId) {
+            return res.status(403).json({
+                success: false,
+                message: 'Only the broadcaster can end this live session.'
+            });
+        }
+
+        if (session.status !== 'ENDED') {
+            try {
+                await cloudflareStreamRequest(
+                    `/stream/live_inputs/${encodeURIComponent(session.cloudflareLiveInputId)}`,
+                    {
+                        method: 'PUT',
+                        body: JSON.stringify({
+                            enabled: false
+                        })
+                    }
+                );
+            } catch (err) {
+                console.error(
+                    '[XAMELIVE] Cloudflare stop failed:',
+                    err.message
+                );
+            }
+
+            session.status = 'ENDED';
+            session.endedAt = new Date();
+            session.viewerCount = 0;
+            await session.save();
+
+            liveViewerSockets.delete(session.sessionId);
+
+            io.emit('live:ended', {
+                sessionId: session.sessionId
+            });
+        }
+
+        return res.json({
+            success: true,
+            session: liveSessionPublicData(session)
+        });
+
+    } catch (err) {
+        console.error('[XAMELIVE] end failed:', err);
+
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to end live broadcast.'
+        });
+    }
+});
+
+// List active broadcasts.
+app.get('/api/live/active', async (req, res) => {
+    try {
+        const sessions = await LiveSession.find({
+            status: { $in: ['STARTING', 'LIVE'] }
+        })
+            .sort({ startedAt: -1, createdAt: -1 })
+            .limit(50);
+
+        const result = [];
+
+        for (const session of sessions) {
+            await refreshLiveSessionStatus(session);
+
+            if (session.status !== 'ENDED') {
+                result.push(liveSessionPublicData(session));
+            }
+        }
+
+        return res.json({
+            success: true,
+            sessions: result
+        });
+
+    } catch (err) {
+        console.error('[XAMELIVE] active list failed:', err);
+
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to load live broadcasts.'
+        });
+    }
+});
+
+// Get one live session.
+app.get('/api/live/:sessionId', async (req, res) => {
+    try {
+        const session = await LiveSession.findOne({
+            sessionId: req.params.sessionId
+        });
+
+        if (!session) {
+            return res.status(404).json({
+                success: false,
+                message: 'Live session not found.'
+            });
+        }
+
+        await refreshLiveSessionStatus(session);
+
+        return res.json({
+            success: true,
+            session: liveSessionPublicData(session)
+        });
+
+    } catch (err) {
+        console.error('[XAMELIVE] session lookup failed:', err);
+
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to load live session.'
+        });
+    }
+});
+
+// Join a live session at the HTTP/API level.
+app.post('/api/live/:sessionId/join', async (req, res) => {
+    try {
+        const authUser = await getAuthenticatedUserFromSession(req);
+
+        if (!authUser) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized.'
+            });
+        }
+
+        const session = await LiveSession.findOne({
+            sessionId: req.params.sessionId
+        });
+
+        if (!session) {
+            return res.status(404).json({
+                success: false,
+                message: 'Live session not found.'
+            });
+        }
+
+        await refreshLiveSessionStatus(session);
+
+        if (session.status !== 'LIVE') {
+            return res.status(409).json({
+                success: false,
+                message: 'This live broadcast is not currently live.'
+            });
+        }
+
+        return res.json({
+            success: true,
+            session: liveSessionPublicData(session)
+        });
+
+    } catch (err) {
+        console.error('[XAMELIVE] join failed:', err);
+
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to join live broadcast.'
+        });
+    }
+});
+
+// Leave endpoint. Actual viewer accounting is socket-based.
+app.post('/api/live/:sessionId/leave', async (req, res) => {
+    try {
+        const authUser = await getAuthenticatedUserFromSession(req);
+
+        if (!authUser) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized.'
+            });
+        }
+
+        return res.json({
+            success: true
+        });
+
+    } catch (err) {
+        console.error('[XAMELIVE] leave failed:', err);
+
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to leave live broadcast.'
+        });
+    }
+});
 
 // ── Broadcast List Schema ─────────────────────────────────────────────────
 const broadcastListSchema = new mongoose.Schema({
@@ -2370,6 +2916,290 @@ io.on('connection', (socket) => {
 
     socket.userId = userId;
 
+    // ========================================================
+    // XAMELIVE — Socket.IO
+    // ========================================================
+
+    socket.on('live:join', async ({ sessionId } = {}) => {
+        try {
+            const userId = socket.authenticatedUserId;
+
+            if (!userId || !sessionId) return;
+
+            // A socket can belong to only one XameLive session at a time.
+            // Cleanly remove it from the previous session first.
+            if (
+                socket.liveSessionId &&
+                socket.liveSessionId !== sessionId
+            ) {
+                const previousId = socket.liveSessionId;
+
+                if (!socket.liveIsBroadcaster) {
+                    const previousViewers =
+                        liveViewerSockets.get(previousId);
+
+                    const previousUserSockets =
+                        previousViewers?.get(userId);
+
+                    if (previousUserSockets) {
+                        previousUserSockets.delete(socket.id);
+
+                        if (previousUserSockets.size === 0) {
+                            previousViewers.delete(userId);
+                        }
+                    }
+
+                    if (
+                        previousViewers &&
+                        previousViewers.size === 0
+                    ) {
+                        liveViewerSockets.delete(previousId);
+                    }
+
+                    const previousSession =
+                        await LiveSession.findOne({
+                            sessionId: previousId
+                        });
+
+                    if (
+                        previousSession &&
+                        previousSession.status !== 'ENDED'
+                    ) {
+                        previousSession.viewerCount =
+                            liveViewerSockets.get(previousId)?.size || 0;
+
+                        await previousSession.save();
+
+                        io.to(`live:${previousId}`).emit(
+                            'live:viewer-count',
+                            {
+                                sessionId: previousId,
+                                viewerCount:
+                                    previousSession.viewerCount
+                            }
+                        );
+                    }
+                }
+
+                socket.leave(`live:${previousId}`);
+                socket.liveSessionId = null;
+                socket.liveIsBroadcaster = false;
+            }
+
+            const session = await LiveSession.findOne({ sessionId });
+
+            if (!session) {
+                return socket.emit('live:error', {
+                    message: 'Live session not found.'
+                });
+            }
+
+            await refreshLiveSessionStatus(session);
+
+            if (session.status !== 'LIVE') {
+                return socket.emit('live:error', {
+                    message: 'This live broadcast is not currently live.'
+                });
+            }
+
+            // The broadcaster is never counted as a viewer.
+            if (session.broadcasterXameId === userId) {
+                socket.join(`live:${sessionId}`);
+                socket.liveSessionId = sessionId;
+                socket.liveIsBroadcaster = true;
+                return;
+            }
+
+            let viewers = liveViewerSockets.get(sessionId);
+
+            if (!viewers) {
+                viewers = new Map();
+                liveViewerSockets.set(sessionId, viewers);
+            }
+
+            let userSockets = viewers.get(userId);
+
+            if (!userSockets) {
+                userSockets = new Set();
+                viewers.set(userId, userSockets);
+            }
+
+            userSockets.add(socket.id);
+
+            socket.join(`live:${sessionId}`);
+            socket.liveSessionId = sessionId;
+            socket.liveIsBroadcaster = false;
+
+            session.viewerCount = viewers.size;
+            await session.save();
+
+            io.to(`live:${sessionId}`).emit('live:viewer-count', {
+                sessionId,
+                viewerCount: session.viewerCount
+            });
+
+        } catch (err) {
+            console.error(
+                '[XAMELIVE] socket join failed:',
+                err.message
+            );
+
+            socket.emit('live:error', {
+                message: 'Unable to join live broadcast.'
+            });
+        }
+    });
+
+    socket.on('live:leave', async ({ sessionId } = {}) => {
+        try {
+            const id = sessionId || socket.liveSessionId;
+
+            if (!id) return;
+
+            if (socket.liveIsBroadcaster) {
+                socket.leave(`live:${id}`);
+                socket.liveSessionId = null;
+                socket.liveIsBroadcaster = false;
+                return;
+            }
+
+            const userId = socket.authenticatedUserId;
+            const viewers = liveViewerSockets.get(id);
+
+            if (viewers && userId) {
+                const userSockets = viewers.get(userId);
+
+                if (userSockets) {
+                    userSockets.delete(socket.id);
+
+                    if (userSockets.size === 0) {
+                        viewers.delete(userId);
+                    }
+                }
+
+                if (viewers.size === 0) {
+                    liveViewerSockets.delete(id);
+                }
+            }
+
+            socket.leave(`live:${id}`);
+
+            const session = await LiveSession.findOne({
+                sessionId: id
+            });
+
+            if (session && session.status !== 'ENDED') {
+                session.viewerCount =
+                    liveViewerSockets.get(id)?.size || 0;
+
+                await session.save();
+
+                io.to(`live:${id}`).emit('live:viewer-count', {
+                    sessionId: id,
+                    viewerCount: session.viewerCount
+                });
+            }
+
+            if (socket.liveSessionId === id) {
+                socket.liveSessionId = null;
+            }
+
+            socket.liveIsBroadcaster = false;
+
+        } catch (err) {
+            console.error(
+                '[XAMELIVE] socket leave failed:',
+                err.message
+            );
+        }
+    });
+
+    socket.on('live:comment', async ({ sessionId, text } = {}) => {
+        try {
+            const userId = socket.authenticatedUserId;
+
+            if (
+                !userId ||
+                !sessionId ||
+                typeof text !== 'string' ||
+                socket.liveSessionId !== sessionId
+            ) {
+                return;
+            }
+
+            const cleanText = text.trim();
+
+            if (!cleanText || cleanText.length > 500) return;
+
+            const session = await LiveSession.findOne({
+                sessionId,
+                status: 'LIVE'
+            });
+
+            if (!session) return;
+
+            const comment = await LiveComment.create({
+                sessionId,
+                userId,
+                text: cleanText
+            });
+
+            io.to(`live:${sessionId}`).emit('live:comment', {
+                sessionId,
+                comment: {
+                    id: String(comment._id),
+                    userId,
+                    text: cleanText,
+                    createdAt: comment.createdAt
+                }
+            });
+
+        } catch (err) {
+            console.error(
+                '[XAMELIVE] comment failed:',
+                err.message
+            );
+        }
+    });
+
+    socket.on('live:reaction', async ({ sessionId, reaction } = {}) => {
+        try {
+            const userId = socket.authenticatedUserId;
+
+            if (
+                !userId ||
+                !sessionId ||
+                typeof reaction !== 'string' ||
+                socket.liveSessionId !== sessionId
+            ) {
+                return;
+            }
+
+            const session = await LiveSession.findOne({
+                sessionId,
+                status: 'LIVE'
+            });
+
+            if (!session) return;
+
+            const cleanReaction = reaction.trim();
+
+            if (!cleanReaction || cleanReaction.length > 32) return;
+
+            io.to(`live:${sessionId}`).emit('live:reaction', {
+                sessionId,
+                userId,
+                reaction: cleanReaction
+            });
+
+        } catch (err) {
+            console.error(
+                '[XAMELIVE] reaction failed:',
+                err.message
+            );
+        }
+    });
+
     // Register web guest sockets separately
     if (socket.handshake?.query?.webGuest === '1' && userId?.startsWith('web_')) {
         const webGuestSockets = global.__xamePageWebGuestSockets || (global.__xamePageWebGuestSockets = new Map());
@@ -2512,6 +3342,58 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
+        // Remove this socket from any XameLive viewer session.
+        if (socket.liveSessionId) {
+            const liveId = socket.liveSessionId;
+            const userId = socket.authenticatedUserId;
+
+            if (!socket.liveIsBroadcaster && userId) {
+                const viewers = liveViewerSockets.get(liveId);
+                const userSockets = viewers?.get(userId);
+
+                if (userSockets) {
+                    userSockets.delete(socket.id);
+
+                    if (userSockets.size === 0) {
+                        viewers.delete(userId);
+                    }
+                }
+
+                if (viewers && viewers.size === 0) {
+                    liveViewerSockets.delete(liveId);
+                }
+
+                LiveSession.findOne({ sessionId: liveId })
+                    .then(async session => {
+                        if (!session || session.status === 'ENDED') {
+                            return;
+                        }
+
+                        session.viewerCount =
+                            liveViewerSockets.get(liveId)?.size || 0;
+
+                        await session.save();
+
+                        io.to(`live:${liveId}`).emit(
+                            'live:viewer-count',
+                            {
+                                sessionId: liveId,
+                                viewerCount: session.viewerCount
+                            }
+                        );
+                    })
+                    .catch(err => {
+                        console.error(
+                            '[XAMELIVE] disconnect viewer cleanup failed:',
+                            err.message
+                        );
+                    });
+            }
+
+            socket.liveSessionId = null;
+            socket.liveIsBroadcaster = false;
+        }
+
         const uid = socket.userId || socketToUserMap.get(socket.id);
 
         if (socket.sessionToken &&
