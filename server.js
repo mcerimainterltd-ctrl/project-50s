@@ -1401,41 +1401,80 @@ async function refreshLiveSessionStatus(session) {
 
 // Start a live broadcast.
 
-async function ensureGoLiveTrial(xameId) {
+async function claimGoLiveTrial(xameId) {
+    const existingTrial = await GoLiveEntitlement.findOne({
+        xameId: String(xameId),
+        trial: true
+    });
+
+    if (existingTrial) {
+        const error = new Error(
+            'The Go Live trial has already been claimed.'
+        );
+        error.code = 'GO_LIVE_TRIAL_ALREADY_CLAIMED';
+        throw error;
+    }
+
+    const trialPlan = await GoLivePlan.findOne({
+        active: true,
+        trial: true
+    }).sort({
+        durationDays: 1
+    });
+
+    if (!trialPlan) {
+        const error = new Error(
+            'No Go Live trial is currently available.'
+        );
+        error.code = 'GO_LIVE_TRIAL_UNAVAILABLE';
+        throw error;
+    }
+
     const now = new Date();
     const expiresAt = new Date(
-        now.getTime() + (3 * 24 * 60 * 60 * 1000)
+        now.getTime() +
+        (Number(trialPlan.durationDays || 0) * 24 * 60 * 60 * 1000)
     );
 
-    return GoLiveEntitlement.findOneAndUpdate(
-        {
+    if (!Number.isFinite(expiresAt.getTime()) ||
+        expiresAt <= now ||
+        Number(trialPlan.includedMinutes || 0) <= 0) {
+        const error = new Error(
+            'The configured Go Live trial is invalid.'
+        );
+        error.code = 'GO_LIVE_TRIAL_UNAVAILABLE';
+        throw error;
+    }
+
+    try {
+        return await GoLiveEntitlement.create({
             xameId: String(xameId),
-            trial: true
-        },
-        {
-            $setOnInsert: {
-                xameId: String(xameId),
-                planId: 'go_live_trial_3d',
-                provider: 'TRIAL',
-                status: 'ACTIVE',
-                startedAt: now,
-                expiresAt,
-                includedMinutes: 120,
-                usedMinutes: 0,
-                trial: true,
-                autoRenewing: false,
-                metadata: {
-                    reason: 'new_user_go_live_trial'
-                },
-                createdAt: now
+            planId: trialPlan.planId,
+            provider: 'TRIAL',
+            sourceTransactionId: '',
+            providerPurchaseToken: '',
+            status: 'ACTIVE',
+            startedAt: now,
+            expiresAt,
+            includedMinutes: Number(trialPlan.includedMinutes || 0),
+            usedMinutes: 0,
+            trial: true,
+            autoRenewing: false,
+            metadata: {
+                reason: 'user_claimed_go_live_trial'
             }
-        },
-        {
-            new: true,
-            upsert: true,
-            setDefaultsOnInsert: true
+        });
+    } catch (err) {
+        if (err && err.code === 11000) {
+            const error = new Error(
+                'The Go Live trial has already been claimed.'
+            );
+            error.code = 'GO_LIVE_TRIAL_ALREADY_CLAIMED';
+            throw error;
         }
-    );
+
+        throw err;
+    }
 }
 
 async function getActiveGoLiveEntitlement(xameId) {
@@ -1470,17 +1509,7 @@ async function getActiveGoLiveEntitlement(xameId) {
 }
 
 async function requireGoLiveEntitlement(xameId) {
-    let entitlement = await getActiveGoLiveEntitlement(xameId);
-
-    if (!entitlement) {
-        const trial = await ensureGoLiveTrial(xameId);
-
-        if (trial.status === 'ACTIVE' && trial.expiresAt > new Date()) {
-            entitlement = trial;
-        }
-    }
-
-    return entitlement;
+    return getActiveGoLiveEntitlement(xameId);
 }
 
 
@@ -1827,6 +1856,66 @@ async function grantGoLiveEntitlement({
         await session.endSession();
     }
 }
+
+app.post('/api/live/trial/claim', async (req, res) => {
+    try {
+        const authUser = await getAuthenticatedUserFromSession(req);
+
+        if (!authUser) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized.'
+            });
+        }
+
+        const entitlement = await claimGoLiveTrial(
+            authUser.xameId
+        );
+
+        return res.status(201).json({
+            success: true,
+            entitlement: {
+                planId: entitlement.planId,
+                provider: entitlement.provider,
+                status: entitlement.status,
+                trial: entitlement.trial === true,
+                autoRenewing: entitlement.autoRenewing === true,
+                startedAt: entitlement.startedAt,
+                expiresAt: entitlement.expiresAt,
+                includedMinutes: entitlement.includedMinutes,
+                usedMinutes: entitlement.usedMinutes,
+                remainingMinutes: Math.max(
+                    0,
+                    entitlement.includedMinutes -
+                    entitlement.usedMinutes
+                )
+            }
+        });
+    } catch (err) {
+        if (err && err.code === 'GO_LIVE_TRIAL_ALREADY_CLAIMED') {
+            return res.status(409).json({
+                success: false,
+                code: err.code,
+                message: err.message
+            });
+        }
+
+        if (err && err.code === 'GO_LIVE_TRIAL_UNAVAILABLE') {
+            return res.status(404).json({
+                success: false,
+                code: err.code,
+                message: err.message
+            });
+        }
+
+        console.error('[XAMELIVE] trial claim failed:', err);
+
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to claim the Go Live trial.'
+        });
+    }
+});
 
 app.get('/api/live/entitlement', async (req, res) => {
     try {
