@@ -749,6 +749,27 @@ const liveSessionSchema = new mongoose.Schema({
         type: String,
         default: ''
     },
+    entitlementId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'GoLiveEntitlement',
+        default: null,
+        index: true
+    },
+    allowedMinutes: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    usageCutoffAt: {
+        type: Date,
+        default: null,
+        index: true
+    },
+    usageRecorded: {
+        type: Boolean,
+        default: false,
+        index: true
+    },
     createdAt: {
         type: Date,
         default: Date.now
@@ -756,6 +777,62 @@ const liveSessionSchema = new mongoose.Schema({
 });
 
 const LiveSession = mongoose.model('LiveSession', liveSessionSchema);
+
+
+// ── XameLive usage accounting ───────────────────────────────────────────────
+// One immutable usage record per completed live session.
+// The unique sessionId index makes duplicate accounting attempts harmless.
+const liveUsageSchema = new mongoose.Schema({
+    sessionId: {
+        type: String,
+        required: true,
+        unique: true,
+        index: true
+    },
+    entitlementId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'GoLiveEntitlement',
+        required: true,
+        index: true
+    },
+    xameId: {
+        type: String,
+        required: true,
+        index: true
+    },
+    startedAt: {
+        type: Date,
+        required: true
+    },
+    endedAt: {
+        type: Date,
+        required: true
+    },
+    actualMinutes: {
+        type: Number,
+        required: true,
+        min: 1
+    },
+    chargedMinutes: {
+        type: Number,
+        required: true,
+        min: 0
+    },
+    trial: {
+        type: Boolean,
+        default: false
+    },
+    calculationVersion: {
+        type: Number,
+        default: 1
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now
+    }
+});
+
+const LiveUsage = mongoose.model('LiveUsage', liveUsageSchema);
 
 
 // ── XameLive monetisation ──────────────────────────────────────────────────
@@ -1174,7 +1251,9 @@ function liveSessionPublicData(session) {
         startedAt: session.startedAt,
         endedAt: session.endedAt,
         viewerCount: session.viewerCount || 0,
-        playbackUrl: session.playbackUrl || ''
+        playbackUrl: session.playbackUrl || '',
+        allowedMinutes: session.allowedMinutes || 0,
+        usageCutoffAt: session.usageCutoffAt || null
     };
 }
 
@@ -1196,8 +1275,80 @@ async function refreshLiveSessionStatus(session) {
              cloudStatus === 'reconnected') &&
             session.status !== 'LIVE'
         ) {
+            const entitlement = session.entitlementId
+                ? await GoLiveEntitlement.findById(session.entitlementId)
+                : null;
+
+            const now = new Date();
+
+            const remainingMinutes = entitlement
+                ? Math.max(
+                    0,
+                    Number(entitlement.includedMinutes || 0) -
+                    Number(entitlement.usedMinutes || 0)
+                )
+                : 0;
+
+            if (
+                !entitlement ||
+                entitlement.status !== 'ACTIVE' ||
+                entitlement.expiresAt <= now ||
+                remainingMinutes <= 0
+            ) {
+                try {
+                    await cloudflareStreamRequest(
+                        `/stream/live_inputs/${encodeURIComponent(session.cloudflareLiveInputId)}`,
+                        {
+                            method: 'PUT',
+                            body: JSON.stringify({ enabled: false })
+                        }
+                    );
+                } catch (disableErr) {
+                    console.error(
+                        '[XAMELIVE] Failed to disable exhausted live input:',
+                        disableErr.message
+                    );
+
+                    // Do not mark the database session ENDED while the
+                    // Cloudflare input may still be active. The next
+                    // authoritative status refresh can retry the shutdown.
+                    return session;
+                }
+
+                session.status = 'ENDED';
+                session.endedAt = now;
+                session.viewerCount = 0;
+                session.allowedMinutes = 0;
+                session.usageCutoffAt = null;
+
+                await session.save();
+
+                liveViewerSockets.delete(session.sessionId);
+
+                io.emit('live:ended', {
+                    sessionId: session.sessionId
+                });
+
+                return session;
+            }
+
             session.status = 'LIVE';
-            session.startedAt = session.startedAt || new Date();
+            session.startedAt = session.startedAt || now;
+
+            const minuteCutoffAt = new Date(
+                session.startedAt.getTime() +
+                (remainingMinutes * 60 * 1000)
+            );
+
+            // Minutes cannot outlive the entitlement itself.
+            const entitlementExpiry = new Date(entitlement.expiresAt);
+            session.usageCutoffAt =
+                entitlementExpiry < minuteCutoffAt
+                    ? entitlementExpiry
+                    : minuteCutoffAt;
+
+            session.allowedMinutes = remainingMinutes;
+
             await session.save();
 
             io.emit('live:started', liveSessionPublicData(session));
@@ -1213,7 +1364,25 @@ async function refreshLiveSessionStatus(session) {
             session.status = 'ENDED';
             session.endedAt = new Date();
             session.viewerCount = 0;
-            await session.save();
+
+            await recordLiveSessionUsage(
+                session,
+                session.endedAt
+            );
+
+            await LiveSession.updateOne(
+                { _id: session._id },
+                {
+                    $set: {
+                        status: 'ENDED',
+                        endedAt: session.endedAt,
+                        viewerCount: 0,
+                        usageRecorded: true
+                    }
+                }
+            );
+
+            session.usageRecorded = true;
 
             liveViewerSockets.delete(session.sessionId);
             io.emit('live:ended', {
@@ -1251,7 +1420,7 @@ async function ensureGoLiveTrial(xameId) {
                 status: 'ACTIVE',
                 startedAt: now,
                 expiresAt,
-                includedMinutes: 0,
+                includedMinutes: 120,
                 usedMinutes: 0,
                 trial: true,
                 autoRenewing: false,
@@ -1314,6 +1483,138 @@ async function requireGoLiveEntitlement(xameId) {
     return entitlement;
 }
 
+
+
+async function recordLiveSessionUsage(session, endedAt) {
+    if (!session || session.status !== 'ENDED') {
+        return { recorded: false, reason: 'session_not_ended' };
+    }
+
+    if (!session.startedAt || !session.entitlementId) {
+        session.usageRecorded = true;
+        await session.save();
+        return { recorded: false, reason: 'no_billable_live_interval' };
+    }
+
+    if (session.usageRecorded) {
+        return { recorded: false, reason: 'already_recorded' };
+    }
+
+    const start = new Date(session.startedAt);
+    const end = new Date(endedAt || session.endedAt || new Date());
+
+    const elapsedMs = end.getTime() - start.getTime();
+
+    if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) {
+        session.usageRecorded = true;
+        await session.save();
+        return { recorded: false, reason: 'invalid_live_interval' };
+    }
+
+    // Every started minute counts:
+    // 2m 10s -> 3 minutes.
+    const actualMinutes = Math.max(
+        1,
+        Math.ceil(elapsedMs / 60000)
+    );
+
+    const txSession = await mongoose.startSession();
+
+    try {
+        let result = null;
+
+        await txSession.withTransaction(async () => {
+            const existingUsage = await LiveUsage.findOne({
+                sessionId: session.sessionId
+            }).session(txSession);
+
+            if (existingUsage) {
+                await LiveSession.updateOne(
+                    { _id: session._id },
+                    { $set: { usageRecorded: true } },
+                    { session: txSession }
+                );
+
+                result = {
+                    recorded: false,
+                    reason: 'already_recorded'
+                };
+                return;
+            }
+
+            const entitlement = await GoLiveEntitlement.findById(
+                session.entitlementId
+            ).session(txSession);
+
+            if (!entitlement) {
+                throw new Error(
+                    `Go Live entitlement not found for session ${session.sessionId}.`
+                );
+            }
+
+            const remainingMinutes = Math.max(
+                0,
+                entitlement.includedMinutes - entitlement.usedMinutes
+            );
+
+            // Trials and paid entitlements both consume their minute ledger.
+            // Voluntary early endings preserve the existing ceil() behavior.
+            // Watchdog cutoffs pass the exact usageCutoffAt as `endedAt`,
+            // preventing Cloudflare/API delay from consuming extra minutes.
+            const chargedMinutes = Math.min(
+                actualMinutes,
+                remainingMinutes
+            );
+
+            await LiveUsage.create([{
+                sessionId: session.sessionId,
+                entitlementId: entitlement._id,
+                xameId: session.broadcasterXameId,
+                startedAt: start,
+                endedAt: end,
+                actualMinutes,
+                chargedMinutes,
+                trial: entitlement.trial === true,
+                calculationVersion: 2
+            }], { session: txSession });
+
+            if (chargedMinutes > 0) {
+                const updated = await GoLiveEntitlement.updateOne(
+                    {
+                        _id: entitlement._id,
+                        usedMinutes: entitlement.usedMinutes
+                    },
+                    {
+                        $inc: { usedMinutes: chargedMinutes }
+                    },
+                    { session: txSession }
+                );
+
+                if (updated.modifiedCount !== 1) {
+                    throw new Error(
+                        `Go Live entitlement usage update conflicted for session ${session.sessionId}.`
+                    );
+                }
+            }
+
+            await LiveSession.updateOne(
+                { _id: session._id },
+                { $set: { usageRecorded: true } },
+                { session: txSession }
+            );
+
+            result = {
+                recorded: true,
+                actualMinutes,
+                chargedMinutes
+            };
+        });
+
+        return result;
+    } finally {
+        await txSession.endSession();
+    }
+}
 
 
 async function grantGoLiveEntitlement({
@@ -1637,6 +1938,20 @@ app.post('/api/live/start', async (req, res) => {
             });
         }
 
+        const remainingMinutes = Math.max(
+            0,
+            Number(entitlement.includedMinutes || 0) -
+            Number(entitlement.usedMinutes || 0)
+        );
+
+        if (remainingMinutes <= 0) {
+            return res.status(402).json({
+                success: false,
+                code: 'GO_LIVE_MINUTES_EXHAUSTED',
+                message: 'Your Go Live minutes have been exhausted.'
+            });
+        }
+
 
         const title =
             typeof req.body?.title === 'string'
@@ -1718,7 +2033,11 @@ app.post('/api/live/start', async (req, res) => {
             cloudflareLiveInputId: input.uid,
             publishUrl: input.webRTC.url,
             playbackUrl: input.webRTCPlayback.url,
-            viewerCount: 0
+            viewerCount: 0,
+            entitlementId: entitlement._id,
+            allowedMinutes: 0,
+            usageCutoffAt: null,
+            usageRecorded: false
         });
 
         return res.json({
@@ -1770,6 +2089,17 @@ app.post('/api/live/:sessionId/end', async (req, res) => {
         }
 
         if (session.status !== 'ENDED') {
+            // Establish the authoritative live boundary before ending.
+            // A connected/reconnected Cloudflare input establishes startedAt.
+            await refreshLiveSessionStatus(session);
+
+            if (session.status === 'ENDED') {
+                return res.json({
+                    success: true,
+                    session: liveSessionPublicData(session)
+                });
+            }
+
             try {
                 await cloudflareStreamRequest(
                     `/stream/live_inputs/${encodeURIComponent(session.cloudflareLiveInputId)}`,
@@ -1790,7 +2120,25 @@ app.post('/api/live/:sessionId/end', async (req, res) => {
             session.status = 'ENDED';
             session.endedAt = new Date();
             session.viewerCount = 0;
-            await session.save();
+
+            await recordLiveSessionUsage(
+                session,
+                session.endedAt
+            );
+
+            await LiveSession.updateOne(
+                { _id: session._id },
+                {
+                    $set: {
+                        status: 'ENDED',
+                        endedAt: session.endedAt,
+                        viewerCount: 0,
+                        usageRecorded: true
+                    }
+                }
+            );
+
+            session.usageRecorded = true;
 
             liveViewerSockets.delete(session.sessionId);
 
@@ -5471,6 +5819,121 @@ setInterval(() => {
         broadcastOnlineUsers();
     }
 }, PRESENCE_SWEEP_MS);
+
+// ============================================================
+// XAMELIVE — SERVER-SIDE ENTITLEMENT CUTOFF WATCHDOG
+// The cutoff is persisted on LiveSession so a process restart does
+// not erase the user's remaining live-minute allowance.
+// ============================================================
+
+setInterval(async () => {
+    if (mongoose.connection.readyState !== 1) return;
+
+    try {
+        const now = new Date();
+
+        const dueSessions = await LiveSession.find({
+            status: 'LIVE',
+            usageCutoffAt: {
+                $ne: null,
+                $lte: now
+            }
+        });
+
+        for (const session of dueSessions) {
+            try {
+                // Re-check the database state before terminating. This
+                // makes concurrent user-end/watchdog attempts harmless.
+                const current = await LiveSession.findOne({
+                    _id: session._id,
+                    status: 'LIVE',
+                    usageCutoffAt: {
+                        $ne: null,
+                        $lte: now
+                    }
+                });
+
+                if (!current) continue;
+
+                try {
+                    await cloudflareStreamRequest(
+                        `/stream/live_inputs/${encodeURIComponent(current.cloudflareLiveInputId)}`,
+                        {
+                            method: 'PUT',
+                            body: JSON.stringify({ enabled: false })
+                        }
+                    );
+                } catch (disableErr) {
+                    console.error(
+                        `[XAMELIVE] Cutoff disable failed for ${current.sessionId}:`,
+                        disableErr.message
+                    );
+
+                    // Do not consume minutes unless the input was actually
+                    // disabled/finalized. Retry on the next watchdog pass.
+                    continue;
+                }
+
+                // IMPORTANT: account through the persisted cutoff, not the
+                // watchdog execution time.
+                //
+                // Record usage BEFORE persisting ENDED. If accounting fails,
+                // the session remains LIVE in MongoDB and the next watchdog
+                // pass can retry it safely.
+                current.status = 'ENDED';
+                current.endedAt = current.usageCutoffAt;
+                current.viewerCount = 0;
+
+                await recordLiveSessionUsage(
+                    current,
+                    current.usageCutoffAt
+                );
+
+                const finalized = await LiveSession.updateOne(
+                    {
+                        _id: current._id,
+                        status: 'LIVE'
+                    },
+                    {
+                        $set: {
+                            status: 'ENDED',
+                            endedAt: current.endedAt,
+                            viewerCount: 0,
+                            allowedMinutes: current.allowedMinutes || 0,
+                            usageCutoffAt: current.usageCutoffAt,
+                            usageRecorded: true
+                        }
+                    }
+                );
+
+                if (finalized.modifiedCount !== 1) {
+                    throw new Error(
+                        `XameLive cutoff finalization conflict for ${current.sessionId}.`
+                    );
+                }
+
+                current.usageRecorded = true;
+
+                liveViewerSockets.delete(current.sessionId);
+
+                io.emit('live:ended', {
+                    sessionId: current.sessionId
+                });
+
+                console.log(
+                    `[XAMELIVE] Entitlement cutoff reached: ${current.sessionId}`
+                );
+            } catch (sessionErr) {
+                console.error(
+                    `[XAMELIVE] Cutoff watchdog error for ${session.sessionId}:`,
+                    sessionErr.message
+                );
+            }
+        }
+    } catch (err) {
+        console.error('[XAMELIVE] Cutoff watchdog sweep error:', err);
+    }
+}, 15 * 1000);
 
 // ============================================================
 // DISAPPEARING MESSAGES — SERVER-SIDE SWEEP
