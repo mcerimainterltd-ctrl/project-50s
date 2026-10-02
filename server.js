@@ -851,6 +851,22 @@ const goLivePlanSchema = new mongoose.Schema({
         required: true,
         trim: true
     },
+    description: {
+        type: String,
+        default: '',
+        trim: true
+    },
+    googlePlayProductId: {
+        type: String,
+        default: '',
+        trim: true,
+        index: true
+    },
+    displayOrder: {
+        type: Number,
+        default: 0,
+        index: true
+    },
     durationDays: {
         type: Number,
         required: true,
@@ -877,6 +893,36 @@ const goLivePlanSchema = new mongoose.Schema({
 });
 
 const GoLivePlan = mongoose.model('GoLivePlan', goLivePlanSchema);
+
+const goLivePlanAuditSchema = new mongoose.Schema({
+    action: {
+        type: String,
+        required: true,
+        enum: ['CREATE', 'UPDATE', 'ACTIVATE', 'DEACTIVATE', 'REORDER'],
+        index: true
+    },
+    planId: {
+        type: String,
+        required: true,
+        index: true
+    },
+    administrator: {
+        type: String,
+        required: true,
+        index: true
+    },
+    changes: {
+        type: mongoose.Schema.Types.Mixed,
+        default: {}
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now,
+        index: true
+    }
+});
+
+const GoLivePlanAudit = mongoose.model('GoLivePlanAudit', goLivePlanAuditSchema);
 
 const monetisationTransactionSchema = new mongoose.Schema({
     transactionId: {
@@ -1974,6 +2020,7 @@ app.get('/api/live/plans', async (req, res) => {
         const plans = await GoLivePlan.find({
             active: true
         }).sort({
+            displayOrder: 1,
             durationDays: 1
         });
 
@@ -1982,9 +2029,12 @@ app.get('/api/live/plans', async (req, res) => {
             plans: plans.map((plan) => ({
                 planId: plan.planId,
                 name: plan.name,
+                description: plan.description || '',
                 durationDays: plan.durationDays,
                 includedMinutes: plan.includedMinutes,
-                trial: plan.trial === true
+                trial: plan.trial === true,
+                googlePlayProductId: plan.googlePlayProductId || '',
+                displayOrder: plan.displayOrder || 0
             }))
         });
     } catch (err) {
@@ -11073,6 +11123,320 @@ app.get('/api/admin/users', async (req, res) => {
         res.json({ success: true, users, total, pages: Math.ceil(total / parseInt(limit)) });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// XAMELIVE ADMIN COMMERCIAL CATALOG
+// ══════════════════════════════════════════════════════════════════════════════
+
+function xameLiveAdminPayload(req) {
+    const body = req.body || {};
+    return {
+        planId: String(body.planId || '').trim(),
+        name: String(body.name || '').trim(),
+        description: String(body.description || '').trim(),
+        durationDays: Number(body.durationDays),
+        includedMinutes: Number(body.includedMinutes),
+        trial: body.trial === true,
+        active: body.active !== false,
+        googlePlayProductId: String(body.googlePlayProductId || '').trim(),
+        displayOrder: Number.isFinite(Number(body.displayOrder))
+            ? Number(body.displayOrder)
+            : 0
+    };
+}
+
+function validateXameLiveAdminPlan(plan) {
+    if (!plan.planId) return 'Plan ID is required.';
+    if (!/^[A-Za-z0-9._-]{1,100}$/.test(plan.planId)) {
+        return 'Plan ID contains invalid characters.';
+    }
+    if (!plan.name) return 'Plan name is required.';
+    if (!Number.isInteger(plan.durationDays) || plan.durationDays < 1) {
+        return 'Duration must be a whole number of days greater than zero.';
+    }
+    if (!Number.isInteger(plan.includedMinutes) || plan.includedMinutes < 1) {
+        return 'Included minutes must be a whole number greater than zero.';
+    }
+    if (!Number.isInteger(plan.displayOrder) || plan.displayOrder < 0) {
+        return 'Display order must be a whole number zero or greater.';
+    }
+    if (!plan.trial && !plan.googlePlayProductId) {
+        return 'Paid plans require a Google Play product ID.';
+    }
+    if (plan.trial && plan.googlePlayProductId) {
+        return 'Trial plans must not have a Google Play product ID.';
+    }
+    return null;
+}
+
+function xameLiveAdminAuditActor(req) {
+    return req.auth?.user || process.env.ADMIN_CONSOLE_USER || 'unknown-admin';
+}
+
+async function auditXameLivePlan(
+    req,
+    action,
+    planId,
+    changes = {},
+    session = null
+) {
+    const audit = {
+        action,
+        planId,
+        administrator: xameLiveAdminAuditActor(req),
+        changes
+    };
+
+    if (session) {
+        await GoLivePlanAudit.create([audit], { session });
+        return;
+    }
+
+    await GoLivePlanAudit.create(audit);
+}
+
+app.get('/api/admin/xamelive/plans', adminConsoleAuth, async (req, res) => {
+    if (!verifyAdminSecret(req, res)) return;
+
+    try {
+        const plans = await GoLivePlan.find({})
+            .sort({ displayOrder: 1, durationDays: 1, planId: 1 })
+            .lean();
+
+        return res.json({ success: true, plans });
+    } catch (err) {
+        console.error('[XAMELIVE ADMIN] plan list failed:', err);
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to load XameLive plans.'
+        });
+    }
+});
+
+app.post('/api/admin/xamelive/plans', adminConsoleAuth, async (req, res) => {
+    if (!verifyAdminSecret(req, res)) return;
+
+    try {
+        const plan = xameLiveAdminPayload(req);
+        const validationError = validateXameLiveAdminPlan(plan);
+
+        if (validationError) {
+            return res.status(400).json({
+                success: false,
+                message: validationError
+            });
+        }
+
+        const existing = await GoLivePlan.findOne({ planId: plan.planId }).lean();
+        if (existing) {
+            return res.status(409).json({
+                success: false,
+                message: 'A plan with that Plan ID already exists.'
+            });
+        }
+
+        if (plan.googlePlayProductId) {
+            const productOwner = await GoLivePlan.findOne({
+                googlePlayProductId: plan.googlePlayProductId
+            }).lean();
+
+            if (productOwner) {
+                return res.status(409).json({
+                    success: false,
+                    message: 'That Google Play product ID is already assigned to another plan.'
+                });
+            }
+        }
+
+        const created = await GoLivePlan.create(plan);
+
+        await auditXameLivePlan(
+            req,
+            'CREATE',
+            created.planId,
+            { after: created.toObject() }
+        );
+
+        return res.status(201).json({
+            success: true,
+            plan: created
+        });
+    } catch (err) {
+        console.error('[XAMELIVE ADMIN] plan create failed:', err);
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to create XameLive plan.'
+        });
+    }
+});
+
+app.put('/api/admin/xamelive/plans/:planId', adminConsoleAuth, async (req, res) => {
+    if (!verifyAdminSecret(req, res)) return;
+
+    try {
+        const planId = String(req.params.planId || '').trim();
+        const plan = xameLiveAdminPayload(req);
+        plan.planId = planId;
+
+        const validationError = validateXameLiveAdminPlan(plan);
+        if (validationError) {
+            return res.status(400).json({
+                success: false,
+                message: validationError
+            });
+        }
+
+        const existing = await GoLivePlan.findOne({ planId });
+        if (!existing) {
+            return res.status(404).json({
+                success: false,
+                message: 'XameLive plan not found.'
+            });
+        }
+
+        if (plan.googlePlayProductId) {
+            const productOwner = await GoLivePlan.findOne({
+                googlePlayProductId: plan.googlePlayProductId,
+                planId: { $ne: planId }
+            }).lean();
+
+            if (productOwner) {
+                return res.status(409).json({
+                    success: false,
+                    message: 'That Google Play product ID is already assigned to another plan.'
+                });
+            }
+        }
+
+        const before = existing.toObject();
+
+        const action =
+            before.active !== plan.active
+                ? (plan.active ? 'ACTIVATE' : 'DEACTIVATE')
+                : before.displayOrder !== plan.displayOrder
+                    ? 'REORDER'
+                    : 'UPDATE';
+
+        const session = await mongoose.startSession();
+
+        try {
+            let updatedPlan = null;
+
+            await session.withTransaction(async () => {
+                existing.name = plan.name;
+                existing.description = plan.description;
+                existing.durationDays = plan.durationDays;
+                existing.includedMinutes = plan.includedMinutes;
+                existing.trial = plan.trial;
+                existing.active = plan.active;
+                existing.googlePlayProductId = plan.googlePlayProductId;
+                existing.displayOrder = plan.displayOrder;
+
+                await existing.save({ session });
+
+                updatedPlan = existing.toObject();
+
+                await auditXameLivePlan(req, action, planId, {
+                    before: {
+                        name: before.name,
+                        description: before.description,
+                        durationDays: before.durationDays,
+                        includedMinutes: before.includedMinutes,
+                        trial: before.trial,
+                        active: before.active,
+                        googlePlayProductId:
+                            before.googlePlayProductId || '',
+                        displayOrder: before.displayOrder || 0
+                    },
+                    after: {
+                        name: updatedPlan.name,
+                        description: updatedPlan.description,
+                        durationDays: updatedPlan.durationDays,
+                        includedMinutes: updatedPlan.includedMinutes,
+                        trial: updatedPlan.trial,
+                        active: updatedPlan.active,
+                        googlePlayProductId:
+                            updatedPlan.googlePlayProductId || '',
+                        displayOrder:
+                            updatedPlan.displayOrder || 0
+                    }
+                }, session);
+            });
+
+            return res.json({
+                success: true,
+                plan: updatedPlan
+            });
+        } finally {
+            await session.endSession();
+        }
+    } catch (err) {
+        console.error('[XAMELIVE ADMIN] plan update failed:', err);
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to update XameLive plan.'
+        });
+    }
+});
+
+app.get('/api/admin/xamelive/audit', adminConsoleAuth, async (req, res) => {
+    if (!verifyAdminSecret(req, res)) return;
+
+    try {
+        const filter = {};
+
+        if (req.query.administrator) {
+            filter.administrator = String(req.query.administrator).trim();
+        }
+
+        if (req.query.planId) {
+            filter.planId = String(req.query.planId).trim();
+        }
+
+        if (req.query.from || req.query.to) {
+            filter.createdAt = {};
+
+            if (req.query.from) {
+                const from = new Date(String(req.query.from));
+                if (!Number.isNaN(from.getTime())) filter.createdAt.$gte = from;
+            }
+
+            if (req.query.to) {
+                const to = new Date(String(req.query.to));
+                if (!Number.isNaN(to.getTime())) {
+                    to.setHours(23, 59, 59, 999);
+                    filter.createdAt.$lte = to;
+                }
+            }
+
+            if (!Object.keys(filter.createdAt).length) {
+                delete filter.createdAt;
+            }
+        }
+
+        const limit = Math.min(
+            Math.max(Number.parseInt(req.query.limit || '100', 10) || 100, 1),
+            500
+        );
+
+        const audits = await GoLivePlanAudit.find(filter)
+            .sort({ createdAt: -1 })
+            .limit(limit)
+            .lean();
+
+        return res.json({
+            success: true,
+            audits
+        });
+    } catch (err) {
+        console.error('[XAMELIVE ADMIN] audit lookup failed:', err);
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to load XameLive audit history.'
+        });
     }
 });
 

@@ -177,6 +177,7 @@
     <button class="tab" onclick="switchTab('official',this)" id="official-tab">🛡️ Official</button>
     <button class="tab" onclick="switchTab('wallet',this)" id="wallet-tab">💰 Wallet</button>
     <button class="tab" onclick="switchTab('xametel',this)" id="xametel-tab">📞 XameTel</button>
+    <button class="tab" onclick="switchTab('xamelive',this)" id="xamelive-tab">🔴 XameLive</button>
   </div>
 
   <!-- USERS TAB -->
@@ -468,6 +469,105 @@
     </div>
   </div>
 
+
+  <!-- XAMELIVE TAB -->
+  <div id="tab-xamelive" class="content hidden">
+    <div class="card">
+      <div class="sl">XAMELIVE PLAN CATALOG</div>
+      <p style="color:#9CA3AF;font-size:13px;margin:0 0 14px">
+        Configure the commercial Go Live catalog. Google Play remains the
+        customer billing authority.
+      </p>
+
+      <input type="hidden" id="xamelive-original-plan-id">
+
+      <div class="grid2">
+        <div>
+          <label class="label">PLAN ID</label>
+          <input id="xamelive-plan-id" class="input mono" placeholder="e.g. weekly">
+        </div>
+        <div>
+          <label class="label">NAME</label>
+          <input id="xamelive-name" class="input" placeholder="Plan name">
+        </div>
+        <div>
+          <label class="label">DURATION (DAYS)</label>
+          <input id="xamelive-duration" class="input" type="number" min="1">
+        </div>
+        <div>
+          <label class="label">INCLUDED MINUTES</label>
+          <input id="xamelive-minutes" class="input" type="number" min="0">
+        </div>
+        <div>
+          <label class="label">GOOGLE PLAY PRODUCT ID</label>
+          <input id="xamelive-product" class="input mono"
+                 placeholder="Required for paid plans">
+        </div>
+        <div>
+          <label class="label">DISPLAY ORDER</label>
+          <input id="xamelive-order" class="input" type="number" min="0" value="0">
+        </div>
+      </div>
+
+      <div style="margin-top:12px">
+        <label class="label">DESCRIPTION</label>
+        <textarea id="xamelive-description" class="input" rows="3"
+                  placeholder="Customer-facing plan description"></textarea>
+      </div>
+
+      <div style="display:flex;gap:18px;align-items:center;margin:14px 0">
+        <label><input type="checkbox" id="xamelive-trial"> Free Trial</label>
+        <label><input type="checkbox" id="xamelive-active" checked> Active</label>
+      </div>
+
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="saveXameLivePlan()">💾 Save Plan</button>
+        <button class="btn" onclick="newXameLivePlan()">＋ New Plan</button>
+        <button class="btn" onclick="loadXameLivePlans()">↻ Refresh</button>
+      </div>
+
+      <div id="xamelive-plan-msg" style="margin-top:10px;font-size:13px"></div>
+    </div>
+
+    <div class="card">
+      <div class="sl">CURRENT PLANS</div>
+      <div id="xamelive-plan-list">
+        <p style="color:#6B7280;font-size:13px">Loading...</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="sl">AUDIT HISTORY</div>
+
+      <div class="grid2">
+        <div>
+          <label class="label">ADMINISTRATOR</label>
+          <input id="xamelive-audit-admin" class="input" placeholder="Optional">
+        </div>
+        <div>
+          <label class="label">PLAN ID</label>
+          <input id="xamelive-audit-plan" class="input mono" placeholder="Optional">
+        </div>
+        <div>
+          <label class="label">FROM</label>
+          <input id="xamelive-audit-from" class="input" type="date">
+        </div>
+        <div>
+          <label class="label">TO</label>
+          <input id="xamelive-audit-to" class="input" type="date">
+        </div>
+      </div>
+
+      <div style="margin-top:12px">
+        <button class="btn" onclick="loadXameLiveAudit()">🔎 Filter Audit</button>
+      </div>
+
+      <div id="xamelive-audit-list" style="margin-top:14px">
+        <p style="color:#6B7280;font-size:13px">No audit history loaded.</p>
+      </div>
+    </div>
+  </div>
+
   <div id="tab-log" class="content hidden">
     <div class="card">
       <div class="sl">ACTION LOG</div>
@@ -548,7 +648,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 function switchTab(id, btn) {
-  ['users','announce','log','wallet','xametel','official'].forEach(t => {
+  ['users','announce','log','wallet','xametel','official','xamelive'].forEach(t => {
     document.getElementById('tab-'+t).classList.add('hidden');
   });
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -1311,6 +1411,230 @@ async function deleteOfficialMessage() {
 }
 
 // updateContextBadge is called explicitly after renderUserPanel in searchUser()
+
+
+// ── XAMELIVE ADMIN FUNCTIONS ────────────────────────────────────────────────
+function xameLiveSecret() {
+  return document.getElementById('admin-secret').value.trim();
+}
+
+function xameLiveEscape(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch]));
+}
+
+async function xameLiveApi(method, path, body) {
+  const secret = xameLiveSecret();
+
+  if (!secret) {
+    return {success:false, message:'Enter admin secret first.'};
+  }
+
+  try {
+    const res = await fetch(SERVER + path, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-secret': secret
+      },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    return await res.json();
+  } catch (e) {
+    return {success:false, message:e.message};
+  }
+}
+
+function newXameLivePlan() {
+  document.getElementById('xamelive-original-plan-id').value = '';
+  document.getElementById('xamelive-plan-id').value = '';
+  document.getElementById('xamelive-plan-id').disabled = false;
+  document.getElementById('xamelive-name').value = '';
+  document.getElementById('xamelive-description').value = '';
+  document.getElementById('xamelive-duration').value = '';
+  document.getElementById('xamelive-minutes').value = '';
+  document.getElementById('xamelive-product').value = '';
+  document.getElementById('xamelive-order').value = '0';
+  document.getElementById('xamelive-trial').checked = false;
+  document.getElementById('xamelive-active').checked = true;
+  document.getElementById('xamelive-plan-msg').textContent = '';
+}
+
+function editXameLivePlanById(planId) {
+  const plan = window.xameLivePlansById?.[planId];
+  if (!plan) {
+    return;
+  }
+  editXameLivePlan(plan);
+}
+
+function editXameLivePlan(plan) {
+  document.getElementById('xamelive-original-plan-id').value = plan.planId;
+  document.getElementById('xamelive-plan-id').value = plan.planId;
+  document.getElementById('xamelive-plan-id').disabled = true;
+  document.getElementById('xamelive-name').value = plan.name || '';
+  document.getElementById('xamelive-description').value = plan.description || '';
+  document.getElementById('xamelive-duration').value = plan.durationDays ?? '';
+  document.getElementById('xamelive-minutes').value = plan.includedMinutes ?? '';
+  document.getElementById('xamelive-product').value = plan.googlePlayProductId || '';
+  document.getElementById('xamelive-order').value = plan.displayOrder ?? 0;
+  document.getElementById('xamelive-trial').checked = plan.trial === true;
+  document.getElementById('xamelive-active').checked = plan.active !== false;
+  document.getElementById('xamelive-plan-msg').textContent = '';
+}
+
+async function loadXameLivePlans() {
+  const el = document.getElementById('xamelive-plan-list');
+  el.innerHTML = '<p style="color:#6B7280;font-size:13px">Loading...</p>';
+
+  const d = await xameLiveApi('GET', '/api/admin/xamelive/plans');
+
+  if (!d.success) {
+    el.innerHTML = '<p style="color:red;font-size:13px">❌ ' + d.message + '</p>';
+    return;
+  }
+
+  if (!d.plans || !d.plans.length) {
+    el.innerHTML = '<p style="color:#6B7280;font-size:13px">No plans configured yet.</p>';
+    return;
+  }
+
+  window.xameLivePlansById = Object.fromEntries(
+    d.plans.map(plan => [plan.planId, plan])
+  );
+
+  el.innerHTML = d.plans.map(plan => {
+    const planId = xameLiveEscape(plan.planId);
+    const name = xameLiveEscape(plan.name || plan.planId);
+    const productId = xameLiveEscape(plan.googlePlayProductId || '');
+    const safePlanId = String(plan.planId || '').replace(/'/g, "\\'");
+    return `
+    <div style="border:1px solid #374151;border-radius:10px;padding:12px;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
+        <div>
+          <div style="font-weight:700">${name}</div>
+          <div class="mono" style="font-size:11px;color:#9CA3AF">${planId}</div>
+        </div>
+        <span style="font-size:12px;color:${plan.active ? '#00B0A0' : '#9CA3AF'}">
+          ${plan.active ? 'ACTIVE' : 'INACTIVE'}
+        </span>
+      </div>
+      <div style="font-size:12px;color:#9CA3AF;margin-top:7px">
+        ${plan.durationDays} day(s) · ${plan.includedMinutes} minutes ·
+        ${plan.trial ? 'FREE TRIAL' : 'PAID'}
+        · order ${plan.displayOrder ?? 0}
+      </div>
+      <div style="font-size:12px;color:#9CA3AF;margin-top:4px">
+        ${plan.googlePlayProductId
+          ? 'Play: ' + productId
+          : 'No Google Play product'}
+      </div>
+      <div style="margin-top:9px">
+        <button class="btn" onclick="editXameLivePlanById('${safePlanId}')">Edit</button>
+      </div>
+    </div>
+  `;
+  }).join('');
+}
+
+async function saveXameLivePlan() {
+  const originalId =
+    document.getElementById('xamelive-original-plan-id').value.trim();
+  const planId =
+    document.getElementById('xamelive-plan-id').value.trim();
+
+  const body = {
+    planId,
+    name: document.getElementById('xamelive-name').value.trim(),
+    description: document.getElementById('xamelive-description').value.trim(),
+    durationDays: Number(document.getElementById('xamelive-duration').value),
+    includedMinutes: Number(document.getElementById('xamelive-minutes').value),
+    googlePlayProductId:
+      document.getElementById('xamelive-product').value.trim(),
+    displayOrder: Number(document.getElementById('xamelive-order').value),
+    trial: document.getElementById('xamelive-trial').checked,
+    active: document.getElementById('xamelive-active').checked
+  };
+
+  const d = await xameLiveApi(
+    originalId ? 'PUT' : 'POST',
+    originalId
+      ? '/api/admin/xamelive/plans/' + encodeURIComponent(originalId)
+      : '/api/admin/xamelive/plans',
+    body
+  );
+
+  const msg = document.getElementById('xamelive-plan-msg');
+
+  if (!d.success) {
+    msg.innerHTML = '<span style="color:red">❌ ' + d.message + '</span>';
+    return;
+  }
+
+  msg.innerHTML = '<span style="color:#00B0A0">✅ Plan saved.</span>';
+  await loadXameLivePlans();
+  await loadXameLiveAudit();
+}
+
+async function loadXameLiveAudit() {
+  const params = new URLSearchParams();
+
+  const admin = document.getElementById('xamelive-audit-admin').value.trim();
+  const planId = document.getElementById('xamelive-audit-plan').value.trim();
+  const from = document.getElementById('xamelive-audit-from').value;
+  const to = document.getElementById('xamelive-audit-to').value;
+
+  if (admin) params.set('administrator', admin);
+  if (planId) params.set('planId', planId);
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+
+  const el = document.getElementById('xamelive-audit-list');
+  el.innerHTML = '<p style="color:#6B7280;font-size:13px">Loading...</p>';
+
+  const d = await xameLiveApi(
+    'GET',
+    '/api/admin/xamelive/audit?' + params.toString()
+  );
+
+  if (!d.success) {
+    el.innerHTML = '<p style="color:red;font-size:13px">❌ ' + d.message + '</p>';
+    return;
+  }
+
+  if (!d.audits || !d.audits.length) {
+    el.innerHTML =
+      '<p style="color:#6B7280;font-size:13px">No matching audit records.</p>';
+    return;
+  }
+
+  el.innerHTML = d.audits.map(a => `
+    <div style="border-bottom:1px solid #374151;padding:9px 0">
+      <div style="font-size:12px">
+        <b>${xameLiveEscape(a.action)}</b> · ${xameLiveEscape(a.planId)}
+      </div>
+      <div style="font-size:11px;color:#9CA3AF">
+        ${xameLiveEscape(a.administrator)} · ${xameLiveEscape(new Date(a.createdAt).toLocaleString())}
+      </div>
+    </div>
+  `).join('');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const xameLiveTab = document.getElementById('xamelive-tab');
+
+  if (xameLiveTab) {
+    xameLiveTab.addEventListener('click', () => {
+      loadXameLivePlans();
+      loadXameLiveAudit();
+    });
+  }
+});
 
 // ── OFFICIAL ACCOUNT FUNCTIONS ───────────────────────────────────────────────
 const OFFICIAL_ID = '058000000001';
