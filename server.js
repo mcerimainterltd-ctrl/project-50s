@@ -2995,6 +2995,7 @@ const userToSocketMap      = new Map();   // userId  → socketId
 const socketToUserMap      = new Map();   // socketId → userId
 const sessionTokenToSocketMap = new Map(); // sessionToken → socketId
 const nativePresenceSessions = new Map(); // sessionToken -> { xameId, lastSeen }
+const nativePresenceRevokedTokens = new Map(); // sessionToken -> revokedAt
 const pendingNativeCallOffers = new Map(); // recipientId -> { offer, callerId, callType, callId, caller, timestamp }
 let lastCallPushOutcome = null; // { recipientId, success, error, timestamp } — debug only
 
@@ -3723,6 +3724,10 @@ app.post('/api/logout', async (req, res) => {
             });
         }
 
+        // Revoke native presence before removing the session so an in-flight
+        // heartbeat cannot recreate presence after explicit logout.
+        nativePresenceRevokedTokens.set(currentToken, Date.now());
+
         authUser.sessions = (authUser.sessions || []).filter(
             s => s.token !== currentToken
         );
@@ -3734,6 +3739,11 @@ app.post('/api/logout', async (req, res) => {
         if (currentSocketId &&
             socketToUserMap.get(currentSocketId) === userId) {
             sessionTokenToSocketMap.delete(currentToken);
+
+            const loggedOutSocket = io.sockets.sockets.get(currentSocketId);
+            if (loggedOutSocket) {
+                loggedOutSocket.disconnect(true);
+            }
         }
 
         const hasOtherSocket = Array.from(socketToUserMap.entries()).some(
@@ -6121,6 +6131,13 @@ app.post('/api/presence/heartbeat', async (req, res) => {
             });
         }
 
+        if (nativePresenceRevokedTokens.has(token)) {
+            return res.status(401).json({
+                success: false,
+                message: 'Session revoked.'
+            });
+        }
+
         const user = await User.findOne({
             sessions: { $elemMatch: { token } }
         }).select('xameId');
@@ -6132,8 +6149,25 @@ app.post('/api/presence/heartbeat', async (req, res) => {
             });
         }
 
+        // Logout may have occurred while the database lookup was in flight.
+        // Re-check the revocation marker immediately before restoring presence.
+        if (nativePresenceRevokedTokens.has(token)) {
+            return res.status(401).json({
+                success: false,
+                message: 'Session revoked.'
+            });
+        }
+
         const id = user.xameId;
         nativePresenceSessions.set(token, { xameId: id, lastSeen: Date.now() });
+
+        if (nativePresenceRevokedTokens.has(token)) {
+            nativePresenceSessions.delete(token);
+            return res.status(401).json({
+                success: false,
+                message: 'Session revoked.'
+            });
+        }
 
         onlineUsers.add(id);
         onlineUserTimestamps.set(id, Date.now());
