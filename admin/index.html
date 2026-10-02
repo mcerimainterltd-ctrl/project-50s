@@ -136,6 +136,50 @@
   .ai-send:disabled{opacity:.4;cursor:not-allowed}
   .ai-context-badge{padding:6px 12px;border-top:1px solid #1F2937;font-size:11px;color:#6B7280;flex-shrink:0}
   .ai-context-badge span{color:#00B0A0;font-weight:600}
+.xamelive-auth-overlay{
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.72);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  z-index:9999;
+  padding:20px;
+}
+.xamelive-auth-overlay.hidden{display:none}
+.xamelive-auth-modal{
+  width:min(420px,100%);
+  background:#111827;
+  border:1px solid #374151;
+  border-radius:14px;
+  padding:20px;
+  box-shadow:0 24px 70px rgba(0,0,0,.5);
+  animation:slideIn .2s ease;
+}
+.xamelive-auth-modal h2{
+  margin:0 0 6px;
+  font-size:17px;
+}
+.xamelive-auth-modal p{
+  margin:0 0 16px;
+  color:#9CA3AF;
+  font-size:13px;
+  line-height:1.5;
+}
+.xamelive-auth-actions{
+  display:flex;
+  gap:10px;
+  justify-content:flex-end;
+  margin-top:14px;
+}
+.xamelive-auth-error{
+  color:#F87171;
+  font-size:13px;
+  margin-top:10px;
+}
+.xamelive-auth-overlay .input{
+  width:100%;
+}
 </style>
 </head>
 <body>
@@ -153,6 +197,35 @@
       </div>
       <div id="pin-error" class="error-msg hidden"></div>
       <button class="btn btn-primary btn-full" style="margin-top:12px" onclick="doLogin()">Access Console</button>
+    </div>
+  </div>
+</div>
+
+<!-- XAMELIVE AUTH MODAL -->
+<div id="xamelive-auth-overlay" class="xamelive-auth-overlay hidden">
+  <div class="xamelive-auth-modal" role="dialog"
+       aria-modal="true" aria-labelledby="xamelive-auth-title">
+    <h2 id="xamelive-auth-title">🔐 XameLive Administration</h2>
+    <p>
+      Enter the XameLive Admin Secret to access the Go Live
+      commercial catalog and audit controls.
+    </p>
+
+    <input
+      type="password"
+      id="xamelive-auth-secret"
+      class="input mono"
+      autocomplete="off"
+      placeholder="XameLive Admin Secret"
+      onkeydown="if(event.key==='Enter')authenticateXameLive()">
+
+    <div id="xamelive-auth-error" class="xamelive-auth-error hidden"></div>
+
+    <div class="xamelive-auth-actions">
+      <button class="btn" onclick="cancelXameLiveAuth()">Cancel</button>
+      <button class="btn btn-primary"
+              id="xamelive-auth-btn"
+              onclick="authenticateXameLive()">Unlock XameLive</button>
     </div>
   </div>
 </div>
@@ -612,6 +685,7 @@
 <script>
 const SERVER = '';
 const ADMIN_PIN = '061266'; // Change before distributing
+let xameLiveSessionSecret = '';
 let currentUser = null;
 let logEntries = [];
 let aiHistory = [];
@@ -648,12 +722,92 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 function switchTab(id, btn) {
+  if (id === 'xamelive' && !xameLiveSessionSecret) {
+    showXameLiveAuth();
+    return;
+  }
+
   ['users','announce','log','wallet','xametel','official','xamelive'].forEach(t => {
     document.getElementById('tab-'+t).classList.add('hidden');
   });
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.getElementById('tab-'+id).classList.remove('hidden');
   btn.classList.add('active');
+
+  if (id === 'xamelive') {
+    loadXameLivePlans();
+    loadXameLiveAudit();
+  }
+}
+
+function showXameLiveAuth(message = '') {
+  const overlay = document.getElementById('xamelive-auth-overlay');
+  const input = document.getElementById('xamelive-auth-secret');
+  const error = document.getElementById('xamelive-auth-error');
+
+  error.textContent = message;
+  error.classList.toggle('hidden', !message);
+  input.value = '';
+  overlay.classList.remove('hidden');
+
+  setTimeout(() => input.focus(), 0);
+}
+
+function cancelXameLiveAuth() {
+  document.getElementById('xamelive-auth-overlay').classList.add('hidden');
+  document.getElementById('xamelive-auth-secret').value = '';
+  document.getElementById('xamelive-auth-error').classList.add('hidden');
+}
+
+async function authenticateXameLive() {
+  const input = document.getElementById('xamelive-auth-secret');
+  const error = document.getElementById('xamelive-auth-error');
+  const button = document.getElementById('xamelive-auth-btn');
+  const secret = input.value.trim();
+
+  error.classList.add('hidden');
+
+  if (!secret) {
+    error.textContent = 'Admin secret is required.';
+    error.classList.remove('hidden');
+    input.focus();
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = 'Verifying…';
+
+  try {
+    const res = await fetch(
+      SERVER + '/api/admin/xamelive/plans',
+      {
+        method: 'GET',
+        headers: { 'x-admin-secret': secret }
+      }
+    );
+
+    let data = {};
+    try {
+      data = await res.json();
+    } catch (_) {}
+
+    if (!res.ok || data.success !== true) {
+      throw new Error(data.message || 'Invalid Admin Secret.');
+    }
+
+    xameLiveSessionSecret = secret;
+    cancelXameLiveAuth();
+
+    const tab = document.getElementById('xamelive-tab');
+    switchTab('xamelive', tab);
+  } catch (e) {
+    error.textContent = e.message || 'XameLive authentication failed.';
+    error.classList.remove('hidden');
+    input.select();
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Unlock XameLive';
+  }
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────
@@ -1415,7 +1569,7 @@ async function deleteOfficialMessage() {
 
 // ── XAMELIVE ADMIN FUNCTIONS ────────────────────────────────────────────────
 function xameLiveSecret() {
-  return document.getElementById('admin-secret').value.trim();
+  return xameLiveSessionSecret;
 }
 
 function xameLiveEscape(value) {
@@ -1432,7 +1586,8 @@ async function xameLiveApi(method, path, body) {
   const secret = xameLiveSecret();
 
   if (!secret) {
-    return {success:false, message:'Enter admin secret first.'};
+    showXameLiveAuth();
+    return {success:false, message:'XameLive authentication required.'};
   }
 
   try {
@@ -1444,7 +1599,22 @@ async function xameLiveApi(method, path, body) {
       },
       body: body ? JSON.stringify(body) : undefined
     });
-    return await res.json();
+
+    let data = {};
+    try {
+      data = await res.json();
+    } catch (_) {}
+
+    if (res.status === 403) {
+      xameLiveSessionSecret = '';
+      showXameLiveAuth(data.message || 'XameLive Admin Secret rejected.');
+      return {
+        success:false,
+        message:data.message || 'XameLive authentication expired.'
+      };
+    }
+
+    return data;
   } catch (e) {
     return {success:false, message:e.message};
   }
@@ -1625,16 +1795,7 @@ async function loadXameLiveAudit() {
   `).join('');
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  const xameLiveTab = document.getElementById('xamelive-tab');
 
-  if (xameLiveTab) {
-    xameLiveTab.addEventListener('click', () => {
-      loadXameLivePlans();
-      loadXameLiveAudit();
-    });
-  }
-});
 
 // ── OFFICIAL ACCOUNT FUNCTIONS ───────────────────────────────────────────────
 const OFFICIAL_ID = '058000000001';
