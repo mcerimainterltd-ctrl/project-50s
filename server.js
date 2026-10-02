@@ -11496,6 +11496,15 @@ async function auditXameLivePlan(
     await GoLivePlanAudit.create(audit);
 }
 
+function verifyAdminSecret(req, res) {
+    const secret = req.body.secret || req.headers['x-admin-secret'];
+    if (!secret || secret !== process.env.ADMIN_SECRET) {
+        res.status(403).json({ success: false, message: 'Unauthorized.' });
+        return false;
+    }
+    return true;
+}
+
 app.get('/api/admin/xamelive/plans', adminConsoleAuth, async (req, res) => {
     if (!verifyAdminSecret(req, res)) return;
 
@@ -12183,14 +12192,6 @@ const PORT = process.env.PORT || 8080;
 createDirectories().then(() => {
 
 // ── ADMIN ENDPOINTS ───────────────────────────────────────────────────────────
-function verifyAdminSecret(req, res) {
-    const secret = req.body.secret || req.headers['x-admin-secret'];
-    if (!secret || secret !== process.env.ADMIN_SECRET) {
-        res.status(403).json({ success: false, message: 'Unauthorized.' });
-        return false;
-    }
-    return true;
-}
 
 app.post('/api/admin/reset-password', async (req, res) => {
     if (!verifyAdminSecret(req, res)) return;
