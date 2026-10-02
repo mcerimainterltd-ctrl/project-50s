@@ -42,6 +42,7 @@ require('dotenv').config();
 const xameTvService = require('./xametv_service');
 const admin = require('firebase-admin');
 const basicAuth = require('express-basic-auth');
+const { google } = require('googleapis');
 try {
   const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');
   if (serviceAccount.project_id) {
@@ -49,6 +50,63 @@ try {
     console.log('Firebase Admin initialized');
   }
 } catch(e) { console.warn('Firebase Admin init failed:', e.message); }
+
+// ── Google Play billing ────────────────────────────────────────────────────
+// Credentials are supplied only through the deployment environment.
+// The service-account JSON must never be stored in source control or sent
+// by the client.
+let googlePlayPublisher = null;
+
+function getGooglePlayPublisher() {
+    if (googlePlayPublisher) return googlePlayPublisher;
+
+    const rawCredentials = process.env.GOOGLE_PLAY_SERVICE_ACCOUNT || '';
+    if (!rawCredentials) {
+        const err = new Error('Google Play service account is not configured.');
+        err.code = 'GOOGLE_PLAY_NOT_CONFIGURED';
+        throw err;
+    }
+
+    let credentials;
+    try {
+        credentials = JSON.parse(rawCredentials);
+    } catch (err) {
+        const configError = new Error('Google Play service account configuration is invalid.');
+        configError.code = 'GOOGLE_PLAY_CONFIG_INVALID';
+        throw configError;
+    }
+
+    if (!credentials.client_email || !credentials.private_key) {
+        const configError = new Error('Google Play service account credentials are incomplete.');
+        configError.code = 'GOOGLE_PLAY_CONFIG_INVALID';
+        throw configError;
+    }
+
+    const auth = new google.auth.GoogleAuth({
+        credentials,
+        scopes: ['https://www.googleapis.com/auth/androidpublisher']
+    });
+
+    googlePlayPublisher = google.androidpublisher({
+        version: 'v3',
+        auth
+    });
+
+    return googlePlayPublisher;
+}
+
+function getGooglePlayPackageName() {
+    const packageName =
+        String(process.env.GOOGLE_PLAY_PACKAGE_NAME || 'com.xamepage.app').trim();
+
+    if (!packageName) {
+        const err = new Error('Google Play package name is not configured.');
+        err.code = 'GOOGLE_PLAY_NOT_CONFIGURED';
+        throw err;
+    }
+
+    return packageName;
+}
 
 // ============================================================
 // SERVER SETUP
@@ -2043,6 +2101,246 @@ app.get('/api/live/plans', async (req, res) => {
         return res.status(500).json({
             success: false,
             message: 'Unable to load Go Live plans.'
+        });
+    }
+});
+
+app.post('/api/live/purchase/verify', async (req, res) => {
+    try {
+        const authUser = await getAuthenticatedUserFromSession(req);
+        if (!authUser) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized.'
+            });
+        }
+
+        const purchaseToken =
+            typeof req.body?.purchaseToken === 'string'
+                ? req.body.purchaseToken.trim()
+                : '';
+
+        if (!purchaseToken) {
+            return res.status(400).json({
+                success: false,
+                code: 'GO_LIVE_PURCHASE_TOKEN_REQUIRED',
+                message: 'A Google Play purchase token is required.'
+            });
+        }
+
+        const packageName = getGooglePlayPackageName();
+        const publisher = getGooglePlayPublisher();
+
+        let purchase;
+        try {
+            const response =
+                await publisher.purchases.productsv2.getproductpurchasev2({
+                    packageName,
+                    token: purchaseToken
+                });
+
+            purchase = response.data || {};
+        } catch (err) {
+            const status = Number(err?.response?.status || err?.code || 0);
+
+            if (status === 404 || status === 400) {
+                return res.status(400).json({
+                    success: false,
+                    code: 'GO_LIVE_PURCHASE_INVALID',
+                    message: 'The Google Play purchase could not be verified.'
+                });
+            }
+
+            throw err;
+        }
+
+        const purchaseState =
+            purchase.purchaseStateContext?.purchaseState || '';
+
+        if (purchaseState === 'PENDING') {
+            return res.status(409).json({
+                success: false,
+                code: 'GO_LIVE_PURCHASE_PENDING',
+                message: 'The Google Play purchase is still pending.'
+            });
+        }
+
+        if (purchaseState !== 'PURCHASED') {
+            return res.status(400).json({
+                success: false,
+                code: 'GO_LIVE_PURCHASE_NOT_COMPLETED',
+                message: 'The Google Play purchase is not completed.'
+            });
+        }
+
+        const lineItems = Array.isArray(purchase.productLineItem)
+            ? purchase.productLineItem
+            : [];
+
+        if (lineItems.length !== 1) {
+            return res.status(400).json({
+                success: false,
+                code: 'GO_LIVE_PURCHASE_PRODUCT_INVALID',
+                message: 'The Google Play purchase does not contain exactly one product.'
+            });
+        }
+
+        const verifiedProductId =
+            String(lineItems[0]?.productId || '').trim();
+
+        if (!verifiedProductId) {
+            return res.status(400).json({
+                success: false,
+                code: 'GO_LIVE_PURCHASE_PRODUCT_INVALID',
+                message: 'Google Play did not return a valid product ID.'
+            });
+        }
+
+        const plan = await GoLivePlan.findOne({
+            active: true,
+            trial: false,
+            googlePlayProductId: verifiedProductId
+        });
+
+        if (!plan) {
+            return res.status(400).json({
+                success: false,
+                code: 'GO_LIVE_PRODUCT_NOT_CONFIGURED',
+                message: 'This Google Play product is not an active Go Live paid plan.'
+            });
+        }
+
+        if (!Number.isInteger(Number(plan.includedMinutes)) ||
+            Number(plan.includedMinutes) < 1) {
+            return res.status(500).json({
+                success: false,
+                code: 'GO_LIVE_PLAN_INVALID',
+                message: 'The configured Go Live plan is invalid.'
+            });
+        }
+
+        const orderId = String(purchase.orderId || '').trim();
+        const offerDetails =
+            lineItems[0]?.productOfferDetails || {};
+
+        const consumptionState =
+            String(offerDetails.consumptionState || '').trim();
+
+        const acknowledgementState =
+            String(purchase.acknowledgementState || '').trim();
+
+        const verifiedMetadata = {
+            googlePlay: {
+                packageName,
+                productId: verifiedProductId,
+                orderId,
+                purchaseState,
+                acknowledgementState,
+                consumptionState,
+                regionCode: purchase.regionCode || '',
+                purchaseCompletionTime:
+                    purchase.purchaseCompletionTime || '',
+                obfuscatedExternalAccountId:
+                    purchase.obfuscatedExternalAccountId || '',
+                obfuscatedExternalProfileId:
+                    purchase.obfuscatedExternalProfileId || ''
+            }
+        };
+
+        const grant = await grantGoLiveEntitlement({
+            xameId: authUser.xameId,
+            plan,
+            provider: 'GOOGLE_PLAY',
+            sourceTransactionId: orderId,
+            providerPurchaseToken: purchaseToken,
+            autoRenewing: false,
+            metadata: verifiedMetadata,
+            amount: 0,
+            currency: 'USD'
+        });
+
+        let consumed = consumptionState === 'CONSUMPTION_STATE_CONSUMED';
+
+        if (!consumed) {
+            try {
+                await publisher.purchases.products.consume({
+                    packageName,
+                    productId: verifiedProductId,
+                    token: purchaseToken
+                });
+                consumed = true;
+            } catch (err) {
+                console.error(
+                    '[XAMELIVE] Google Play purchase consumption failed:',
+                    err?.message || err
+                );
+            }
+        }
+
+        if (!consumed) {
+            return res.status(502).json({
+                success: false,
+                code: 'GO_LIVE_PURCHASE_CONSUMPTION_PENDING',
+                message: 'Go Live access was granted, but Google Play consumption is pending. Please retry verification.',
+                entitlement: {
+                    planId: grant.entitlement.planId,
+                    status: grant.entitlement.status,
+                    startedAt: grant.entitlement.startedAt,
+                    expiresAt: grant.entitlement.expiresAt,
+                    includedMinutes: grant.entitlement.includedMinutes,
+                    usedMinutes: grant.entitlement.usedMinutes,
+                    remainingMinutes:
+                        Math.max(
+                            0,
+                            Number(grant.entitlement.includedMinutes || 0) -
+                            Number(grant.entitlement.usedMinutes || 0)
+                        ),
+                    trial: grant.entitlement.trial,
+                    autoRenewing: grant.entitlement.autoRenewing
+                }
+            });
+        }
+
+        return res.json({
+            success: true,
+            alreadyGranted: grant.alreadyGranted === true,
+            consumed: true,
+            entitlement: {
+                planId: grant.entitlement.planId,
+                status: grant.entitlement.status,
+                startedAt: grant.entitlement.startedAt,
+                expiresAt: grant.entitlement.expiresAt,
+                includedMinutes: grant.entitlement.includedMinutes,
+                usedMinutes: grant.entitlement.usedMinutes,
+                remainingMinutes:
+                    Math.max(
+                        0,
+                        Number(grant.entitlement.includedMinutes || 0) -
+                        Number(grant.entitlement.usedMinutes || 0)
+                    ),
+                trial: grant.entitlement.trial,
+                autoRenewing: grant.entitlement.autoRenewing
+            }
+        });
+    } catch (err) {
+        if (
+            err?.code === 'GOOGLE_PLAY_NOT_CONFIGURED' ||
+            err?.code === 'GOOGLE_PLAY_CONFIG_INVALID'
+        ) {
+            console.error('[XAMELIVE] Google Play configuration error:', err.message);
+            return res.status(503).json({
+                success: false,
+                code: err.code,
+                message: 'Google Play billing is not configured.'
+            });
+        }
+
+        console.error('[XAMELIVE] purchase verification failed:', err);
+
+        return res.status(500).json({
+            success: false,
+            code: 'GO_LIVE_PURCHASE_VERIFICATION_FAILED',
+            message: 'Unable to verify the Google Play purchase.'
         });
     }
 });
