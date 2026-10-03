@@ -3011,7 +3011,7 @@ let lastCallPushOutcome = null; // { recipientId, success, error, timestamp } â€
 // a threshold generous enough to survive a couple of missed heartbeats
 // (network hiccup, brief backgrounding) without falsely marking a live
 // device offline, and self-heals by deleting any stale entry it finds.
-const NATIVE_PRESENCE_STALE_MS = 7 * 60 * 1000; // 7 minutes â€” allows one missed 3-minute heartbeat plus jitter, without lingering too long on a genuinely dead device
+const NATIVE_PRESENCE_STALE_MS = 6 * 60 * 60 * 1000; // 6 hours: tolerates Doze/background network delays on older Android
 
 function hasFreshNativePresence(userId) {
     const now = Date.now();
