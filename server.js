@@ -3737,25 +3737,40 @@ app.post('/api/logout', async (req, res) => {
 
         nativePresenceSessions.delete(currentToken);
 
-        const currentSocketId = sessionTokenToSocketMap.get(currentToken);
-        if (currentSocketId &&
-            socketToUserMap.get(currentSocketId) === userId) {
-            sessionTokenToSocketMap.delete(currentToken);
+        const loggedOutSocketIds = [];
 
-            const loggedOutSocket = io.sockets.sockets.get(currentSocketId);
+        for (const [socketId, mappedUserId] of socketToUserMap.entries()) {
+            if (mappedUserId !== userId) continue;
+
+            const mappedSocket = io.sockets.sockets.get(socketId);
+            if (mappedSocket?.sessionToken === currentToken) {
+                loggedOutSocketIds.push(socketId);
+            }
+        }
+
+        if (sessionTokenToSocketMap.get(currentToken)) {
+            sessionTokenToSocketMap.delete(currentToken);
+        }
+
+        for (const socketId of loggedOutSocketIds) {
+            const loggedOutSocket = io.sockets.sockets.get(socketId);
             if (loggedOutSocket) {
                 loggedOutSocket.emit('force-logout', {
                     reason: 'Logged out.'
                 });
             }
+
+            socketToUserMap.delete(socketId);
         }
 
-        const hasOtherSocket = Array.from(socketToUserMap.entries()).some(
-            ([socketId, mappedUserId]) =>
-                socketId !== currentSocketId && mappedUserId === userId
-        );
+        const remainingSocketIds = Array.from(socketToUserMap.entries())
+            .filter(([, mappedUserId]) => mappedUserId === userId)
+            .map(([socketId]) => socketId)
+            .filter(socketId => io.sockets.sockets.has(socketId));
 
-        if (!hasOtherSocket) {
+        if (remainingSocketIds.length > 0) {
+            userToSocketMap.set(userId, remainingSocketIds[0]);
+        } else {
             onlineUsers.delete(userId);
             userToSocketMap.delete(userId);
             onlineUserTimestamps.delete(userId);
