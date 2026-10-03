@@ -3744,7 +3744,9 @@ app.post('/api/logout', async (req, res) => {
 
             const loggedOutSocket = io.sockets.sockets.get(currentSocketId);
             if (loggedOutSocket) {
-                loggedOutSocket.disconnect(true);
+                loggedOutSocket.emit('force-logout', {
+                    reason: 'Logged out.'
+                });
             }
         }
 
