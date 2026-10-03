@@ -1584,30 +1584,32 @@ async function claimGoLiveTrial(xameId) {
 async function getActiveGoLiveEntitlement(xameId) {
     const now = new Date();
 
+    await GoLiveEntitlement.updateMany(
+        {
+            xameId: String(xameId),
+            status: 'ACTIVE',
+            expiresAt: { $lte: now }
+        },
+        {
+            $set: {
+                status: 'EXPIRED'
+            }
+        }
+    );
+
     const entitlement = await GoLiveEntitlement.findOne({
         xameId: String(xameId),
         status: 'ACTIVE',
-        expiresAt: { $gt: now }
+        expiresAt: { $gt: now },
+        $expr: {
+            $gt: [
+                { $subtract: ['$includedMinutes', '$usedMinutes'] },
+                0
+            ]
+        }
     }).sort({
         expiresAt: 1
     });
-
-    if (!entitlement) {
-        await GoLiveEntitlement.updateMany(
-            {
-                xameId: String(xameId),
-                status: 'ACTIVE',
-                expiresAt: { $lte: now }
-            },
-            {
-                $set: {
-                    status: 'EXPIRED'
-                }
-            }
-        );
-
-        return null;
-    }
 
     return entitlement;
 }
