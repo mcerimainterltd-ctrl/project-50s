@@ -555,6 +555,73 @@ const callCreditsSchema = new mongoose.Schema({
 });
 const CallCredits = mongoose.model('CallCredits', callCreditsSchema);
 
+// ── XameTel managed PSTN number pool ───────────────────────────────────────
+const xameTelNumberSchema = new mongoose.Schema({
+    phoneNumber: {
+        type: String,
+        required: true,
+        unique: true,
+        index: true,
+        trim: true
+    },
+    twilioSid: {
+        type: String,
+        required: true,
+        unique: true,
+        index: true,
+        trim: true
+    },
+    countryCode: {
+        type: String,
+        required: true,
+        uppercase: true,
+        trim: true,
+        index: true
+    },
+    status: {
+        type: String,
+        enum: ['available', 'assigned', 'suspended', 'retired'],
+        default: 'available',
+        index: true
+    },
+    capabilities: {
+        voice: { type: Boolean, default: true },
+        sms: { type: Boolean, default: false }
+    },
+    assignedXameId: {
+        type: String,
+        default: null,
+        index: true
+    },
+    currentCallSid: {
+        type: String,
+        default: null,
+        index: true
+    },
+    lastUsedAt: {
+        type: Date,
+        default: null
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now
+    },
+    updatedAt: {
+        type: Date,
+        default: Date.now
+    }
+});
+
+xameTelNumberSchema.index({
+    status: 1,
+    'capabilities.voice': 1,
+    lastUsedAt: 1,
+    createdAt: 1
+});
+
+const XameTelNumber = mongoose.model('XameTelNumber', xameTelNumberSchema);
+
+
 // ── PSTN Rates (per minute in NGN) ───────────────────────────────────────
 const PSTN_RATES = {
     'NG': { rate: 12, label: 'Nigeria' },
@@ -665,6 +732,9 @@ const callHistorySchema = new mongoose.Schema({
     duration:    { type: Number, default: 0 }, // seconds
     type:        { type: String, default: "xamepage", enum: ["xamepage", "pstn"] },
     pstnCountryCode: { type: String, default: null },
+    twilioFromNumber: { type: String, default: null },
+    twilioFromSid:    { type: String, default: null },
+
     cost:        { type: Number, default: 0 },
     seen:        { type: Boolean, default: false },
     status: {
@@ -7078,6 +7148,152 @@ app.post('/api/admin/wipe-virtual-accounts', async (req, res) => {
     }
 });
 
+// ── XameTel number-pool administration ─────────────────────────────────────
+app.post('/api/admin/xametel/numbers', async (req, res) => {
+    const {
+        secret,
+        phoneNumber,
+        twilioSid,
+        countryCode,
+        voice,
+        sms
+    } = req.body;
+
+    if (secret !== process.env.ADMIN_SECRET) {
+        return res.status(401).json({
+            success: false,
+            message: 'Unauthorized.'
+        });
+    }
+
+    if (!phoneNumber || !twilioSid || !countryCode) {
+        return res.status(400).json({
+            success: false,
+            message: 'phoneNumber, twilioSid and countryCode are required'
+        });
+    }
+
+    if (!/^\+[1-9]\d{6,14}$/.test(phoneNumber)) {
+        return res.status(400).json({
+            success: false,
+            message: 'phoneNumber must be a valid E.164 number'
+        });
+    }
+
+    try {
+        const number = await XameTelNumber.create({
+            phoneNumber,
+            twilioSid,
+            countryCode: String(countryCode).toUpperCase(),
+            capabilities: {
+                voice: voice !== false,
+                sms: sms === true
+            }
+        });
+
+        res.json({
+            success: true,
+            number
+        });
+    } catch (err) {
+        if (err.code === 11000) {
+            return res.status(409).json({
+                success: false,
+                message: 'Twilio number or SID already exists'
+            });
+        }
+
+        res.status(500).json({
+            success: false,
+            message: err.message
+        });
+    }
+});
+
+app.get('/api/admin/xametel/numbers', async (req, res) => {
+    const { secret, status } = req.query;
+
+    if (secret !== process.env.ADMIN_SECRET) {
+        return res.status(401).json({
+            success: false,
+            message: 'Unauthorized.'
+        });
+    }
+
+    try {
+        const filter = {};
+        if (status) filter.status = status;
+
+        const numbers = await XameTelNumber
+            .find(filter)
+            .sort({ status: 1, lastUsedAt: 1, createdAt: 1 })
+            .limit(1000);
+
+        res.json({
+            success: true,
+            numbers
+        });
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            message: err.message
+        });
+    }
+});
+
+app.patch('/api/admin/xametel/numbers/:id', async (req, res) => {
+    const { secret, status } = req.body;
+
+    if (secret !== process.env.ADMIN_SECRET) {
+        return res.status(401).json({
+            success: false,
+            message: 'Unauthorized.'
+        });
+    }
+
+    if (!['available', 'suspended', 'retired'].includes(status)) {
+        return res.status(400).json({
+            success: false,
+            message: 'Invalid status'
+        });
+    }
+
+    try {
+        const number = await XameTelNumber.findById(req.params.id);
+
+        if (!number) {
+            return res.status(404).json({
+                success: false,
+                message: 'XameTel number not found'
+            });
+        }
+
+        if (number.status === 'assigned') {
+            return res.status(409).json({
+                success: false,
+                message: 'Number is currently assigned to an active call'
+            });
+        }
+
+        number.status = status;
+        number.assignedXameId = null;
+        number.currentCallSid = null;
+        number.updatedAt = new Date();
+
+        await number.save();
+
+        res.json({
+            success: true,
+            number
+        });
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            message: err.message
+        });
+    }
+});
+
 app.post('/api/admin/xametel/generate-tokens', async (req, res) => {
     const { secret, amount, quantity, batch } = req.body;
     if (secret !== process.env.ADMIN_SECRET)
@@ -7135,53 +7351,240 @@ app.get('/api/pstn/token/:userId', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-// ── PSTN Call API ─────────────────────────────────────────────────────────
+// ── XameTel number-pool allocation ─────────────────────────────────────────
+async function acquireXameTelNumber(userId) {
+    return XameTelNumber.findOneAndUpdate(
+        {
+            status: 'available',
+            'capabilities.voice': true
+        },
+        {
+            $set: {
+                status: 'assigned',
+                assignedXameId: userId,
+                currentCallSid: null,
+                updatedAt: new Date()
+            }
+        },
+        {
+            sort: {
+                lastUsedAt: 1,
+                createdAt: 1
+            },
+            new: true
+        }
+    );
+}
 
+async function releaseXameTelNumber(callSid, twilioFromSid = null) {
+    const filters = [];
+
+    if (callSid) filters.push({ currentCallSid: callSid });
+    if (twilioFromSid) filters.push({ twilioSid: twilioFromSid });
+
+    if (!filters.length) return null;
+
+    return XameTelNumber.findOneAndUpdate(
+        filters.length === 1 ? filters[0] : { $or: filters },
+        {
+            $set: {
+                status: 'available',
+                assignedXameId: null,
+                currentCallSid: null,
+                lastUsedAt: new Date(),
+                updatedAt: new Date()
+            }
+        },
+        { new: true }
+    );
+}
+
+// ── PSTN Call API ─────────────────────────────────────────────────────────
 app.post('/api/pstn/call', async (req, res) => {
+    let allocatedNumber = null;
+    let callSid = null;
+    let creditsDebited = false;
+    let historyPersisted = false;
+    let rate = 0;
+
     try {
         const { userId, to, countryCode } = req.body;
-        if (!userId || !to) return res.status(400).json({ success: false, message: 'Missing parameters' });
-        if (!twilioClient) return res.status(503).json({ success: false, message: 'PSTN not available' });
-        if (!countryCode || !PSTN_RATES[countryCode]) {
-            return res.status(400).json({ success: false, message: 'Invalid country code' });
+
+        if (!userId || !to) {
+            return res.status(400).json({
+                success: false,
+                message: 'Missing parameters'
+            });
         }
-        // Check credits
+
+        if (!twilioClient) {
+            return res.status(503).json({
+                success: false,
+                message: 'PSTN not available'
+            });
+        }
+
+        // countryCode is the DESTINATION billing country.
+        // It is deliberately independent from caller-number allocation.
+        if (!countryCode || !PSTN_RATES[countryCode]) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid country code'
+            });
+        }
+
         const credits = await CallCredits.findOne({ xameId: userId });
-        const rate = (PSTN_RATES[countryCode] || PSTN_RATES['default']).rate;
-        if (!credits || credits.balance < rate) return res.status(400).json({ success: false, message: 'Insufficient call credits' });
-        // Initiate call via Twilio
-        // Limit the call to the whole minutes currently affordable by credits.
-        // This prevents normal usage from exceeding the user's prepaid balance.
+        rate = PSTN_RATES[countryCode].rate;
+
+        if (!credits || credits.balance < rate) {
+            return res.status(400).json({
+                success: false,
+                message: 'Insufficient call credits'
+            });
+        }
+
         const affordableMinutes = Math.floor(credits.balance / rate);
         const timeLimit = Math.min(affordableMinutes * 60, 14400);
 
-        // Twilio Voice SDK handles the actual call from browser
-        // This endpoint validates credits and returns confirmation.
-        const twimlUrl = `${process.env.SERVER_URL || 'https://app.xamepage.com'}/api/pstn/twiml?to=${encodeURIComponent(to)}`;
+        // Atomically acquire the least-recently-used available XameTel number.
+        allocatedNumber = await acquireXameTelNumber(userId);
+
+        if (!allocatedNumber) {
+            return res.status(503).json({
+                success: false,
+                message: 'XameTel calling capacity is temporarily unavailable'
+            });
+        }
+
+        const twimlUrl =
+            `${process.env.SERVER_URL || 'https://app.xamepage.com'}` +
+            `/api/pstn/twiml?to=${encodeURIComponent(to)}`;
+
         const call = await twilioClient.calls.create({
             url: twimlUrl,
             to: to,
-            from: process.env.TWILIO_PHONE_NUMBER,
+            from: allocatedNumber.phoneNumber,
             timeLimit,
-            statusCallback: `${process.env.SERVER_URL || 'https://app.xamepage.com'}/api/pstn/status`,
+            statusCallback:
+                `${process.env.SERVER_URL || 'https://app.xamepage.com'}` +
+                '/api/pstn/status',
             statusCallbackMethod: 'POST',
         });
-        // Deduct 1 minute upfront, refund unused later via webhook
+
+        callSid = call.sid;
+
+        // Bind the Twilio call SID immediately after successful creation.
+        const bound = await XameTelNumber.updateOne(
+            {
+                _id: allocatedNumber._id,
+                status: 'assigned',
+                assignedXameId: userId
+            },
+            {
+                $set: {
+                    currentCallSid: callSid,
+                    lastUsedAt: new Date(),
+                    updatedAt: new Date()
+                }
+            }
+        );
+
+        if (bound.modifiedCount !== 1) {
+            throw new Error('Failed to bind XameTel number to Twilio call');
+        }
+
+        // Preserve the existing prepaid billing model.
         credits.balance -= rate;
-        credits.transactions.push({ id: require('uuid').v4(), type: 'debit', amount: -rate, label: `PSTN call to ${to}`, ref: call.sid, ts: new Date() });
+        credits.transactions.push({
+            id: require('uuid').v4(),
+            type: 'debit',
+            amount: -rate,
+            label: `PSTN call to ${to}`,
+            ref: callSid,
+            ts: new Date()
+        });
         await credits.save();
-        // Log in call history
+        creditsDebited = true;
+
         await new CallHistory({
-            callId: call.sid,
+            callId: callSid,
             callerId: userId,
             recipientId: to,
             callType: 'voice',
             status: 'pending',
             type: 'pstn',
-            pstnCountryCode: countryCode
+            pstnCountryCode: countryCode,
+            twilioFromNumber: allocatedNumber.phoneNumber,
+            twilioFromSid: allocatedNumber.twilioSid
         }).save();
-        res.json({ success: true, callSid: call.sid, deducted: rate });
-    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+
+        historyPersisted = true;
+
+        res.json({
+            success: true,
+            callSid,
+            deducted: rate
+        });
+
+    } catch (err) {
+        if (creditsDebited && !historyPersisted) {
+            try {
+                await CallCredits.updateOne(
+                    { xameId: userId },
+                    {
+                        $inc: { balance: rate },
+                        $push: {
+                            transactions: {
+                                id: require('uuid').v4(),
+                                type: 'recharge',
+                                amount: rate,
+                                label: `PSTN call rollback: ${callSid || 'unknown'}`,
+                                ref: `pstn-rollback:${callSid || Date.now()}`,
+                                ts: new Date()
+                            }
+                        }
+                    }
+                );
+            } catch (refundErr) {
+                console.error(
+                    'XameTel failed to rollback PSTN debit:',
+                    refundErr.message
+                );
+            }
+        }
+
+        if (callSid && twilioClient) {
+            try {
+                await twilioClient.calls(callSid).update({
+                    status: 'completed'
+                });
+            } catch (terminateErr) {
+                console.error(
+                    'XameTel failed to terminate orphaned PSTN call:',
+                    terminateErr.message
+                );
+            }
+        }
+
+        if (allocatedNumber) {
+            try {
+                await releaseXameTelNumber(
+                    callSid,
+                    allocatedNumber.twilioSid
+                );
+            } catch (releaseErr) {
+                console.error(
+                    'XameTel failed to release PSTN number:',
+                    releaseErr.message
+                );
+            }
+        }
+
+        res.status(500).json({
+            success: false,
+            message: err.message
+        });
+    }
 });
 
 app.post('/api/pstn/twiml', (req, res) => {
@@ -7253,6 +7656,25 @@ app.post('/api/pstn/status', async (req, res) => {
                 history.status = failed ? 'no-answer' : 'ended';
                 history.cost = 0;
                 await history.save({ session });
+
+            if (history.type === 'pstn' && history.twilioFromSid) {
+                await XameTelNumber.updateOne(
+                    {
+                        twilioSid: history.twilioFromSid,
+                        currentCallSid: callSid
+                    },
+                    {
+                        $set: {
+                            status: 'available',
+                            assignedXameId: null,
+                            currentCallSid: null,
+                            lastUsedAt: new Date(),
+                            updatedAt: new Date()
+                        }
+                    },
+                    { session }
+                );
+            }
                 return;
             }
 
@@ -7304,6 +7726,25 @@ app.post('/api/pstn/status', async (req, res) => {
             history.cost = finalCost;
             history.status = failed ? 'no-answer' : 'ended';
             await history.save({ session });
+
+            if (history.type === 'pstn' && history.twilioFromSid) {
+                await XameTelNumber.updateOne(
+                    {
+                        twilioSid: history.twilioFromSid,
+                        currentCallSid: callSid
+                    },
+                    {
+                        $set: {
+                            status: 'available',
+                            assignedXameId: null,
+                            currentCallSid: null,
+                            lastUsedAt: new Date(),
+                            updatedAt: new Date()
+                        }
+                    },
+                    { session }
+                );
+            }
         });
 
         res.sendStatus(200);
@@ -7475,7 +7916,7 @@ app.post('/api/block-contact', async (req, res) => {
         if (!contact) return res.status(404).json({ success: false, message: 'Contact not found' });
         await User.updateOne(
             { xameId: userId },
-            { 
+            {
                 $pull: { contacts: { contactId: contact._id } },
                 $addToSet: { blockedUsers: contactId }
             }
@@ -7686,8 +8127,8 @@ app.post('/api/wallet/monnify/virtual-account', async (req, res) => {
                                 headers: { Authorization: `Bearer ${token}` }
                             });
                             const listData = await listRes.json();
-                            const found = listData.responseBody?.content?.find(a => 
-                                a.customerEmail === customerEmail || 
+                            const found = listData.responseBody?.content?.find(a =>
+                                a.customerEmail === customerEmail ||
                                 a.contractCode === process.env.MONNIFY_CONTRACT_CODE
                             );
                             if (found && found.accounts?.[0]) {
