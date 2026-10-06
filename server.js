@@ -1614,6 +1614,31 @@ async function getActiveGoLiveEntitlement(xameId) {
     return entitlement;
 }
 
+async function getActiveGoLiveAccessEntitlement(xameId) {
+    const now = new Date();
+
+    await GoLiveEntitlement.updateMany(
+        {
+            xameId: String(xameId),
+            status: 'ACTIVE',
+            expiresAt: { $lte: now }
+        },
+        {
+            $set: {
+                status: 'EXPIRED'
+            }
+        }
+    );
+
+    return GoLiveEntitlement.findOne({
+        xameId: String(xameId),
+        status: 'ACTIVE',
+        expiresAt: { $gt: now }
+    }).sort({
+        expiresAt: 1
+    });
+}
+
 async function requireGoLiveEntitlement(xameId) {
     return getActiveGoLiveEntitlement(xameId);
 }
@@ -2666,6 +2691,54 @@ app.get('/api/live/:sessionId', async (req, res) => {
     }
 });
 
+// Watch a live session without joining/participating.
+// Watching is free; participant access remains subscription-gated below.
+app.get('/api/live/:sessionId/watch', async (req, res) => {
+    try {
+        const authUser = await getAuthenticatedUserFromSession(req);
+
+        if (!authUser) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized.'
+            });
+        }
+
+        const session = await LiveSession.findOne({
+            sessionId: req.params.sessionId
+        });
+
+        if (!session) {
+            return res.status(404).json({
+                success: false,
+                message: 'Live session not found.'
+            });
+        }
+
+        await refreshLiveSessionStatus(session);
+
+        if (session.status !== 'LIVE') {
+            return res.status(409).json({
+                success: false,
+                message: 'This live broadcast is not currently live.'
+            });
+        }
+
+        return res.json({
+            success: true,
+            session: liveSessionPublicData(session)
+        });
+
+    } catch (err) {
+        console.error('[XAMELIVE] watch failed:', err);
+
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to watch live broadcast.'
+        });
+    }
+});
+
 // Join a live session at the HTTP/API level.
 app.post('/api/live/:sessionId/join', async (req, res) => {
     try {
@@ -2696,6 +2769,20 @@ app.post('/api/live/:sessionId/join', async (req, res) => {
                 success: false,
                 message: 'This live broadcast is not currently live.'
             });
+        }
+
+        if (session.broadcasterXameId !== authUser.xameId) {
+            const accessEntitlement =
+                await getActiveGoLiveAccessEntitlement(authUser.xameId);
+
+            if (!accessEntitlement) {
+                return res.status(402).json({
+                    success: false,
+                    code: 'GO_LIVE_SUBSCRIPTION_REQUIRED',
+                    message:
+                        'An active XameLive subscription is required to join this live session.'
+                });
+            }
         }
 
         return res.json({
@@ -4330,14 +4417,85 @@ io.on('connection', (socket) => {
     // XAMELIVE — Socket.IO
     // ========================================================
 
-    socket.on('live:join', async ({ sessionId } = {}) => {
+    socket.on('live:join', async ({ sessionId } = {}, ack) => {
         try {
+            const reply = (payload) => {
+                if (typeof ack === 'function') {
+                    ack(payload);
+                }
+            };
+
             const userId = socket.authenticatedUserId;
 
-            if (!userId || !sessionId) return;
+            if (!userId || !sessionId) {
+                reply({
+                    success: false,
+                    code: 'INVALID_LIVE_JOIN',
+                    message: 'Unable to join live broadcast.'
+                });
+                return;
+            }
+
+            const session = await LiveSession.findOne({ sessionId });
+
+            if (!session) {
+                const error = {
+                    success: false,
+                    message: 'Live session not found.'
+                };
+
+                socket.emit('live:error', error);
+                reply(error);
+                return;
+            }
+
+            await refreshLiveSessionStatus(session);
+
+            if (session.status !== 'LIVE') {
+                const error = {
+                    success: false,
+                    message: 'This live broadcast is not currently live.'
+                };
+
+                socket.emit('live:error', error);
+                reply(error);
+                return;
+            }
+
+            // The broadcaster is never counted as a viewer.
+            if (session.broadcasterXameId === userId) {
+                socket.join(`live:${sessionId}`);
+                socket.liveSessionId = sessionId;
+                socket.liveIsBroadcaster = true;
+
+                reply({
+                    success: true,
+                    sessionId,
+                    broadcaster: true
+                });
+
+                return;
+            }
+
+            const accessEntitlement =
+                await getActiveGoLiveAccessEntitlement(userId);
+
+            if (!accessEntitlement) {
+                const error = {
+                    success: false,
+                    code: 'GO_LIVE_SUBSCRIPTION_REQUIRED',
+                    message:
+                        'An active XameLive subscription is required to join this live session.'
+                };
+
+                socket.emit('live:error', error);
+                reply(error);
+                return;
+            }
 
             // A socket can belong to only one XameLive session at a time.
-            // Cleanly remove it from the previous session first.
+            // Cleanly remove it from the previous session only after the
+            // requested session has passed all join authorization checks.
             if (
                 socket.liveSessionId &&
                 socket.liveSessionId !== sessionId
@@ -4396,30 +4554,6 @@ io.on('connection', (socket) => {
                 socket.liveIsBroadcaster = false;
             }
 
-            const session = await LiveSession.findOne({ sessionId });
-
-            if (!session) {
-                return socket.emit('live:error', {
-                    message: 'Live session not found.'
-                });
-            }
-
-            await refreshLiveSessionStatus(session);
-
-            if (session.status !== 'LIVE') {
-                return socket.emit('live:error', {
-                    message: 'This live broadcast is not currently live.'
-                });
-            }
-
-            // The broadcaster is never counted as a viewer.
-            if (session.broadcasterXameId === userId) {
-                socket.join(`live:${sessionId}`);
-                socket.liveSessionId = sessionId;
-                socket.liveIsBroadcaster = true;
-                return;
-            }
-
             let viewers = liveViewerSockets.get(sessionId);
 
             if (!viewers) {
@@ -4448,15 +4582,29 @@ io.on('connection', (socket) => {
                 viewerCount: session.viewerCount
             });
 
+            reply({
+                success: true,
+                sessionId,
+                broadcaster: false,
+                viewerCount: session.viewerCount
+            });
+
         } catch (err) {
             console.error(
                 '[XAMELIVE] socket join failed:',
                 err.message
             );
 
-            socket.emit('live:error', {
+            const error = {
+                success: false,
                 message: 'Unable to join live broadcast.'
-            });
+            };
+
+            socket.emit('live:error', error);
+
+            if (typeof ack === 'function') {
+                ack(error);
+            }
         }
     });
 
