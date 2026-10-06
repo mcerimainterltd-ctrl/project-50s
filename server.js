@@ -664,6 +664,7 @@ const callHistorySchema = new mongoose.Schema({
     endTime:     { type: Date },
     duration:    { type: Number, default: 0 }, // seconds
     type:        { type: String, default: "xamepage", enum: ["xamepage", "pstn"] },
+    pstnCountryCode: { type: String, default: null },
     cost:        { type: Number, default: 0 },
     seen:        { type: Boolean, default: false },
     status: {
@@ -7141,18 +7142,27 @@ app.post('/api/pstn/call', async (req, res) => {
         const { userId, to, countryCode } = req.body;
         if (!userId || !to) return res.status(400).json({ success: false, message: 'Missing parameters' });
         if (!twilioClient) return res.status(503).json({ success: false, message: 'PSTN not available' });
+        if (!countryCode || !PSTN_RATES[countryCode]) {
+            return res.status(400).json({ success: false, message: 'Invalid country code' });
+        }
         // Check credits
         const credits = await CallCredits.findOne({ xameId: userId });
         const rate = (PSTN_RATES[countryCode] || PSTN_RATES['default']).rate;
         if (!credits || credits.balance < rate) return res.status(400).json({ success: false, message: 'Insufficient call credits' });
         // Initiate call via Twilio
+        // Limit the call to the whole minutes currently affordable by credits.
+        // This prevents normal usage from exceeding the user's prepaid balance.
+        const affordableMinutes = Math.floor(credits.balance / rate);
+        const timeLimit = Math.min(affordableMinutes * 60, 14400);
+
         // Twilio Voice SDK handles the actual call from browser
-        // This endpoint just validates credits and returns confirmation
+        // This endpoint validates credits and returns confirmation.
         const twimlUrl = `${process.env.SERVER_URL || 'https://app.xamepage.com'}/api/pstn/twiml?to=${encodeURIComponent(to)}`;
         const call = await twilioClient.calls.create({
             url: twimlUrl,
             to: to,
             from: process.env.TWILIO_PHONE_NUMBER,
+            timeLimit,
             statusCallback: `${process.env.SERVER_URL || 'https://app.xamepage.com'}/api/pstn/status`,
             statusCallbackMethod: 'POST',
         });
@@ -7161,7 +7171,15 @@ app.post('/api/pstn/call', async (req, res) => {
         credits.transactions.push({ id: require('uuid').v4(), type: 'debit', amount: -rate, label: `PSTN call to ${to}`, ref: call.sid, ts: new Date() });
         await credits.save();
         // Log in call history
-        await new CallHistory({ callId: call.sid, callerId: userId, recipientId: to, callType: 'voice', status: 'pending', type: 'pstn' }).save();
+        await new CallHistory({
+            callId: call.sid,
+            callerId: userId,
+            recipientId: to,
+            callType: 'voice',
+            status: 'pending',
+            type: 'pstn',
+            pstnCountryCode: countryCode
+        }).save();
         res.json({ success: true, callSid: call.sid, deducted: rate });
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
@@ -7176,6 +7194,129 @@ app.get('/api/pstn/twiml', (req, res) => {
     const to = req.query?.to || '';
     res.set('Content-Type', 'text/xml');
     res.send(`<?xml version="1.0" encoding="UTF-8"?><Response><Say>Connecting your call via XamePage.</Say><Dial>${to}</Dial></Response>`);
+});
+
+// ── Twilio PSTN status / billing settlement ────────────────────────────────
+app.post('/api/pstn/status', async (req, res) => {
+    const session = await mongoose.startSession();
+
+    try {
+        const signature = req.get('X-Twilio-Signature');
+        const authToken = process.env.TWILIO_AUTH_TOKEN;
+
+        if (!signature || !authToken) {
+            return res.status(403).send('Forbidden');
+        }
+
+        const callbackUrl =
+            `${process.env.SERVER_URL || 'https://app.xamepage.com'}/api/pstn/status`;
+
+        if (!twilio.validateRequest(authToken, signature, callbackUrl, req.body)) {
+            return res.status(403).send('Forbidden');
+        }
+
+        const callSid = req.body.CallSid;
+        const callStatus = req.body.CallStatus;
+        const duration = Math.max(
+            0,
+            parseInt(req.body.CallDuration || '0', 10) || 0
+        );
+
+        if (!callSid) return res.status(400).send('Missing CallSid');
+
+        await session.withTransaction(async () => {
+            const history = await CallHistory.findOne({ callId: callSid }).session(session);
+            if (!history) throw new Error('Call not found');
+
+            const settlementRef = `pstn-settlement:${callSid}`;
+
+            const failed = [
+                'busy',
+                'failed',
+                'no-answer',
+                'canceled',
+                'cancelled'
+            ].includes(callStatus);
+
+            const finalCost = failed || duration <= 0
+                ? 0
+                : Math.ceil(duration / 60) *
+                  (PSTN_RATES[history.pstnCountryCode] || PSTN_RATES.default).rate;
+
+            const credits = await CallCredits.findOne({
+                xameId: history.callerId
+            }).session(session);
+
+            if (!credits) {
+                history.duration = duration;
+                history.endTime = new Date();
+                history.status = failed ? 'no-answer' : 'ended';
+                history.cost = 0;
+                await history.save({ session });
+                return;
+            }
+
+            const alreadySettled = credits.transactions.some(
+                tx => tx.ref === settlementRef
+            );
+
+            if (!alreadySettled && history.cost <= 0 && history.status !== 'ended') {
+                const rate =
+                    (PSTN_RATES[history.pstnCountryCode] || PSTN_RATES.default).rate;
+                const prepaid = rate;
+                const adjustment = finalCost - prepaid;
+
+                if (adjustment < 0) {
+                    const refund = -adjustment;
+                    credits.balance += refund;
+                    credits.transactions.push({
+                        id: require('uuid').v4(),
+                        type: 'recharge',
+                        amount: refund,
+                        label: `PSTN unused-time refund: ${callSid}`,
+                        ref: settlementRef,
+                        ts: new Date()
+                    });
+                } else if (adjustment > 0) {
+                    const additionalDebit = Math.min(
+                        adjustment,
+                        Math.max(0, credits.balance)
+                    );
+
+                    if (additionalDebit > 0) {
+                        credits.balance -= additionalDebit;
+                        credits.transactions.push({
+                            id: require('uuid').v4(),
+                            type: 'debit',
+                            amount: -additionalDebit,
+                            label: `PSTN additional usage: ${callSid}`,
+                            ref: settlementRef,
+                            ts: new Date()
+                        });
+                    }
+                }
+
+                await credits.save({ session });
+            }
+
+            history.duration = duration;
+            history.endTime = new Date();
+            history.cost = finalCost;
+            history.status = failed ? 'no-answer' : 'ended';
+            await history.save({ session });
+        });
+
+        res.sendStatus(200);
+    } catch (err) {
+        if (err.message === 'Call not found') {
+            return res.status(404).send('Call not found');
+        }
+
+        console.error('PSTN status settlement error:', err);
+        res.sendStatus(500);
+    } finally {
+        await session.endSession();
+    }
 });
 
 // ── PSTN SMS API ──────────────────────────────────────────────────────────
