@@ -804,6 +804,42 @@ const conferenceRoomSchema = new mongoose.Schema({
     createdAt:    { type: Date, default: Date.now, expires: 86400 } // auto-clean after 24h
 });
 
+// ── XameTV Premium remote catalogue ────────────────────────────────────────
+// Separate from the existing Free TV/IPTV catalogue.
+const premiumTvCategorySchema = new mongoose.Schema({
+    categoryId: { type: String, required: true, unique: true, trim: true, maxlength: 80 },
+    name: { type: String, required: true, trim: true, maxlength: 100 },
+    description: { type: String, default: '', trim: true, maxlength: 240 },
+    sortOrder: { type: Number, default: 0, min: 0, max: 100000 },
+    iconKey: { type: String, default: 'tv', trim: true, maxlength: 40 },
+    isActive: { type: Boolean, default: true, index: true },
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now }
+});
+
+const premiumTvChannelSchema = new mongoose.Schema({
+    channelId: { type: String, required: true, unique: true, trim: true, maxlength: 100 },
+    categoryId: { type: String, required: true, trim: true, index: true, maxlength: 80 },
+    number: { type: Number, required: true, min: 1, max: 99999 },
+    name: { type: String, required: true, trim: true, maxlength: 140 },
+    country: { type: String, default: 'INT', trim: true, maxlength: 5 },
+    streamUrl: { type: String, default: null, trim: true, maxlength: 2048 },
+    artworkUrl: { type: String, default: null, trim: true, maxlength: 2048 },
+    accessTier: {
+        type: String,
+        enum: ['bonusFree', 'subscriptionRequired'],
+        default: 'subscriptionRequired'
+    },
+    legacyIds: { type: [String], default: [] },
+    isActive: { type: Boolean, default: true, index: true },
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now }
+});
+premiumTvChannelSchema.index({ categoryId: 1, number: 1 }, { unique: true });
+
+const PremiumTvCategory = mongoose.model('PremiumTvCategory', premiumTvCategorySchema);
+const PremiumTvChannel = mongoose.model('PremiumTvChannel', premiumTvChannelSchema);
+
 const User             = mongoose.model('User',             userSchema);
 const Message          = mongoose.model('Message',          messageSchema);
 const CallHistory      = mongoose.model('CallHistory',      callHistorySchema);
@@ -2978,6 +3014,227 @@ app.get('/api/xametv/channels', async (req, res) => {
       error: 'XameTV catalogue unavailable',
     });
   }
+});
+
+// ── XameTV Premium catalogue API ────────────────────────────────────────────
+function validPremiumTvId(value) {
+    return typeof value === 'string' &&
+        /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value) &&
+        value.length <= 100;
+}
+
+function premiumTvAdminAuthorized(req, res) {
+    const expected = process.env.ADMIN_SECRET;
+    const supplied = req.headers['x-admin-secret'];
+    if (!expected || typeof supplied !== 'string' || supplied !== expected) {
+        res.status(401).json({ success: false, error: 'Unauthorized' });
+        return false;
+    }
+    return true;
+}
+
+function premiumTvOptionalUrl(value, field, res) {
+    if (value === undefined || value === null || value === '') return null;
+    if (typeof value !== 'string' || value.length > 2048) {
+        res.status(400).json({ success: false, error: `Invalid ${field}` });
+        return undefined;
+    }
+    try {
+        const parsed = new URL(value);
+        if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('scheme');
+        return value;
+    } catch (_) {
+        res.status(400).json({ success: false, error: `Invalid ${field}` });
+        return undefined;
+    }
+}
+
+app.get('/api/xametv/premium/catalogue', async (req, res) => {
+    try {
+        const categories = await PremiumTvCategory.find({ isActive: true })
+            .select('categoryId name description sortOrder iconKey')
+            .sort({ sortOrder: 1, categoryId: 1 })
+            .lean();
+
+        const categoryIds = categories.map(item => item.categoryId);
+        const channels = categoryIds.length
+            ? await PremiumTvChannel.find({
+                isActive: true,
+                categoryId: { $in: categoryIds }
+            })
+                .select('channelId categoryId number name country streamUrl artworkUrl accessTier legacyIds')
+                .sort({ categoryId: 1, number: 1, channelId: 1 })
+                .lean()
+            : [];
+
+        res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
+        return res.json({ success: true, categories, channels });
+    } catch (err) {
+        console.error('XameTV Premium catalogue error:', err.message);
+        return res.status(503).json({
+            success: false,
+            error: 'Premium TV catalogue temporarily unavailable'
+        });
+    }
+});
+
+// PUT is an upsert: stable IDs let administrators update entries without
+// changing their identity. DELETE operations below deactivate, not erase.
+app.put('/api/admin/xametv/premium/categories/:categoryId', async (req, res) => {
+    if (!premiumTvAdminAuthorized(req, res)) return;
+    const categoryId = req.params.categoryId;
+    const { name, description = '', sortOrder = 0, iconKey = 'tv', isActive = true } = req.body || {};
+
+    if (!validPremiumTvId(categoryId) ||
+        typeof name !== 'string' || !name.trim() || name.trim().length > 100 ||
+        typeof description !== 'string' || description.length > 240 ||
+        !Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 100000 ||
+        typeof iconKey !== 'string' || iconKey.length > 40 ||
+        typeof isActive !== 'boolean') {
+        return res.status(400).json({ success: false, error: 'Invalid category fields' });
+    }
+
+    try {
+        const category = await PremiumTvCategory.findOneAndUpdate(
+            { categoryId },
+            { $set: {
+                name: name.trim(),
+                description: description.trim(),
+                sortOrder,
+                iconKey: iconKey.trim() || 'tv',
+                isActive,
+                updatedAt: new Date()
+            }, $setOnInsert: { categoryId, createdAt: new Date() } },
+            { upsert: true, new: true, runValidators: true }
+        ).lean();
+        return res.json({ success: true, category });
+    } catch (err) {
+        console.error('Premium TV category update error:', err.message);
+        return res.status(500).json({ success: false, error: 'Category update failed' });
+    }
+});
+
+app.delete('/api/admin/xametv/premium/categories/:categoryId', async (req, res) => {
+    if (!premiumTvAdminAuthorized(req, res)) return;
+    const categoryId = req.params.categoryId;
+    if (!validPremiumTvId(categoryId)) {
+        return res.status(400).json({ success: false, error: 'Invalid category ID' });
+    }
+    try {
+        const result = await PremiumTvCategory.updateOne(
+            { categoryId }, { $set: { isActive: false, updatedAt: new Date() } }
+        );
+        if (!result.matchedCount) {
+            return res.status(404).json({ success: false, error: 'Category not found' });
+        }
+        await PremiumTvChannel.updateMany(
+            { categoryId },
+            { $set: { isActive: false, updatedAt: new Date() } }
+        );
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Premium TV category deactivation error:', err.message);
+        return res.status(500).json({ success: false, error: 'Category deactivation failed' });
+    }
+});
+
+app.put('/api/admin/xametv/premium/channels/:channelId', async (req, res) => {
+    if (!premiumTvAdminAuthorized(req, res)) return;
+    const channelId = req.params.channelId;
+    const body = req.body || {};
+    const {
+        categoryId, number, name, country = 'INT',
+        accessTier = 'subscriptionRequired', isActive = true
+    } = body;
+
+    if (!validPremiumTvId(channelId) ||
+        !validPremiumTvId(categoryId) ||
+        !Number.isInteger(number) || number < 1 || number > 99999 ||
+        typeof name !== 'string' || !name.trim() || name.trim().length > 140 ||
+        typeof country !== 'string' || country.length > 5 ||
+        !['bonusFree', 'subscriptionRequired'].includes(accessTier) ||
+        typeof isActive !== 'boolean') {
+        return res.status(400).json({ success: false, error: 'Invalid channel fields' });
+    }
+
+    const streamUrl = premiumTvOptionalUrl(body.streamUrl, 'streamUrl', res);
+    if (streamUrl === undefined) return;
+    const artworkUrl = premiumTvOptionalUrl(body.artworkUrl, 'artworkUrl', res);
+    if (artworkUrl === undefined) return;
+
+    const legacyIds = body.legacyIds;
+    if (legacyIds !== undefined &&
+        (!Array.isArray(legacyIds) || legacyIds.length > 20 ||
+         legacyIds.some(id => typeof id !== 'string' ||
+             !id.trim() || id.length > 300))) {
+        return res.status(400).json({
+            success: false,
+            error: 'Invalid legacy channel IDs'
+        });
+    }
+    if (isActive && !streamUrl) {
+        return res.status(400).json({
+            success: false,
+            error: 'An active channel requires a valid stream URL'
+        });
+    }
+
+    try {
+        const category = await PremiumTvCategory.findOne({ categoryId, isActive: true })
+            .select('_id').lean();
+        if (!category) {
+            return res.status(400).json({ success: false, error: 'Active category not found' });
+        }
+
+        const channel = await PremiumTvChannel.findOneAndUpdate(
+            { channelId },
+            { $set: {
+                categoryId,
+                number,
+                name: name.trim(),
+                country: country.trim() || 'INT',
+                streamUrl,
+                artworkUrl,
+                ...(legacyIds !== undefined
+                    ? { legacyIds: [...new Set(legacyIds.map(id => id.trim()))] }
+                    : {}),
+                accessTier,
+                isActive,
+                updatedAt: new Date()
+            }, $setOnInsert: { channelId, createdAt: new Date() } },
+            { upsert: true, new: true, runValidators: true }
+        ).lean();
+        return res.json({ success: true, channel });
+    } catch (err) {
+        if (err.code === 11000) {
+            return res.status(409).json({
+                success: false,
+                error: 'Channel ID or channel number already exists'
+            });
+        }
+        console.error('Premium TV channel update error:', err.message);
+        return res.status(500).json({ success: false, error: 'Channel update failed' });
+    }
+});
+
+app.delete('/api/admin/xametv/premium/channels/:channelId', async (req, res) => {
+    if (!premiumTvAdminAuthorized(req, res)) return;
+    const channelId = req.params.channelId;
+    if (!validPremiumTvId(channelId)) {
+        return res.status(400).json({ success: false, error: 'Invalid channel ID' });
+    }
+    try {
+        const result = await PremiumTvChannel.updateOne(
+            { channelId }, { $set: { isActive: false, updatedAt: new Date() } }
+        );
+        if (!result.matchedCount) {
+            return res.status(404).json({ success: false, error: 'Channel not found' });
+        }
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Premium TV channel deactivation error:', err.message);
+        return res.status(500).json({ success: false, error: 'Channel deactivation failed' });
+    }
 });
 
 app.post('/api/admin/cleanup-stale-fcm-tokens', async (req, res) => {
