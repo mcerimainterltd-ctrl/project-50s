@@ -3730,34 +3730,58 @@ app.post('/api/register',
 // ── 3.0: Send OTP for phone registration ─────────────────────────────────────
 // ── 3.0: Contact matching — check which phone numbers are on XamePage ────────
 app.post('/api/contacts/match', async (req, res) => {
-    const { phones } = req.body;
-    if (!phones || !Array.isArray(phones) || phones.length === 0) {
-        return res.status(400).json({ success: false, message: 'phones array required.' });
-    }
     try {
-        // Normalize all phones — strip spaces, dashes, ensure consistent format
-        const normalize = (p) => p.replace(/[\s\-().]/g, '');
-        const normalized = phones.map(normalize).filter(p => p.length >= 7);
+        const authUser = await getAuthenticatedUserFromSession(req);
+        if (!authUser) {
+            return res.status(401).json({
+                success: false,
+                message: 'Authentication required.'
+            });
+        }
 
-        // Find all users whose phone matches any of the provided numbers
+        const { phones } = req.body || {};
+        if (
+            !Array.isArray(phones) ||
+            phones.length === 0 ||
+            phones.length > 200 ||
+            !phones.every(p => typeof p === 'string' && p.length <= 64)
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: 'Provide between 1 and 200 valid phone numbers.'
+            });
+        }
+
+        const normalize = (p) => p.replace(/[\s\-().]/g, '');
+        const normalized = [...new Set(phones.map(normalize))]
+            .filter(p => p.length >= 7);
+
+        if (normalized.length === 0) {
+            return res.json({ success: true, matched: {} });
+        }
+
         const users = await User.find({
             phone: { $in: normalized }
         }).select('xameId firstName lastName profilePic phone').lean();
 
-        // Build a map of phone → user for fast lookup
         const matched = {};
         for (const u of users) {
-            if (u.phone) matched[normalize(u.phone)] = {
-                xameId:     u.xameId,
-                name:       `${u.firstName} ${u.lastName}`.trim(),
-                profilePic: u.profilePic || '',
-            };
+            if (u.phone) {
+                matched[normalize(u.phone)] = {
+                    xameId: u.xameId,
+                    name: `${u.firstName} ${u.lastName}`.trim(),
+                    profilePic: u.profilePic || '',
+                };
+            }
         }
 
-        res.json({ success: true, matched });
+        return res.json({ success: true, matched });
     } catch (err) {
         console.error('Contact match error:', err);
-        res.status(500).json({ success: false, message: err.message });
+        return res.status(500).json({
+            success: false,
+            message: 'Unable to match contacts.'
+        });
     }
 });
 
