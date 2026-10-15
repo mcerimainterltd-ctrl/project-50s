@@ -467,6 +467,8 @@ const walletSchema = new mongoose.Schema({
     xameId:       { type: String, required: true, unique: true },
     balance:      { type: Number, default: 0 },
     currency:     { type: String, default: process.env.WALLET_DEFAULT_CURRENCY || 'NGN' },
+    // Preferred display currency; never changes the denomination of balance.
+    dispCurrency: { type: String, default: '' },
     virtualAccount: {
         accountNumber:    { type: String, default: '' },
         bankName:         { type: String, default: '' },
@@ -526,6 +528,985 @@ const platformRevenueSchema = new mongoose.Schema({
     ts:        { type: Date, default: Date.now },
 });
 const PlatformRevenue = mongoose.model('PlatformRevenue', platformRevenueSchema);
+
+
+// ── XamePay durable outgoing-transfer ledger ──────────────────────────────
+const walletTransferLedgerSchema = new mongoose.Schema({
+    userId:            { type: String, required: true },
+    reference:         { type: String, required: true },
+    requestFingerprint:{ type: String, required: true },
+    principal:         { type: Number, required: true, min: 0.01 },
+    fee:               { type: Number, required: true, min: 0 },
+    totalDebit:        { type: Number, required: true, min: 0.01 },
+    currency:          { type: String, required: true },
+    accountBank:       { type: String, required: true },
+    accountNumber:     { type: String, required: true },
+    recipientName:     { type: String, default: '' },
+    status: {
+        type: String,
+        enum: ['reserved', 'submitted', 'unknown', 'succeeded', 'failed', 'refunded'],
+        default: 'reserved',
+        required: true
+    },
+    providerReference: { type: String, default: '' },
+    failureCode:       { type: String, default: '' },
+    createdAt:         { type: Date, default: Date.now },
+    updatedAt:         { type: Date, default: Date.now },
+    settledAt:         { type: Date, default: null }
+}, { versionKey: false });
+
+walletTransferLedgerSchema.index(
+    { userId: 1, reference: 1 },
+    { unique: true, name: 'wallet_transfer_user_reference_unique' }
+);
+
+const WalletTransferLedger = mongoose.model(
+    'WalletTransferLedger', walletTransferLedgerSchema
+);
+
+
+// ── XamePay durable payment-credit ledger
+const walletCreditLedgerSchema = new mongoose.Schema({
+    provider: { type: String, required: true },
+    transactionId: { type: String, required: true },
+    userId: { type: String, required: true },
+    amount: { type: Number, required: true, min: 0.01 },
+    currency: { type: String, default: '' },
+    createdAt: { type: Date, default: Date.now }
+}, { versionKey: false });
+
+walletCreditLedgerSchema.index(
+    { provider: 1, transactionId: 1 },
+    { unique: true, name: 'wallet_credit_provider_transaction_unique' }
+);
+
+const WalletCreditLedger = mongoose.model(
+    'WalletCreditLedger',
+    walletCreditLedgerSchema
+);
+
+// XAMEPAY_WALLET_BILL_LEDGER_V1
+// Durable ledger for wallet-funded airtime, data and bill purchases.
+const walletBillLedgerSchema = new mongoose.Schema({
+  userId: { type: String, required: true },
+  reference: { type: String, required: true },
+  requestFingerprint: { type: String, required: true },
+
+  serviceType: {
+    type: String,
+    enum: ['airtime', 'data', 'bill'],
+    required: true
+  },
+  provider: {
+    type: String,
+    enum: ['flutterwave', 'reloadly'],
+    required: true
+  },
+
+  country: { type: String, required: true },
+  currency: { type: String, required: true },
+
+  product: { type: mongoose.Schema.Types.Mixed, default: {} },
+  customerFingerprint: { type: String, required: true },
+
+  principal: { type: Number, required: true, min: 0.01 },
+  fee: { type: Number, required: true, min: 0 },
+  totalDebit: { type: Number, required: true, min: 0.01 },
+
+  status: {
+    type: String,
+    enum: [
+      'reserved', 'submitted', 'pending', 'unknown',
+      'succeeded', 'refunded'
+    ],
+    default: 'reserved',
+    required: true
+  },
+
+  providerReference: { type: String, default: '' },
+  providerStatus: { type: String, default: '' },
+  failureCode: { type: String, default: '' },
+
+  refundApplied: { type: Boolean, default: false },
+  cashbackApplied: { type: Boolean, default: false },
+
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now },
+  settledAt: { type: Date, default: null },
+  providerCheckedAt: { type: Date, default: null }
+}, { versionKey: false });
+
+walletBillLedgerSchema.index(
+  { userId: 1, reference: 1 },
+  { unique: true, name: 'wallet_bill_owner_reference_unique' }
+);
+
+walletBillLedgerSchema.index(
+  { status: 1, updatedAt: 1 },
+  { name: 'wallet_bill_reconciliation_queue' }
+);
+
+walletBillLedgerSchema.index(
+  { provider: 1, providerReference: 1 },
+  {
+    name: 'wallet_bill_provider_reference',
+    partialFilterExpression: {
+      providerReference: { $type: 'string', $gt: '' }
+    }
+  }
+);
+
+const WalletBillLedger = mongoose.model(
+  'WalletBillLedger',
+  walletBillLedgerSchema
+);
+
+// XAMEPAY_WALLET_BILL_HELPERS_V1
+// Never call an external provider from inside a MongoDB transaction.
+
+const walletBillCrypto = require('crypto');
+
+function walletBillHash(value) {
+  return walletBillCrypto.createHash('sha256')
+    .update(String(value))
+    .digest('hex');
+}
+
+function walletBillFingerprint(input) {
+  const canonical = {
+    userId: String(input.userId),
+    serviceType: String(input.serviceType),
+    provider: String(input.provider),
+    country: String(input.country).toUpperCase(),
+    currency: String(input.currency).toUpperCase(),
+    principal: Number(input.principal).toFixed(2),
+    fee: Number(input.fee).toFixed(2),
+    totalDebit: Number(input.totalDebit).toFixed(2),
+    product: input.product || {},
+    customerFingerprint: String(input.customerFingerprint)
+  };
+
+  return walletBillHash(JSON.stringify(canonical));
+}
+
+function walletBillValidate(input) {
+  if (!input || typeof input !== 'object') {
+    throw new Error('Invalid transaction request.');
+  }
+
+  if (!/^[A-Za-z0-9_-]{12,128}$/.test(String(input.reference || ''))) {
+    throw new Error('A valid transaction reference is required.');
+  }
+
+  if (!String(input.userId || '').trim()) {
+    throw new Error('Wallet owner is required.');
+  }
+
+  if (!['airtime', 'data', 'bill'].includes(input.serviceType)) {
+    throw new Error('Unsupported service type.');
+  }
+
+  if (!['flutterwave', 'reloadly'].includes(input.provider)) {
+    throw new Error('Unsupported provider.');
+  }
+
+  if (!/^[A-Z]{2}$/.test(String(input.country || '').toUpperCase())) {
+    throw new Error('Invalid service country.');
+  }
+
+  if (!/^[A-Z]{3}$/.test(String(input.currency || '').toUpperCase())) {
+    throw new Error('Invalid wallet currency.');
+  }
+
+  for (const key of ['principal', 'fee', 'totalDebit']) {
+    if (!Number.isFinite(Number(input[key]))) {
+      throw new Error('Invalid transaction amount.');
+    }
+  }
+
+  const principal = Number(input.principal);
+  const fee = Number(input.fee);
+  const total = Number(input.totalDebit);
+
+  if (
+    principal < 0.01 ||
+    fee < 0 ||
+    total < 0.01 ||
+    Math.abs(total - principal - fee) > 0.005
+  ) {
+    throw new Error('Inconsistent transaction amounts.');
+  }
+
+  if (!String(input.customerFingerprint || '').trim()) {
+    throw new Error('Customer fingerprint is required.');
+  }
+}
+
+/**
+ * Atomically records a reservation and deducts wallet funds.
+ * An existing reference is returned with created:false. The caller must
+ * never submit another provider request for that existing reservation.
+ */
+async function reserveWalletBill(input) {
+  walletBillValidate(input);
+
+  const normalized = {
+    ...input,
+    userId: String(input.userId),
+    reference: String(input.reference),
+    country: String(input.country).toUpperCase(),
+    currency: String(input.currency).toUpperCase(),
+    principal: Number(Number(input.principal).toFixed(2)),
+    fee: Number(Number(input.fee).toFixed(2)),
+    totalDebit: Number(Number(input.totalDebit).toFixed(2))
+  };
+
+  normalized.requestFingerprint = walletBillFingerprint(normalized);
+
+  await WalletBillLedger.init();
+
+  const prior = await WalletBillLedger.findOne({
+    userId: normalized.userId,
+    reference: normalized.reference
+  }).lean();
+
+  if (prior) {
+    if (prior.requestFingerprint !== normalized.requestFingerprint) {
+      const e = new Error('Reference reused for a different purchase.');
+      e.code = 'WALLET_BILL_IDEMPOTENCY_CONFLICT';
+      throw e;
+    }
+    return { created: false, ledger: prior };
+  }
+
+  const session = await mongoose.startSession();
+  let ledgerResult = null;
+  let wasCreated = false;
+
+  try {
+    await session.withTransaction(async () => {
+      const duplicate = await WalletBillLedger.findOne({
+        userId: normalized.userId,
+        reference: normalized.reference
+      }).session(session);
+
+      if (duplicate) {
+        if (duplicate.requestFingerprint !== normalized.requestFingerprint) {
+          const e = new Error('Reference reused for a different purchase.');
+          e.code = 'WALLET_BILL_IDEMPOTENCY_CONFLICT';
+          throw e;
+        }
+
+        ledgerResult = duplicate;
+        wasCreated = false;
+        return;
+      }
+
+      const ledger = new WalletBillLedger({
+        userId: normalized.userId,
+        reference: normalized.reference,
+        requestFingerprint: normalized.requestFingerprint,
+        serviceType: normalized.serviceType,
+        provider: normalized.provider,
+        country: normalized.country,
+        currency: normalized.currency,
+        product: normalized.product || {},
+        customerFingerprint: normalized.customerFingerprint,
+        principal: normalized.principal,
+        fee: normalized.fee,
+        totalDebit: normalized.totalDebit,
+        status: 'reserved'
+      });
+
+      await ledger.save({ session });
+
+      const wallet = await Wallet.findOneAndUpdate(
+        {
+          xameId: normalized.userId,
+          currency: normalized.currency,
+          balance: { $gte: normalized.totalDebit }
+        },
+        {
+          $inc: { balance: -normalized.totalDebit },
+          $push: {
+            transactions: {
+              id: normalized.reference,
+              ref: normalized.reference,
+              label: `${normalized.serviceType} purchase`,
+              icon: normalized.serviceType,
+              amount: normalized.totalDebit,
+              principal: normalized.principal,
+              fee: normalized.fee,
+              type: 'debit',
+              status: 'Pending',
+              source: 'wallet_bill',
+              ts: new Date()
+            }
+          }
+        },
+        { new: true, session }
+      );
+
+      if (!wallet) {
+        const current = await Wallet.findOne({
+          xameId: normalized.userId
+        }).session(session).lean();
+
+        if (!current) throw new Error('Wallet not found.');
+
+        if (
+          String(current.currency || '').toUpperCase() !==
+          normalized.currency
+        ) {
+          const e = new Error('Wallet currency mismatch.');
+          e.code = 'WALLET_CURRENCY_MISMATCH';
+          throw e;
+        }
+
+        const e = new Error('Insufficient wallet balance.');
+        e.code = 'INSUFFICIENT_WALLET_BALANCE';
+        throw e;
+      }
+
+      ledgerResult = ledger;
+      wasCreated = true;
+    });
+
+    return { created: wasCreated, ledger: ledgerResult };
+  } catch (err) {
+    if (err && err.code === 11000) {
+      const winner = await WalletBillLedger.findOne({
+        userId: normalized.userId,
+        reference: normalized.reference
+      }).lean();
+
+      if (winner) {
+        if (winner.requestFingerprint !== normalized.requestFingerprint) {
+          const e = new Error('Reference reused for a different purchase.');
+          e.code = 'WALLET_BILL_IDEMPOTENCY_CONFLICT';
+          throw e;
+        }
+        return { created: false, ledger: winner };
+      }
+    }
+    throw err;
+  } finally {
+    await session.endSession();
+  }
+}
+
+/**
+ * Only a verified final provider result may settle a purchase.
+ * A timeout or ambiguous response must remain pending/unknown, not refunded.
+ */
+async function transitionWalletBill(userId, reference, outcome, details = {}) {
+  const allowed = [
+    'submitted', 'pending', 'unknown', 'succeeded', 'refunded'
+  ];
+
+  if (!allowed.includes(outcome)) {
+    throw new Error('Invalid bill transaction transition.');
+  }
+
+  const session = await mongoose.startSession();
+  let result;
+
+  try {
+    await session.withTransaction(async () => {
+      const ledger = await WalletBillLedger.findOne({
+        userId: String(userId),
+        reference: String(reference)
+      }).session(session);
+
+      if (!ledger) throw new Error('Bill transaction not found.');
+
+      if (['succeeded', 'refunded'].includes(ledger.status)) {
+        if (ledger.status !== outcome) {
+          if (!['submitted', 'pending', 'unknown'].includes(outcome)) {
+            throw new Error('Conflicting final transaction outcome.');
+          }
+        }
+        result = ledger;
+        return;
+      }
+
+      if (outcome === 'succeeded' && details.confirmedSuccess !== true) {
+        throw new Error('Provider success has not been confirmed.');
+      }
+
+      if (outcome === 'refunded' && details.definitiveFailure !== true) {
+        throw new Error('A refund requires a definitive provider failure.');
+      }
+
+      if (outcome === 'succeeded' || outcome === 'refunded') {
+        const update = outcome === 'refunded'
+          ? await Wallet.updateOne(
+              {
+                xameId: ledger.userId,
+                'transactions.ref': ledger.reference
+              },
+              {
+                $inc: { balance: ledger.totalDebit },
+                $set: { 'transactions.$.status': 'Failed' }
+              },
+              { session }
+            )
+          : await Wallet.updateOne(
+              {
+                xameId: ledger.userId,
+                'transactions.ref': ledger.reference
+              },
+              {
+                $set: { 'transactions.$.status': 'Completed' }
+              },
+              { session }
+            );
+
+        if (update.matchedCount !== 1) {
+          throw new Error('Wallet history entry missing; settlement aborted.');
+        }
+
+        ledger.status = outcome;
+        ledger.settledAt = new Date();
+
+        if (outcome === 'refunded') ledger.refundApplied = true;
+      } else {
+        ledger.status = outcome;
+      }
+
+      if (details.providerReference) {
+        ledger.providerReference = String(details.providerReference);
+      }
+      if (details.providerStatus) {
+        ledger.providerStatus = String(details.providerStatus);
+      }
+      if (details.failureCode) {
+        ledger.failureCode = String(details.failureCode);
+      }
+
+      if (details.providerChecked === true) {
+        ledger.providerCheckedAt = new Date();
+      }
+
+      ledger.updatedAt = new Date();
+      await ledger.save({ session });
+      result = ledger;
+    });
+
+    return result;
+  } finally {
+    await session.endSession();
+  }
+}
+
+
+
+
+// XAMEPAY_WALLET_BILL_PROVIDER_FLOW_V1
+// Wallet-funded Flutterwave bills: one durable reference per purchase.
+// Provider calls are intentionally outside MongoDB transactions.
+// Ambiguous provider results remain pending/unknown; never auto-refund them.
+
+function walletBillProviderStatus(payload) {
+  const d = payload && payload.data;
+  if (!d || typeof d !== 'object') return '';
+  return String(d.status || d.transaction_status || '').trim().toLowerCase();
+}
+
+function walletBillIsFinalSuccess(status) {
+  return ['success', 'successful', 'completed'].includes(
+    String(status || '').trim().toLowerCase()
+  );
+}
+
+function walletBillIsFinalFailure(status) {
+  return ['failed', 'reversed'].includes(String(status || '').toLowerCase());
+}
+
+function walletBillClientResult(ledger) {
+  const status = String(ledger.status || 'unknown');
+  return {
+    success: status === 'succeeded',
+    pending: ['reserved', 'submitted', 'pending', 'unknown'].includes(status),
+    status,
+    reference: ledger.reference,
+    fee: Number(ledger.fee || 0),
+    message: status === 'succeeded'
+      ? 'Purchase confirmed.'
+      : status === 'refunded'
+        ? 'Provider confirmed failure; wallet refund completed.'
+        : 'Purchase status is being verified. Do not submit another purchase.'
+  };
+}
+
+async function walletBillCheckProvider(ledger) {
+  // WALLET_BILL_HISTORY_STATUS_GUARD_V3
+  // Never query or settle a reservation that has not been submitted.
+  if (!ledger || ledger.status === 'reserved') return ledger;
+
+  const secret = process.env.FLW_SECRET_KEY ||
+    process.env.FLW_SECRET || FLW_SECRET;
+  if (!secret) return ledger;
+
+  const providerRef = String(
+    ledger.providerReference || ''
+  ).trim();
+  if (!providerRef) return ledger;
+
+  const createdAt = ledger.createdAt ? new Date(ledger.createdAt) : null;
+  if (!createdAt || Number.isNaN(createdAt.getTime())) return ledger;
+
+  // Include a small clock-skew margin; never use the API's old default dates.
+  const from = new Date(createdAt.getTime() - 48 * 60 * 60 * 1000)
+    .toISOString();
+  const to = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+
+  let matched = null;
+  let lookupFailed = false;
+
+  for (const status of ['Successful', 'Failed', 'Reversed']) {
+    const params = new URLSearchParams({
+      status,
+      from,
+      to,
+      reference: ledger.reference,
+      page: '1',
+      limit: '100'
+    });
+
+    try {
+      const response = await fetch(
+        'https://api.flutterwave.com/v3/bills/history?' + params.toString(),
+        {
+          method: 'GET',
+          headers: { Authorization: 'Bearer ' + secret },
+          signal: AbortSignal.timeout(12000)
+        }
+      );
+
+      if (!response.ok) {
+        lookupFailed = true;
+        continue;
+      }
+
+      const payload = await response.json();
+      if (
+        !payload ||
+        String(payload.status || '').trim().toLowerCase() !== 'success' ||
+        !Array.isArray(payload.data)
+      ) {
+        lookupFailed = true;
+        continue;
+      }
+
+      const candidates = payload.data.filter(item =>
+        item &&
+        String(item.tx_ref || '').trim() === providerRef &&
+        String(item.customer_reference || '').trim() === String(ledger.reference) &&
+        String(item.status || '').trim().toLowerCase() === status.toLowerCase()
+      );
+
+      if (candidates.length > 1) {
+        lookupFailed = true;
+        matched = null;
+        break;
+      }
+
+      if (candidates.length === 1) {
+        if (matched) {
+          // Conflicting final statuses must never settle the wallet.
+          matched = null;
+          lookupFailed = true;
+          break;
+        }
+        matched = candidates[0];
+      }
+    } catch (_) {
+      lookupFailed = true;
+    }
+  }
+
+  if (!matched || lookupFailed) {
+    await transitionWalletBill(
+      ledger.userId,
+      ledger.reference,
+      'pending',
+      {
+        providerChecked: true,
+        providerStatus: lookupFailed
+          ? 'history_lookup_incomplete'
+          : 'awaiting_matching_final_history'
+      }
+    );
+
+    return await WalletBillLedger.findOne({
+      userId: ledger.userId,
+      reference: ledger.reference
+    }).lean();
+  }
+
+  const providerAmount = Number(matched.amount);
+  const ledgerAmount = Number(ledger.principal);
+  const identityMatches =
+    String(matched.currency || '').trim().toUpperCase() ===
+      String(ledger.currency || '').trim().toUpperCase() &&
+    String(matched.country || '').trim().toUpperCase() ===
+      String(ledger.country || '').trim().toUpperCase() &&
+    Number.isFinite(providerAmount) &&
+    Number.isFinite(ledgerAmount) &&
+    Math.abs(providerAmount - ledgerAmount) < 0.005;
+
+
+
+  if (!identityMatches) {
+    await transitionWalletBill(
+      ledger.userId,
+      ledger.reference,
+      'pending',
+      {
+        providerChecked: true,
+        providerStatus: 'history_transaction_details_mismatch'
+      }
+    );
+  } else if (matched.status === 'Successful') {
+    await transitionWalletBill(
+      ledger.userId,
+      ledger.reference,
+      'succeeded',
+      {
+        confirmedSuccess: true,
+        providerChecked: true,
+        providerReference: String(matched.tx_ref),
+        providerStatus: 'successful'
+      }
+    );
+  } else if (matched.status === 'Failed' || matched.status === 'Reversed') {
+    await transitionWalletBill(
+      ledger.userId,
+      ledger.reference,
+      'refunded',
+      {
+        definitiveFailure: true,
+        providerChecked: true,
+        providerReference: String(matched.tx_ref),
+        providerStatus: matched.status.toLowerCase(),
+        failureCode: matched.status.toLowerCase()
+      }
+    );
+  }
+
+  return await WalletBillLedger.findOne({
+    userId: ledger.userId,
+    reference: ledger.reference
+  }).lean();
+}
+
+async function processWalletBillRequest(req, res, serviceType) {
+  const body = req.body || {};
+  const userId = String(body.userId || '').trim();
+
+  if (!(await requireWalletSessionOwner(req, res, userId))) return;
+
+  const secret = process.env.FLW_SECRET_KEY ||
+    process.env.FLW_SECRET || FLW_SECRET;
+
+  if (!secret) {
+    return res.status(503).json({
+      success: false,
+      code: 'PROVIDER_NOT_CONFIGURED',
+      message: 'Payment provider is not configured.'
+    });
+  }
+
+  const reference = String(body.reference || '').trim();
+  if (!/^[A-Za-z0-9_-]{12,128}$/.test(reference)) {
+    return res.status(400).json({
+      success: false,
+      code: 'INVALID_REFERENCE',
+      message: 'A valid purchase reference is required.'
+    });
+  }
+
+  const amount = Number(body.amount);
+  if (!Number.isFinite(amount) || amount < 1) {
+    return res.status(400).json({
+      success: false, message: 'Invalid amount.'
+    });
+  }
+
+  const country = String(
+    serviceType === 'data' ? (body.countryCode || 'NG') :
+    serviceType === 'bill' ? (body.country || 'NG') : 'NG'
+  ).toUpperCase();
+
+  // This integration uses Flutterwave's existing /v3/bills flow.
+  // Do not imply support for countries that have not been verified.
+  if (country !== 'NG') {
+    return res.status(400).json({
+      success: false,
+      code: 'UNSUPPORTED_BILL_COUNTRY',
+      message: 'This provider flow currently supports Nigeria only.'
+    });
+  }
+
+  const phone = String(body.phone || body.customer || '').trim();
+  if (!phone || phone.length > 160) {
+    return res.status(400).json({
+      success: false, message: 'A valid customer identifier is required.'
+    });
+  }
+
+  let product = {};
+  let providerPayload = {
+    country: 'NG',
+    customer: phone,
+    amount,
+    recurrence: 'ONCE',
+    reference
+  };
+
+  if (serviceType === 'airtime') {
+    providerPayload.type = 'AIRTIME';
+    product = {
+      network: String(body.operatorId || '').trim()
+    };
+  } else if (serviceType === 'data') {
+    const itemCode = String(body.itemCode || '').trim();
+    const billerCode = String(body.billerCode || '').trim();
+    const billerType = String(body.billerType || '').trim();
+
+    if (!itemCode || !billerCode || !billerType) {
+      return res.status(400).json({
+        success: false,
+        code: 'DATA_PLAN_UNVERIFIED',
+        message: 'This data plan lacks verified provider identifiers. Refresh the plan catalogue and try again.'
+      });
+    }
+
+    providerPayload.type = billerType;
+    providerPayload.biller_name = itemCode;
+    providerPayload.biller_code = billerCode;
+    product = {
+      network: String(body.operatorId || '').trim(),
+      itemCode, billerCode, billerType
+    };
+  } else {
+    const billerCode = String(body.biller_code || '').trim();
+    const itemCode = String(body.item_code || '').trim();
+
+    if (!billerCode || !itemCode) {
+      return res.status(400).json({
+        success: false, message: 'Biller and item are required.'
+      });
+    }
+
+    providerPayload.type = billerCode;
+    providerPayload.biller_name = itemCode;
+    product = { billerCode, itemCode };
+  }
+
+  let wallet;
+  try {
+    wallet = await Wallet.findOne({ xameId: userId }).lean();
+  } catch (_) {
+    return res.status(503).json({
+      success: false, message: 'Wallet could not be checked.'
+    });
+  }
+
+  if (!wallet) {
+    return res.status(404).json({
+      success: false, message: 'Wallet not found.'
+    });
+  }
+
+  const currency = String(wallet.currency || 'NGN').toUpperCase();
+  if (currency !== 'NGN') {
+    return res.status(400).json({
+      success: false,
+      code: 'UNSUPPORTED_WALLET_CURRENCY',
+      message: 'This provider flow currently requires an NGN wallet.'
+    });
+  }
+
+  const fee = serviceType === 'bill'
+    ? Math.round(amount * SERVICE_FEE * 100) / 100
+    : 0;
+  const totalDebit = Number((amount + fee).toFixed(2));
+
+  let ledger;
+  let created = false;
+
+  try {
+    const reservation = await reserveWalletBill({
+      userId,
+      reference,
+      serviceType,
+      provider: 'flutterwave',
+      country,
+      currency,
+      product,
+      customerFingerprint: walletBillHash(phone),
+      principal: amount,
+      fee,
+      totalDebit
+    });
+
+    ledger = reservation.ledger;
+    created = reservation.created;
+  } catch (error) {
+    const code = error && error.code;
+    const message = String(error && error.message || '');
+
+    if (code === 'WALLET_BILL_IDEMPOTENCY_CONFLICT') {
+      return res.status(409).json({
+        success: false,
+        code,
+        message: 'This reference belongs to a different purchase.'
+      });
+    }
+
+    if (/Insufficient|balance/i.test(message)) {
+      return res.status(402).json({
+        success: false, message: 'Insufficient wallet balance.'
+      });
+    }
+
+    console.error('[XamePay wallet bill reserve]', error);
+    return res.status(500).json({
+      success: false, message: 'Could not safely reserve this purchase.'
+    });
+  }
+
+  // Existing reservations must NEVER trigger a second provider POST.
+  if (!created) {
+    if (['reserved', 'submitted', 'pending', 'unknown'].includes(ledger.status)) {
+      ledger = await walletBillCheckProvider(ledger);
+    }
+    return res.status(200).json(walletBillClientResult(ledger));
+  }
+
+  // Persist the merchant reference before contacting the provider.
+  try {
+    ledger = await transitionWalletBill(
+      userId, reference, 'submitted',
+      {
+        providerReference: reference,
+        providerStatus: 'submission_started'
+      }
+    );
+  } catch (error) {
+    console.error('[XamePay wallet bill submit marker]', error);
+    return res.status(202).json({
+      success: false,
+      pending: true,
+      status: 'unknown',
+      reference,
+      message: 'The purchase is reserved. Check its status before retrying.'
+    });
+  }
+
+  let response;
+  let payload;
+
+  try {
+    response = await fetch('https://api.flutterwave.com/v3/bills', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + secret,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(providerPayload),
+      signal: AbortSignal.timeout(20000)
+    });
+
+    const raw = await response.text();
+    try {
+      payload = JSON.parse(raw);
+    } catch (_) {
+      payload = null;
+    }
+  } catch (_) {
+    await transitionWalletBill(
+      userId, reference, 'unknown',
+      { providerStatus: 'submission_outcome_unknown' }
+    );
+    ledger = await WalletBillLedger.findOne({
+      userId, reference
+    }).lean();
+
+    return res.status(202).json(walletBillClientResult(ledger));
+  }
+
+  // Do not refund based only on an initial POST response. A definitive
+  // final result must come from a successful status lookup.
+  const providerReference = String(
+    payload && payload.data && payload.data.tx_ref || reference
+  );
+
+  await transitionWalletBill(
+    userId, reference, response.ok ? 'pending' : 'unknown',
+    {
+      providerReference,
+      providerStatus: response.ok
+        ? (walletBillProviderStatus(payload) || 'awaiting_status_check')
+        : 'submission_http_' + response.status
+    }
+  );
+
+  ledger = await WalletBillLedger.findOne({
+    userId, reference
+  }).lean();
+
+  // Even an apparently successful initial response is checked through
+  // the provider status endpoint before success is shown to the user.
+  if (response.ok && payload && payload.status === 'success') {
+    ledger = await walletBillCheckProvider(ledger);
+  }
+
+  return res.status(
+    ledger.status === 'succeeded' || ledger.status === 'refunded' ? 200 : 202
+  ).json(walletBillClientResult(ledger));
+}
+
+app.get('/api/wallet/bills/status/:reference', async (req, res) => {
+  const userId = String(req.query.userId || '').trim();
+  const reference = String(req.params.reference || '').trim();
+
+  if (!(await requireWalletSessionOwner(req, res, userId))) return;
+
+  if (!/^[A-Za-z0-9_-]{12,128}$/.test(reference)) {
+    return res.status(400).json({
+      success: false, message: 'Invalid transaction reference.'
+    });
+  }
+
+  let ledger;
+  try {
+    ledger = await WalletBillLedger.findOne({
+      userId, reference
+    }).lean();
+  } catch (_) {
+    return res.status(503).json({
+      success: false, message: 'Transaction status is temporarily unavailable.'
+    });
+  }
+
+  if (!ledger) {
+    return res.status(404).json({
+      success: false,
+      code: 'WALLET_BILL_NOT_FOUND',
+      message: 'No reservation exists for this reference.'
+    });
+  }
+
+  if (['reserved', 'submitted', 'pending', 'unknown'].includes(ledger.status)) {
+    ledger = await walletBillCheckProvider(ledger);
+  }
+
+  return res.status(200).json(walletBillClientResult(ledger));
+});
+
 
 // ── Call Credits Schema ───────────────────────────────────────────────────
 const rechargeTokenSchema = new mongoose.Schema({
@@ -1301,6 +2282,41 @@ async function getAuthenticatedUserFromSession(req) {
         sessions: { $elemMatch: { token } }
     });
 }
+
+
+// ── XamePay wallet session ownership ──────────────────────────────────────
+// Never trust a request-body/query wallet ID as proof of identity.
+async function requireWalletSessionOwner(req, res, requestedUserId) {
+    const user = await getAuthenticatedUserFromSession(req);
+    if (!user) {
+        res.status(401).json({
+            success: false,
+            message: 'Authentication required'
+        });
+        return false;
+    }
+
+    if (!requestedUserId ||
+        String(user.xameId) !== String(requestedUserId)) {
+        res.status(403).json({
+            success: false,
+            message: 'Wallet access denied'
+        });
+        return false;
+    }
+
+    return true;
+}
+
+// ── XamePay International: isolated, non-executing foundation ─────────────
+const createXamePayInternationalRouter =
+    require('./routes/xamepayInternational');
+
+app.use('/api/xamepay/international',
+    createXamePayInternationalRouter({
+        mongoose,
+        getAuthenticatedUserFromSession,
+    }));
 
 // ── Direct large-media upload initialization ───────────────────────────────
 // Authenticates the existing XamePage session, then asks the Media Worker
@@ -8230,6 +9246,8 @@ app.post('/api/clear-chat', async (req, res) => {
 // Create Flutterwave virtual account
 // ── Save BVN (encrypted) ─────────────────────────────────────────────────────
 app.post('/api/wallet/save-bvn', async (req, res) => {
+    if (!(await requireWalletSessionOwner(req, res, req.body && req.body.userId))) return;
+
     const { userId, bvn } = req.body;
     if (!userId || !bvn) return res.json({ success: false, message: 'Missing fields' });
     if (!/^\d{11}$/.test(bvn)) return res.json({ success: false, message: 'BVN must be 11 digits' });
@@ -8590,59 +9608,110 @@ app.post('/api/wallet/flw/virtual-account', async (req, res) => {
 
 // Flutterwave card payment init
 app.post('/api/wallet/flw/init-payment', async (req, res) => {
-    const { userId, amount, currency, email, name } = req.body;
-    if (!userId || !amount) return res.json({ success: false, message: 'Missing fields.' });
+    const { userId, amount, currency, email, name } = req.body || {};
+    if (!(await requireWalletSessionOwner(req, res, userId))) return;
+
+    const value = Number(amount);
+    const paymentCurrency = String(currency || 'NGN').trim().toUpperCase();
+    if (!Number.isFinite(value) || value <= 0 ||
+        !/^[A-Z]{3}$/.test(paymentCurrency)) {
+        return res.status(400).json({ success: false, message: 'Invalid amount or currency.' });
+    }
+
+    const secret = process.env.FLW_SECRET_KEY || process.env.FLW_SECRET;
+    if (!secret) {
+        return res.status(503).json({ success: false, message: 'Payment provider is not configured.' });
+    }
+
     try {
         const txRef = 'xamepay-card-' + userId + '-' + Date.now();
         const r = await fetch('https://api.flutterwave.com/v3/payments', {
             method: 'POST',
-            headers: { Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`, 'Content-Type': 'application/json' },
+            headers: {
+                Authorization: `Bearer ${secret}`,
+                'Content-Type': 'application/json'
+            },
             body: JSON.stringify({
                 tx_ref: txRef,
-                amount,
-                currency: currency || 'NGN',
+                amount: value,
+                currency: paymentCurrency,
                 redirect_url: process.env.SERVER_URL + '/api/wallet/flw/card-callback',
-                customer: { email: email || userId + '@xamepage.app', name: name || userId },
+                customer: {
+                    email: email || userId + '@xamepage.app',
+                    name: name || userId
+                },
                 customizations: { title: 'XamePay', logo: '' },
-                meta: { userId },
-            }),
+                meta: { userId }
+            })
         });
         const data = await r.json();
-        if (data.status === 'success') {
-            res.json({ success: true, paymentLink: data.data.link });
-        } else {
-            res.json({ success: false, message: data.message });
+
+        if (r.ok && data.status === 'success' && data.data && data.data.link) {
+            return res.json({ success: true, paymentLink: data.data.link });
         }
-    } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
+        return res.status(502).json({
+            success: false,
+            message: 'Payment initialization failed.'
+        });
+    } catch (_) {
+        return res.status(502).json({
+            success: false,
+            message: 'Payment initialization failed.'
+        });
     }
 });
 
 // Flutterwave card callback
 app.get('/api/wallet/flw/card-callback', async (req, res) => {
-    const { transaction_id, status } = req.query;
-    if (status !== 'successful' || !transaction_id) return res.redirect('/payment-failed');
+    const { transaction_id, status } = req.query || {};
+    if (status !== 'successful' || !/^\d+$/.test(String(transaction_id || ''))) {
+        return res.redirect('/payment-failed');
+    }
+
+    const secret = process.env.FLW_SECRET_KEY || process.env.FLW_SECRET;
+    if (!secret) return res.redirect('/payment-failed');
+
     try {
-        const r = await fetch(`https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`, {
-            headers: { Authorization: `Bearer ${process.env.FLW_SECRET_KEY}` },
-        });
-        const data = await r.json();
-        if (data.status === 'success' && data.data.status === 'successful') {
-            const userId = data.data.meta?.userId;
-            const amount = data.data.amount;
-            const currency = data.data.currency;
-            if (userId && amount) {
-                const issuer = data.data.card?.issuer || data.data.issuer || '';
-                const last4  = data.data.card?.last_4digits || '';
-                const label  = issuer
-                    ? `Card Payment · ${issuer}${last4 ? ' ****' + last4 : ''}`
-                    : 'Card Payment';
-                await creditWallet(userId, amount, label, '💳', transaction_id);
+        const r = await fetch(
+            `https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`,
+            {
+                headers: { Authorization: `Bearer ${secret}` },
+                signal: AbortSignal.timeout(10000)
             }
+        );
+        const result = await r.json();
+        const payment = result && result.data;
+
+        if (!r.ok || result.status !== 'success' ||
+            !payment || payment.status !== 'successful') {
+            return res.redirect('/payment-failed');
         }
-        res.redirect('/payment-success');
-    } catch (err) {
-        res.redirect('/payment-failed');
+
+        const userId = String(payment.meta && payment.meta.userId || '').trim();
+        const txRef = String(payment.tx_ref || '');
+        const amount = Number(payment.amount);
+        const currency = String(payment.currency || '').toUpperCase();
+
+        if (!userId ||
+            !txRef.startsWith('xamepay-card-' + userId + '-') ||
+            !Number.isFinite(amount) || amount <= 0 ||
+            !/^[A-Z]{3}$/.test(currency)) {
+            return res.redirect('/payment-failed');
+        }
+
+        await creditWalletOnce(
+            'flutterwave',
+            String(transaction_id),
+            userId,
+            amount,
+            'Wallet funded via Card',
+            '💳',
+            currency
+        );
+
+        return res.redirect('/payment-success');
+    } catch (_) {
+        return res.redirect('/payment-failed');
     }
 });
 
@@ -8815,32 +9884,68 @@ app.post('/api/wallet/squad/init-payment', async (req, res) => {
     }
 });
 
-// Squad payment callback (redirect after checkout)
+// Squad payment callback (redirect after checkout).
+// The webhook and browser callback share the same durable credit key.
 app.get('/api/wallet/squad/callback', async (req, res) => {
-    console.log('Squad callback DEBUG query params:', JSON.stringify(req.query));
-    const { transaction_ref } = req.query;
-    if (!transaction_ref) return res.redirect('/payment-failed');
+    const txRef = String(req.query.transaction_ref || '').trim();
+    if (!txRef) return res.redirect('/payment-failed');
+
+    const match = txRef.match(/^xamepay-sqd-(\d{8,})-(\d+)$/);
+    if (!match) return res.redirect('/payment-failed');
+
     try {
-        const baseUrl = process.env.SQUAD_BASE_URL || 'https://sandbox-api-d.squadco.com';
-        const r = await fetch(`${baseUrl}/transaction/verify/${transaction_ref}`, {
-            headers: { Authorization: `Bearer ${process.env.SQUAD_SECRET_KEY}` },
-        });
-        const data = await r.json();
-        console.log('Squad callback DEBUG verify response:', JSON.stringify(data));
-        if (data.status === 200 && data.data?.status === 'success') {
-            const userId = transaction_ref.split('-')[2]; // xamepay-sqd-<userId>-<ts>
-            const amount = (data.data.amount || 0) / 100; // convert from kobo/cent back to major unit
-            if (userId && amount) {
-                const wallet = await Wallet.findOne({ xameId: userId });
-                const alreadyCredited = wallet?.transactions?.some(t => t.ref === transaction_ref);
-                if (!alreadyCredited) {
-                    await creditWallet(userId, amount, 'Card Payment · Squad', '💳', transaction_ref, { source: 'client_payment' });
-                }
+        const squadKey = process.env.SQUAD_SECRET_KEY || '';
+        if (!squadKey) return res.redirect('/payment-pending');
+
+        const baseUrl = process.env.SQUAD_BASE_URL ||
+            'https://sandbox-api-d.squadco.com';
+
+        const response = await fetch(
+            `${baseUrl}/transaction/verify/${encodeURIComponent(txRef)}`,
+            {
+                headers: { Authorization: `Bearer ${squadKey}` },
+                signal: AbortSignal.timeout(10000),
             }
+        );
+
+        if (!response.ok) return res.redirect('/payment-pending');
+
+        const result = await response.json();
+        const payment = result.data || {};
+        const verifiedRef = String(
+            payment.transaction_ref || payment.transaction_reference || txRef
+        ).trim();
+
+        if (result.status !== 200 ||
+            String(payment.status || '').toLowerCase() !== 'success' ||
+            verifiedRef !== txRef) {
+            return res.redirect('/payment-failed');
         }
-        res.redirect('/payment-success');
+
+        const amount = Number(payment.amount) / 100;
+        const currency = String(payment.currency || 'NGN')
+            .trim().toUpperCase();
+
+        if (!Number.isFinite(amount) || amount <= 0 ||
+            !/^[A-Z]{3}$/.test(currency)) {
+            return res.redirect('/payment-pending');
+        }
+
+        await creditWalletOnce(
+            'squad',
+            txRef,
+            match[1],
+            amount,
+            'Card Payment · Squad',
+            '💳',
+            currency,
+            { source: 'client_payment' }
+        );
+
+        return res.redirect('/payment-success');
     } catch (err) {
-        res.redirect('/payment-failed');
+        console.error('Squad callback durable credit failed:', err.message);
+        return res.redirect('/payment-pending');
     }
 });
 
@@ -9462,50 +10567,91 @@ document.querySelectorAll('.overlay').forEach(o => {
     }
 });
 
-// Squad webhook (server-side, uses SQUAD_SECRET_KEY for HMAC-SHA512 signature check)
+// Squad webhook — durable, idempotent wallet credits.
 app.post('/api/wallet/squad/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
     try {
+        const secretKey = process.env.SQUAD_SECRET_KEY || '';
+        if (!secretKey) {
+            return res.status(503).send('Webhook verification unavailable');
+        }
+
         const rawBody = req.body.toString();
         const signature = req.headers['x-squad-encrypted-body'];
-        const secretKey = process.env.SQUAD_SECRET_KEY || '';
-        const expectedSig = crypto.createHmac('sha512', secretKey).update(rawBody).digest('hex').toUpperCase();
+        const expectedSig = crypto.createHmac('sha512', secretKey)
+            .update(rawBody).digest('hex').toUpperCase();
         const sigBuf = Buffer.from(signature || '', 'utf8');
         const expBuf = Buffer.from(expectedSig, 'utf8');
-        const validSig = !!signature && sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf);
-        console.log('Squad webhook received. signature valid:', validSig);
+        const validSig = !!signature &&
+            sigBuf.length === expBuf.length &&
+            crypto.timingSafeEqual(sigBuf, expBuf);
+
         if (!validSig) return res.status(401).send('Unauthorized');
 
         const payload = JSON.parse(rawBody);
         const d = payload.Body || {};
-        console.log('Squad webhook event:', payload.Event, 'RAW body:', JSON.stringify(d));
 
-        if (payload.Event === 'charge_successful' && d.transaction_status === 'Success') {
-            const txRef = d.transaction_ref;
-            const amount = (d.amount || 0) / 100; // Squad sends kobo/cent
-            const userId = d.meta?.userId || (txRef?.startsWith('xamepay-sqd-') ? txRef.split('-')[2] : null);
+        if (!(payload.Event === 'charge_successful' &&
+              d.transaction_status === 'Success')) {
+            return res.sendStatus(200);
+        }
 
-            if (userId && amount) {
-                try {
-                    let wallet = await Wallet.findOne({ xameId: userId });
-                    if (!wallet) wallet = new Wallet({ xameId: userId, currency: 'NGN' });
-                    const alreadyCredited = wallet.transactions?.some(t => t.ref === txRef);
-                    if (!alreadyCredited) {
-                        await creditWallet(userId, amount, 'Card Payment · Squad', '💳', txRef, { source: 'client_payment' });
-                        console.log(`✅ Squad webhook: credited ${amount} to ${userId}`);
-                    }
-                    const sockId = findSocketId(userId);
-                    if (sockId) {
-                        io.to(sockId).emit('wallet:funded', { amount, balance: wallet.balance });
-                    }
-                } catch (err) {
-                    console.error('Squad webhook credit error:', err);
-                }
+        const txRef = String(d.transaction_ref || '').trim();
+        const refMatch = txRef.match(/^xamepay-sqd-(\d{8,})-(\d+)$/);
+        if (!refMatch) {
+            // This endpoint only credits payments with a server-issued
+            // XamePay Squad reference.
+            return txRef.startsWith('xamepay-sqd-')
+                ? res.status(503).send('Payment reference unresolved')
+                : res.sendStatus(200);
+        }
+
+        const userId = refMatch[1];
+        const metaUserId = String(d.meta?.userId || '').trim();
+        if (metaUserId && metaUserId !== userId) {
+            return res.status(401).send('Payment reference mismatch');
+        }
+
+        const amount = Number(d.amount) / 100;
+        const currency = String(d.currency || 'NGN').trim().toUpperCase();
+
+        if (!Number.isFinite(amount) || amount <= 0 ||
+            !/^[A-Z]{3}$/.test(currency)) {
+            return res.status(400).send('Invalid payment details');
+        }
+
+        const creditResult = await creditWalletOnce(
+            'squad',
+            txRef,
+            userId,
+            amount,
+            'Card Payment · Squad',
+            '💳',
+            currency,
+            {
+                source: 'client_payment',
+                providerReference: String(d.transaction_id || ''),
+            }
+        );
+
+        if (creditResult.credited) {
+            const wallet = await Wallet.findOne({ xameId: userId }).lean();
+            if (!wallet) {
+                return res.status(503).send('Wallet confirmation unavailable');
+            }
+
+            const sockId = findSocketId(userId);
+            if (sockId) {
+                io.to(sockId).emit('wallet:funded', {
+                    amount,
+                    balance: wallet.balance,
+                });
             }
         }
-        res.sendStatus(200);
+
+        return res.sendStatus(200);
     } catch (err) {
-        console.error('Squad webhook error:', err.message);
-        res.sendStatus(200); // ack anyway — Squad retries on non-200
+        console.error('Squad durable wallet credit failed:', err.message);
+        return res.status(503).send('Wallet credit temporarily unavailable');
     }
 });
 
@@ -9544,9 +10690,12 @@ app.post('/api/wallet/flw/ussd', async (req, res) => {
 
 // Flutterwave webhook
 app.post('/api/wallet/flw/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
-  const secretHash = process.env.FLW_SECRET_HASH || 'xamepay-flw-hash';
+  const secretHash = process.env.FLW_SECRET_HASH;
   const signature = req.headers['verif-hash'];
-  console.log('FLW webhook received. signature:', signature, 'expected:', secretHash, 'match:', signature === secretHash);
+  if (!secretHash) {
+    console.error('Flutterwave webhook disabled: FLW_SECRET_HASH is not configured.');
+    return res.status(503).send('Webhook not configured');
+  }
   if (!signature || signature !== secretHash) return res.status(401).send('Unauthorized');
   const payload = typeof req.body === 'string' ? JSON.parse(req.body) : (Buffer.isBuffer(req.body) ? JSON.parse(req.body.toString()) : req.body);
   if (payload.event === 'charge.completed' && payload.data.status === 'successful') {
@@ -9554,18 +10703,23 @@ app.post('/api/wallet/flw/webhook', express.raw({ type: 'application/json' }), a
     const txRef     = payload.data.tx_ref || '';
     // Card payments are handled by /api/wallet/flw/card-callback — skip here
     if (txRef.startsWith('xamepay-card-')) return res.status(200).send('OK');
-    // Try narration-based userId extraction (all formats)
+    // For virtual-account deposits, the server-generated reference is
+    // authoritative; narration and metadata must not override its user binding.
     let userId = null;
+    if (txRef.startsWith('xamepay-va-')) {
+      const vaRefMatch = txRef.match(/^xamepay-va-(\d{8,})-(\d+)$/);
+      if (!vaRefMatch) {
+        console.error('Flutterwave virtual-account payment rejected: malformed reference.');
+        return res.status(400).send('Invalid virtual-account reference');
+      }
+      userId = vaRefMatch[1];
+    } else {
     if (narration.startsWith('XamePay|')) userId = narration.split('|')[1]?.trim();
     else if (narration.startsWith('XamePay - ')) userId = null; // name-based, use account lookup
     else if (narration.startsWith('XamePay ')) userId = narration.split(' ')[1]?.trim();
     else if (narration.includes('/')) userId = narration.split('/')[1]?.trim();
     // Validate userId looks like a phone number
     if (userId && !/^\d{8,}$/.test(userId)) userId = null;
-    // Try tx_ref
-    if (!userId && txRef.startsWith('xamepay-va-')) {
-      userId = txRef.replace('xamepay-va-', '').split('-')[0];
-    }
     // Try account number lookup — most reliable for virtual account transfers
     if (!userId && payload.data.account_number) {
       const w = await Wallet.findOne({ 'virtualAccount.accountNumber': payload.data.account_number }).lean();
@@ -9598,11 +10752,23 @@ app.post('/api/wallet/flw/webhook', express.raw({ type: 'application/json' }), a
             }
         }
     }
+    }
     console.log('FLW webhook userId:', userId, 'narration:', narration, 'tx_ref:', txRef);
     const amount = payload.data.amount;
     const currency = payload.data.currency;
-    console.log('FLW webhook RAW payload.data:', JSON.stringify(payload.data));
-    if (userId && amount) {
+    const requestedAmount = Number(amount);
+    const requestedCurrency = String(currency || '').trim().toUpperCase();
+
+    if (txRef.startsWith('xamepay-va-') && !userId) {
+      console.error('Flutterwave virtual-account payment unresolved; requesting retry.');
+      return res.status(503).send('Payment resolution temporarily unavailable');
+    }
+    if (amount == null || !Number.isFinite(requestedAmount) ||
+        requestedAmount <= 0 || !/^[A-Z]{3}$/.test(requestedCurrency)) {
+      console.error('Flutterwave webhook rejected: invalid payment amount or currency.');
+      return res.status(400).send('Invalid payment details');
+    }
+    if (userId) {
       try {
         // Credit wallet in database
         const paymentType  = (payload.data.payment_type || '').toLowerCase();
@@ -9634,163 +10800,293 @@ app.post('/api/wallet/flw/webhook', express.raw({ type: 'application/json' }), a
             ? (senderBank ? `Bank Transfer · ${senderBank}${bankName ? ' (' + bankName + ')' : ''}` : 'Bank Transfer')
             : (issuer ? `Card Payment · ${issuer}${last4 ? ' ****' + last4 : ''}` : 'Card Payment');
         const icon = isBankTransfer ? '🏦' : '💳';
-        const txId = payload.data.id?.toString() || Date.now().toString();
+        const txId = payload.data.id != null ? String(payload.data.id) : '';
         const flwRef = payload.data.flw_ref || payload.data.flwRef || txId;
-        // Verify transaction with Flutterwave API to get complete sender details
-        // The webhook payload alone doesn't include full sender name/bank info
-        let verifiedSenderName = senderBank;
-        let verifiedBankName   = bankName;
-        let verifiedAccountNo  = senderAccountNo;
-        try {
-          if (FLW_SECRET && txId) {
-            const vr = await fetch(`https://api.flutterwave.com/v3/transactions/${txId}/verify`, {
-              headers: { Authorization: `Bearer ${FLW_SECRET}` }
-            });
-            const vd = await vr.json();
-            if (vd.status === 'success' && vd.data) {
-              // Log full verify response meta to find correct field names
-              console.log('FLW verify meta:', JSON.stringify(vd.data.meta));
-              console.log('FLW verify customer:', JSON.stringify(vd.data.customer));
-              verifiedSenderName = vd.data.meta?.originatorname
-                  || vd.data.meta?.originator_name
-                  || (vd.data.customer?.name && vd.data.customer.name !== 'Anonymous customer' ? vd.data.customer.name : '')
-                  || verifiedSenderName;
-              verifiedBankName   = vd.data.meta?.bankname || vd.data.meta?.bank_name || vd.data.meta?.sender_bank_name || verifiedBankName;
-              verifiedAccountNo  = vd.data.meta?.originatoraccountnum || vd.data.meta?.sender_account_number || verifiedAccountNo;
-              console.log('FLW verify result:', verifiedSenderName, verifiedBankName, verifiedAccountNo);
-            }
-          }
-        } catch(e) { console.error('FLW verify error:', e.message); }
-        let wallet = await Wallet.findOne({ xameId: userId });
-        if (!wallet) wallet = new Wallet({ xameId: userId, currency });
-        // Prevent duplicate credits
-        const alreadyCredited = wallet.transactions?.some(t => t.ref === txId);
-        if (!alreadyCredited) {
-          wallet.balance = (wallet.balance || 0) + amount;
-          wallet.transactions = wallet.transactions || [];
-          // Look up recipient's virtual account details for structured receipt display
-          const recipientWallet = await Wallet.findOne({ xameId: userId }).lean();
-          const recipVA = recipientWallet?.virtualAccount || {};
-          wallet.transactions.unshift({
-            type: 'credit',
-            amount,
-            label: senderName,
-            icon,
-            ref: txId,
-            flwRef,
-            ts: new Date(),
-            senderName:           verifiedSenderName,
-            bankName:             verifiedBankName,
-            accountNumber:        verifiedAccountNo,
-            recipientName:        recipVA.accountName || '',
-            recipientBankName:    recipVA.bankName    || '',
-            recipientAccountNumber: recipVA.accountNumber || '',
-          });
-          await wallet.save();
-          console.log(`✅ FLW webhook: credited ${amount} ${currency} to ${userId}`);
+        // Verify with Flutterwave before authorizing any wallet credit.
+        if (!FLW_SECRET || !/^\d+$/.test(txId) || !txRef) {
+          console.error('FLW webhook cannot verify payment: missing provider configuration or transaction identity.');
+          return res.status(503).send('Payment verification unavailable');
         }
-        // Notify user via socket
-        const recipSocketId = findSocketId(userId);
-        if (recipSocketId) {
-          io.to(recipSocketId).emit('wallet:receive', {
-            senderId: 'bank',
-            senderName,
-            amount,
-            currency
-          });
-          io.to(recipSocketId).emit('wallet:funded', { amount, balance: wallet.balance });
+
+
+        let verified;
+        try {
+          const vr = await fetch(
+            `https://api.flutterwave.com/v3/transactions/${encodeURIComponent(txId)}/verify`,
+            {
+              headers: { Authorization: `Bearer ${FLW_SECRET}` },
+              signal: AbortSignal.timeout(10000)
+            }
+          );
+
+          if (!vr.ok) {
+            console.error('Flutterwave verification returned HTTP', vr.status);
+            return res.status(503).send('Payment verification unavailable');
+          }
+
+          const vd = await vr.json();
+          verified = vd && vd.status === 'success' ? vd.data : null;
+        } catch (e) {
+          console.error('Flutterwave verification request failed:', e.message);
+          return res.status(503).send('Payment verification unavailable');
+        }
+
+        const verifiedAmount = Number(verified?.amount);
+        const verifiedCurrency = String(verified?.currency || '').trim().toUpperCase();
+
+        if (!verified ||
+            String(verified.id) !== txId ||
+            String(verified.status || '').toLowerCase() !== 'successful' ||
+            String(verified.tx_ref || '') !== txRef ||
+            !Number.isFinite(verifiedAmount) ||
+            Math.abs(verifiedAmount - requestedAmount) > 0.01 ||
+            verifiedCurrency !== requestedCurrency) {
+          console.error('Flutterwave webhook rejected: verified payment details do not match.');
+          return res.status(401).send('Payment verification mismatch');
+        }
+
+        // Prefer verified metadata for receipt details; retain webhook fields as fallbacks.
+        const verifiedSenderName =
+          verified.meta?.originatorname ||
+          verified.meta?.originator_name ||
+          (verified.customer?.name && verified.customer.name !== 'Anonymous customer'
+            ? verified.customer.name : '') ||
+          senderBank;
+
+        const verifiedBankName =
+          verified.meta?.bankname ||
+          verified.meta?.bank_name ||
+          verified.meta?.sender_bank_name ||
+          bankName;
+
+        const verifiedAccountNo =
+          verified.meta?.originatoraccountnum ||
+          verified.meta?.originatoraccountnumber ||
+          verified.meta?.sender_account_number ||
+          senderAccountNo;
+
+        // Bind virtual-account credits to the user encoded in the
+        // server-generated reference. Do not depend on an undocumented
+        // destination-account field in Flutterwave's verification response.
+        if (txRef.startsWith('xamepay-va-')) {
+          const vaRefMatch = txRef.match(/^xamepay-va-(\d{8,})-(\d+)$/);
+          if (!vaRefMatch || vaRefMatch[1] !== String(userId)) {
+            console.error('Flutterwave virtual-account payment rejected: reference/user mismatch.');
+            return res.status(401).send('Payment reference mismatch');
+          }
+
+          const resolvedWallet = await Wallet.findOne({ xameId: userId }).lean();
+          const expectedAccount = String(
+            resolvedWallet?.virtualAccount?.accountNumber || ''
+          ).trim();
+          const webhookAccount = String(payload.data.account_number || '').trim();
+
+          if (!resolvedWallet || !expectedAccount ||
+              (webhookAccount && webhookAccount !== expectedAccount)) {
+            console.error('Flutterwave virtual-account payment rejected: receiving account mismatch.');
+            return res.status(401).send('Payment account mismatch');
+          }
+        }
+
+        const recipientWallet = await Wallet.findOne({ xameId: userId }).lean();
+        const recipVA = recipientWallet?.virtualAccount || {};
+
+        const creditResult = await creditWalletOnce(
+          'flutterwave',
+          txId,
+          userId,
+          requestedAmount,
+          senderName,
+          icon,
+          requestedCurrency,
+          {
+            flwRef: String(flwRef || ''),
+            senderName: String(verifiedSenderName || ''),
+            senderBankName: String(verifiedBankName || ''),
+            senderAccountNumber: String(verifiedAccountNo || ''),
+            bankName: String(verifiedBankName || ''),
+            accountNumber: String(verifiedAccountNo || ''),
+            recipientName: String(recipVA.accountName || ''),
+            recipientBankName: String(recipVA.bankName || ''),
+            recipientAccountNumber: String(recipVA.accountNumber || '')
+          }
+        );
+
+        const wallet = await Wallet.findOne({ xameId: userId }).lean();
+        if (!wallet) {
+          throw new Error('Wallet missing after durable payment credit');
+        }
+
+        console.log(
+          creditResult.credited
+            ? 'Flutterwave payment credited through durable ledger.'
+            : 'Duplicate Flutterwave delivery; no additional credit applied.'
+        );
+
+        // Do not emit a second credit notification for a replayed webhook.
+        if (creditResult.credited) {
+          const recipSocketId = findSocketId(userId);
+          if (recipSocketId) {
+            io.to(recipSocketId).emit('wallet:receive', {
+              senderId: 'bank',
+              senderName,
+              amount: requestedAmount,
+              currency: requestedCurrency
+            });
+            io.to(recipSocketId).emit('wallet:funded', {
+              amount: requestedAmount,
+              balance: wallet.balance
+            });
+          }
         }
       } catch (err) {
-        console.error('FLW webhook credit error:', err);
+        console.error('FLW webhook durable credit failed:', err.message);
+        return res.status(503).send('Wallet credit temporarily unavailable');
       }
     }
   }
-  res.sendStatus(200);
+  // Acknowledge unrelated provider events, but request retry when a
+  // recognized XamePay funding event could not be credited to its owner.
+  const recognizedXamePayFunding =
+      txRef.startsWith('xamepay-va-') ||
+      txRef.startsWith('xamepay-card-') ||
+      narration.startsWith('XamePay|') ||
+      narration.startsWith('XamePay ');
+
+  if (recognizedXamePayFunding && !userId) {
+    console.error('Flutterwave XamePay funding unresolved; requesting retry.');
+    return res.status(503).send('Payment resolution temporarily unavailable');
+  }
+
+  return res.sendStatus(200);
 });
 
-// Monnify webhook
+// Monnify webhook — durable, idempotent wallet credits.
 app.post('/api/wallet/monnify/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
     try {
+        const secretKey = process.env.MONNIFY_SECRET_KEY || '';
+        if (!secretKey) {
+            return res.status(503).send('Webhook verification unavailable');
+        }
+
         const rawBody = req.body.toString();
         const signature = req.headers['monnify-signature'];
-        const secretKey = process.env.MONNIFY_SECRET_KEY || '';
-        const crypto = require('crypto');
-        const expectedSig = crypto.createHmac('sha512', secretKey).update(rawBody).digest('hex');
+        const expectedSig = crypto.createHmac('sha512', secretKey)
+            .update(rawBody).digest('hex');
         const sigBuf = Buffer.from(signature || '', 'utf8');
         const expBuf = Buffer.from(expectedSig, 'utf8');
-        const validSig = !!signature && sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf);
-        console.log('Monnify webhook received. signature valid:', validSig);
-        if (!validSig) return res.status(401).send('Unauthorized');
+        const validSig = !!signature &&
+            sigBuf.length === expBuf.length &&
+            crypto.timingSafeEqual(sigBuf, expBuf);
 
-        // Defense-in-depth: log (don't hard-reject) if the request didn't come from
-        // Monnify's documented webhook IP — signature check above is the real gate.
-        const MONNIFY_WEBHOOK_IP = '35.242.133.146';
-        const forwardedFor = (req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-        if (forwardedFor && forwardedFor !== MONNIFY_WEBHOOK_IP) {
-            console.warn('Monnify webhook: unexpected source IP', forwardedFor, '(expected', MONNIFY_WEBHOOK_IP + ')');
-        }
+        if (!validSig) return res.status(401).send('Unauthorized');
 
         const payload = JSON.parse(rawBody);
         const eventType = payload.eventType;
         const d = payload.eventData || {};
-        console.log('Monnify webhook eventType:', eventType, 'RAW eventData:', JSON.stringify(d));
 
-        if (eventType === 'SUCCESSFUL_TRANSACTION' && (d.paymentStatus === 'PAID' || d.paymentStatus === 'success')) {
-            const amount = d.amountPaid;
-            const txId   = d.transactionReference || d.paymentReference || Date.now().toString();
+        if (!(eventType === 'SUCCESSFUL_TRANSACTION' &&
+              (d.paymentStatus === 'PAID' || d.paymentStatus === 'success'))) {
+            return res.sendStatus(200);
+        }
 
-            // Try accountReference (most reliable) — saved when we created the reserved account
-            let userId = null;
-            const accountRef = d.product?.reference || d.accountReference || null;
-            if (accountRef) {
-                const w = await Wallet.findOne({ 'virtualAccount.accountReference': accountRef }).lean();
-                if (w) userId = w.xameId;
-            }
-            // Fallback: destination account number, if present under any of the shapes Monnify may send
-            if (!userId) {
-                const destAcct = d.destinationAccountInformation?.accountNumber
-                    || d.destinationAccountNumber
-                    || null;
-                if (destAcct) {
-                    const w = await Wallet.findOne({ 'virtualAccount.accountNumber': destAcct }).lean();
-                    if (w) userId = w.xameId;
-                }
-            }
+        const amount = Number(d.amountPaid);
+        const txId = String(
+            d.transactionReference || d.paymentReference || ''
+        ).trim();
 
-            console.log('Monnify webhook userId:', userId, 'accountRef:', accountRef, 'amount:', amount);
+        // Never synthesize a payment identity: it would defeat deduplication.
+        if (!txId || !Number.isFinite(amount) || amount <= 0) {
+            console.error('Monnify successful payment missing valid identity or amount.');
+            return res.status(503).send('Payment details temporarily unavailable');
+        }
 
-            if (userId && amount) {
-                try {
-                    const senderName = d.paymentSourceInformation?.accountName
-                        || d.customer?.name
-                        || 'Bank Transfer';
-                    const label = `Bank Transfer · ${senderName}`;
-                    let wallet = await Wallet.findOne({ xameId: userId });
-                    if (!wallet) wallet = new Wallet({ xameId: userId, currency: 'NGN' });
-                    const alreadyCredited = wallet.transactions?.some(t => t.ref === txId);
-                    if (!alreadyCredited) {
-                        wallet.balance = (wallet.balance || 0) + amount;
-                        wallet.transactions = wallet.transactions || [];
-                        wallet.transactions.unshift({
-                            type: 'credit', amount, label, icon: '🏦', ref: txId, ts: new Date(),
-                        });
-                        await wallet.save();
-                        console.log(`✅ Monnify webhook: credited ${amount} to ${userId}`);
-                    }
-                    const sockId = findSocketId(userId);
-                    if (sockId) {
-                        io.to(sockId).emit('wallet:receive', { senderId: 'bank', senderName, amount, currency: 'NGN' });
-                        io.to(sockId).emit('wallet:funded', { amount, balance: wallet.balance });
-                    }
-                } catch (err) {
-                    console.error('Monnify webhook credit error:', err);
-                }
+        const accountRef = String(
+            d.product?.reference || d.accountReference || ''
+        ).trim();
+
+        let walletOwner = null;
+        if (accountRef) {
+            walletOwner = await Wallet.findOne({
+                'virtualAccount.accountReference': accountRef
+            }).select('xameId virtualAccount').lean();
+        }
+
+        if (!walletOwner) {
+            const destAcct = String(
+                d.destinationAccountInformation?.accountNumber ||
+                d.destinationAccountNumber || ''
+            ).trim();
+
+            if (destAcct) {
+                walletOwner = await Wallet.findOne({
+                    'virtualAccount.accountNumber': destAcct
+                }).select('xameId virtualAccount').lean();
             }
         }
-        res.sendStatus(200);
+
+        if (!walletOwner?.xameId) {
+            console.error('Monnify successful payment owner unresolved; requesting retry.');
+            return res.status(503).send('Payment resolution temporarily unavailable');
+        }
+
+        const userId = String(walletOwner.xameId);
+        const senderName = String(
+            d.paymentSourceInformation?.accountName ||
+            d.customer?.name ||
+            'Bank Transfer'
+        );
+        const currency = String(d.currency || 'NGN').trim().toUpperCase();
+
+        if (!/^[A-Z]{3}$/.test(currency)) {
+            return res.status(400).send('Invalid payment currency');
+        }
+
+        const creditResult = await creditWalletOnce(
+            'monnify',
+            txId,
+            userId,
+            amount,
+            `Bank Transfer · ${senderName}`,
+            '🏦',
+            currency,
+            {
+                senderName,
+                senderAccountNumber: String(
+                    d.paymentSourceInformation?.accountNumber || ''
+                ),
+                recipientAccountNumber: String(
+                    walletOwner.virtualAccount?.accountNumber || ''
+                ),
+                accountReference: accountRef,
+            }
+        );
+
+        if (creditResult.credited) {
+            const wallet = await Wallet.findOne({ xameId: userId }).lean();
+            if (!wallet) {
+                return res.status(503).send('Wallet confirmation unavailable');
+            }
+
+            const sockId = findSocketId(userId);
+            if (sockId) {
+                io.to(sockId).emit('wallet:receive', {
+                    senderId: 'bank',
+                    senderName,
+                    amount,
+                    currency,
+                });
+                io.to(sockId).emit('wallet:funded', {
+                    amount,
+                    balance: wallet.balance,
+                });
+            }
+        }
+
+        return res.sendStatus(200);
     } catch (err) {
-        console.error('Monnify webhook error:', err.message);
-        res.sendStatus(200); // ack anyway — Monnify retries on non-200
+        console.error('Monnify durable wallet credit failed:', err.message);
+        return res.status(503).send('Wallet credit temporarily unavailable');
     }
 });
 
@@ -9955,44 +11251,8 @@ app.get('/api/vtu/bundles/:operatorId', async (req, res) => {
 
 // Buy data bundle
 app.post('/api/vtu/data', async (req, res) => {
-  const { phone, countryCode, operatorId, bundleId, amount, userId, itemCode, billerType, billerCode } = req.body;
-  if (!phone || !operatorId || !userId) return res.json({ success: false, message: 'Missing fields' });
-  try {
-    const wallet = await getWallet(userId);
-    if (wallet.balance < amount) return res.json({ success: false, message: 'Insufficient balance' });
-    await debitWallet(userId, amount, `Data - ${operatorId}`, '📶', 'data-'+Date.now());
-    const r = await fetch('https://api.flutterwave.com/v3/bills', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${FLW_SECRET}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        country: countryCode || 'NG',
-        customer: phone,
-        amount,
-        recurrence: 'ONCE',
-        type: billerType || 'DATA_BUNDLE',
-        reference: 'xamepay-data-' + Date.now(),
-        biller_name: itemCode,
-        biller_code: itemCode,
-      })
-    });
-    const data = await r.json();
-    if (data.status === 'success') {
-      try {
-        const cashbackCoins = Math.floor((amount * 0.0002) / COIN_RATE);
-        if (cashbackCoins > 0) await creditCoins(userId, cashbackCoins, 'cashback', `XamePay cashback on ₦${amount} data`);
-        await Wallet.findOneAndUpdate({ xameId: userId }, { $inc: { monthlyVolume: amount } }, { upsert: true });
-      } catch(e) {}
-      res.json({ success: true, reference: data.data?.reference, message: 'Data bundle sent!' });
-    } else {
-      await creditWallet(userId, amount, 'Refund - Failed data purchase', '↩️', 'refund-'+Date.now());
-      res.json({ success: false, message: data.message || 'Data purchase failed', flw_status: data.status, flw_data: data.data });
-    }
-  } catch(err) {
-    res.json({ success: false, message: err.message });
-  }
+  return processWalletBillRequest(req, res, 'data');
 });
-
-
 
 // Get bank list from Flutterwave
 app.get('/api/wallet/banks', async (req, res) => {
@@ -10138,48 +11398,7 @@ app.post('/api/wallet/bills/validate', async (req, res) => {
 
 // Pay bill
 app.post('/api/wallet/bills/pay', async (req, res) => {
-    const { userId, biller_code, item_code, customer, amount, country } = req.body;
-    if (!userId || !biller_code || !item_code || !customer) return res.json({ success: false, message: 'Missing fields' });
-    try {
-        // Debit wallet first
-        const wallet = await getWallet(userId);
-        const fee = Math.round((amount || 0) * SERVICE_FEE * 100) / 100;
-        const totalDebit = (parseFloat(amount) || 0) + fee;
-        if (wallet.balance < totalDebit) return res.json({ success: false, message: 'Insufficient balance' });
-        await debitWallet(userId, totalDebit, 'Bill Payment', '🧾', 'bill-'+Date.now());
-        // Pay via Flutterwave
-        const r = await fetch('https://api.flutterwave.com/v3/bills', {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${FLW_SECRET}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                country: country || 'NG',
-                customer,
-                amount: parseFloat(amount),
-                recurrence: 'ONCE',
-                type: biller_code,
-                reference: 'xamepay-bill-' + Date.now(),
-                biller_name: item_code
-            })
-        });
-        const data = await r.json();
-        if (data.status === 'success') {
-            // Update transaction label with biller info
-            const w = await getWallet(userId);
-            if (w.transactions[0]) w.transactions[0].label = 'Bill - ' + (data.data?.biller_name || biller_code);
-            await w.save();
-            try {
-                const cashbackCoins = Math.floor((parseFloat(amount) * 0.0002) / COIN_RATE);
-                if (cashbackCoins > 0) await creditCoins(userId, cashbackCoins, 'cashback', `XamePay cashback on ₦${amount} bill payment`);
-                await Wallet.findOneAndUpdate({ xameId: userId }, { $inc: { monthlyVolume: parseFloat(amount) } }, { upsert: true });
-            } catch(e) {}
-            return res.json({ success: true, fee, reference: data.data?.reference, message: 'Bill paid successfully' });
-        }
-        // Refund on failure
-        await creditWallet(userId, totalDebit, 'Refund - Failed bill payment', '↩️', 'refund-'+Date.now());
-        res.json({ success: false, message: data.message || 'Bill payment failed' });
-    } catch(err) {
-        res.json({ success: false, message: err.message });
-    }
+  return processWalletBillRequest(req, res, 'bill');
 });
 
 // ── XamePay Server-Side Wallet API (keys from .env, balances in MongoDB) ─────
@@ -10192,6 +11411,128 @@ async function getWallet(xameId) {
 }
 
 // Helper: add transaction and update balance
+
+// Credit a provider payment once, atomically with its wallet-ledger record.
+// Call only after the provider transaction has been independently verified.
+async function creditWalletOnce(provider, transactionId, userId, amount, description, icon, currency = '', extra = {}) {
+    const normalizedProvider = String(provider || '').trim().toLowerCase();
+    const normalizedTransactionId = String(transactionId || '').trim();
+    const normalizedUserId = String(userId || '').trim();
+    const normalizedCurrency = String(currency || '').trim().toUpperCase();
+    const numericAmount = Number(amount);
+
+    if (!/^[a-z0-9_-]{2,40}$/.test(normalizedProvider) ||
+        !normalizedTransactionId ||
+        normalizedTransactionId.length > 200 ||
+        !normalizedUserId ||
+        !Number.isFinite(numericAmount) ||
+        numericAmount <= 0 ||
+        (normalizedCurrency && !/^[A-Z]{3}$/.test(normalizedCurrency))) {
+        const error = new Error('Invalid payment-credit details');
+        error.code = 'INVALID_PAYMENT_CREDIT';
+        throw error;
+    }
+
+    // Ensure the unique index exists before any wallet mutation.
+    await WalletCreditLedger.init();
+
+    const ledgerFilter = {
+        provider: normalizedProvider,
+        transactionId: normalizedTransactionId
+    };
+
+    const existing = await WalletCreditLedger.findOne(ledgerFilter).lean();
+    if (existing) {
+        const samePayment =
+            String(existing.userId) === normalizedUserId &&
+            Number(existing.amount) === numericAmount &&
+            String(existing.currency || '') === normalizedCurrency;
+
+        if (!samePayment) {
+            const error = new Error('Payment reference conflicts with an existing credit');
+            error.code = 'PAYMENT_CREDIT_CONFLICT';
+            throw error;
+        }
+
+        return { credited: false, duplicate: true };
+    }
+
+    const session = await mongoose.startSession();
+    let result;
+
+    try {
+        await session.withTransaction(async () => {
+            // The unique provider/transaction index arbitrates callback races.
+            await WalletCreditLedger.create([{
+                provider: normalizedProvider,
+                transactionId: normalizedTransactionId,
+                userId: normalizedUserId,
+                amount: numericAmount,
+                currency: normalizedCurrency
+            }], { session });
+
+            const transaction = {
+                ...(extra && typeof extra === 'object' && !Array.isArray(extra) ? extra : {}),
+                id: normalizedTransactionId,
+                label: String(description || 'Wallet funded'),
+                icon: String(icon || '💳'),
+                amount: numericAmount,
+                type: 'credit',
+                status: 'Completed',
+                ref: normalizedTransactionId,
+                ts: new Date()
+            };
+
+            const wallet = await Wallet.findOneAndUpdate(
+                { xameId: normalizedUserId },
+                {
+                    $setOnInsert: { xameId: normalizedUserId },
+                    $inc: { balance: numericAmount },
+                    $push: {
+                        transactions: {
+                            $each: [transaction],
+                            $position: 0,
+                            $slice: 100
+                        }
+                    },
+                    $set: { updatedAt: new Date() }
+                },
+                {
+                    new: true,
+                    upsert: true,
+                    session,
+                    setDefaultsOnInsert: true
+                }
+            );
+
+            if (!wallet) {
+                throw new Error('Wallet credit could not be persisted');
+            }
+
+            result = { credited: true, duplicate: false, wallet };
+        });
+    } catch (err) {
+        // A concurrent callback may have won the unique-index race.
+        if (err && err.code === 11000) {
+            const winner = await WalletCreditLedger.findOne(ledgerFilter).lean();
+            if (winner &&
+                String(winner.userId) === normalizedUserId &&
+                Number(winner.amount) === numericAmount &&
+                String(winner.currency || '') === normalizedCurrency) {
+                return { credited: false, duplicate: true };
+            }
+            const conflict = new Error('Payment reference conflicts with an existing credit');
+            conflict.code = 'PAYMENT_CREDIT_CONFLICT';
+            throw conflict;
+        }
+        throw err;
+    } finally {
+        await session.endSession();
+    }
+
+    return result;
+}
+
 async function creditWallet(xameId, amount, label, icon, ref, extra = {}) {
     const wallet = await getWallet(xameId);
     wallet.balance = Math.round((wallet.balance + amount) * 100) / 100;
@@ -10209,6 +11550,360 @@ async function creditWallet(xameId, amount, label, icon, ref, extra = {}) {
     await wallet.save();
     return wallet;
 }
+
+
+// Reserve wallet funds and persist the transfer intent atomically.
+// Provider network calls must happen only after this transaction commits.
+async function reserveWalletTransfer({
+    userId, reference, requestFingerprint, principal, fee, totalDebit,
+    currency, accountBank, accountNumber, recipientName, label
+}) {
+    // Ensure the unique idempotency index exists before any wallet debit.
+    // If index creation fails, fail closed before reserving funds.
+    await WalletTransferLedger.init();
+
+    const existing = await WalletTransferLedger.findOne({ userId, reference }).lean();
+    if (existing) {
+        if (existing.requestFingerprint !== requestFingerprint) {
+            const err = new Error('Transfer reference already used for a different request');
+            err.code = 'TRANSFER_REFERENCE_CONFLICT';
+            throw err;
+        }
+        return { created: false, transfer: existing };
+    }
+
+    const session = await mongoose.startSession();
+    let transferId = null;
+
+    try {
+        await session.withTransaction(async () => {
+            const [transfer] = await WalletTransferLedger.create([{
+                userId, reference, requestFingerprint, principal, fee, totalDebit,
+                currency, accountBank, accountNumber,
+                recipientName: recipientName || '',
+                status: 'reserved',
+                createdAt: new Date(),
+                updatedAt: new Date()
+            }], { session });
+
+            transferId = transfer._id;
+
+            const wallet = await Wallet.findOneAndUpdate(
+                { xameId: userId, balance: { $gte: totalDebit } },
+                {
+                    $inc: { balance: -totalDebit },
+                    $push: {
+                        transactions: {
+                            $each: [{
+                                id: reference,
+                                label: label || 'Bank Transfer',
+                                icon: '🏦',
+                                amount: totalDebit,
+                                principal,
+                                fee,
+                                type: 'debit',
+                                status: 'Pending',
+                                ref: reference,
+                                ts: new Date(),
+                                recipientName: recipientName || '',
+                                bankName: '',
+                                accountNumber,
+                                source: 'wallet_transfer'
+                            }],
+                            $position: 0,
+                            $slice: 100
+                        }
+                    },
+                    $set: { updatedAt: new Date() }
+                },
+                { new: true, session, runValidators: true }
+            );
+
+            if (!wallet) {
+                const err = new Error('Insufficient balance or wallet not found');
+                err.code = 'INSUFFICIENT_WALLET_BALANCE';
+                throw err;
+            }
+        });
+
+        const transfer = await WalletTransferLedger.findById(transferId).lean();
+        return { created: true, transfer };
+    } catch (err) {
+        if (err && err.code === 11000) {
+            const existingAfterRace = await WalletTransferLedger.findOne({
+                userId, reference
+            }).lean();
+
+            if (existingAfterRace &&
+                existingAfterRace.requestFingerprint === requestFingerprint) {
+                return { created: false, transfer: existingAfterRace };
+            }
+
+            const conflict = new Error('Transfer reference already exists');
+            conflict.code = 'TRANSFER_REFERENCE_CONFLICT';
+            throw conflict;
+        }
+        throw err;
+    } finally {
+        await session.endSession();
+    }
+}
+
+
+// Change a transfer state only when its current state matches the caller's
+// expectation. This prevents accidental overwrites by concurrent handlers.
+async function transitionWalletTransfer(userId, reference, fromStatuses, updates) {
+    return WalletTransferLedger.findOneAndUpdate(
+        {
+            userId,
+            reference,
+            status: { $in: fromStatuses }
+        },
+        {
+            $set: { ...updates, updatedAt: new Date() }
+        },
+        { new: true, runValidators: true }
+    ).lean();
+}
+
+
+// ── XamePay verified outgoing-transfer reconciliation ──────────────────────
+// Finalize only after an owner-scoped lookup matches the provider's record.
+// Wallet balance/history and ledger state change in one MongoDB transaction.
+async function finalizeWalletTransfer(userId, reference, outcome) {
+    if (!['succeeded', 'refunded'].includes(outcome)) {
+        throw new Error('Invalid transfer reconciliation outcome');
+    }
+
+    const session = await mongoose.startSession();
+    let result = null;
+
+    try {
+        await session.withTransaction(async () => {
+            const now = new Date();
+            const nextStatus = outcome;
+            const transfer = await WalletTransferLedger.findOneAndUpdate(
+                {
+                    userId,
+                    reference,
+                    status: { $in: ['reserved', 'submitted', 'unknown'] }
+                },
+                {
+                    $set: {
+                        status: nextStatus,
+                        failureCode: outcome === 'refunded' ? 'PROVIDER_FAILED' : '',
+                        settledAt: now,
+                        updatedAt: now
+                    }
+                },
+                { new: true, session, runValidators: true }
+            ).lean();
+
+            if (!transfer) {
+                // Already finalized or no eligible transfer. Never credit or
+                // refund again; return the current ledger state instead.
+                result = await WalletTransferLedger.findOne({
+                    userId, reference
+                }).session(session).lean();
+                return;
+            }
+
+            const walletUpdate = {
+                $set: {
+                    'transactions.$[tx].status':
+                        outcome === 'succeeded' ? 'Completed' : 'Failed'
+                }
+            };
+
+            if (outcome === 'refunded') {
+                walletUpdate.$inc = { balance: transfer.totalDebit };
+            }
+
+            const walletResult = await Wallet.updateOne(
+                { xameId: userId, 'transactions.ref': reference },
+                walletUpdate,
+                {
+                    session,
+                    arrayFilters: [{ 'tx.ref': reference }]
+                }
+            );
+
+            if (!walletResult.matchedCount) {
+                throw new Error('Wallet missing during transfer finalization');
+            }
+
+            result = transfer;
+        });
+
+        return result;
+    } finally {
+        await session.endSession();
+    }
+}
+
+// The authenticated session determines ownership; caller-supplied user IDs
+// are never used to select another user's transfer.
+app.get('/api/wallet/transfer-status/:reference', async (req, res) => {
+    try {
+        const user = await getAuthenticatedUserFromSession(req);
+        if (!user) {
+            return res.status(401).json({
+                success: false, message: 'Authentication required'
+            });
+        }
+
+        const reference = String(req.params.reference || '').trim();
+        if (!/^[A-Za-z0-9._:-]{8,100}$/.test(reference)) {
+            return res.status(400).json({
+                success: false, message: 'Invalid transfer reference'
+            });
+        }
+
+        const userId = String(user.xameId || '');
+        if (!userId) {
+            return res.status(403).json({
+                success: false, message: 'Wallet access denied'
+            });
+        }
+
+        const transfer = await WalletTransferLedger.findOne({
+            userId, reference
+        }).lean();
+
+        if (!transfer) {
+            return res.status(404).json({
+                success: false, message: 'Transfer not found'
+            });
+        }
+
+        if (transfer.status === 'succeeded' || transfer.status === 'refunded') {
+            return res.json({
+                success: transfer.status === 'succeeded',
+                pending: false,
+                status: transfer.status,
+                txRef: reference
+            });
+        }
+
+        // Flutterwave's transfer lookup requires the provider transfer ID.
+        // Without it, do not guess by reference or initiate another transfer.
+        if (!/^\d+$/.test(String(transfer.providerReference || '')) ||
+            !process.env.FLW_SECRET) {
+            return res.status(200).json({
+                success: true,
+                pending: true,
+                status: transfer.status,
+                txRef: reference,
+                message: 'Final provider status is not yet verifiable'
+            });
+        }
+
+        const providerResponse = await fetch(
+            'https://api.flutterwave.com/v3/transfers/' +
+                encodeURIComponent(String(transfer.providerReference)),
+            {
+                headers: {
+                    Authorization: `Bearer ${process.env.FLW_SECRET}`,
+                    Accept: 'application/json'
+                },
+                signal: AbortSignal.timeout(8000)
+            }
+        );
+
+        if (!providerResponse.ok) {
+            return res.status(200).json({
+                success: true,
+                pending: true,
+                status: transfer.status,
+                txRef: reference,
+                message: 'Provider status could not be confirmed'
+            });
+        }
+
+        const providerBody = await providerResponse.json();
+        const providerTransfer = providerBody && providerBody.data;
+
+        // Fail closed if the response does not identify the same transfer
+        // and agree on its amount, currency, and destination account.
+        const recordMatches =
+            providerBody.status === 'success' &&
+            providerTransfer &&
+            String(providerTransfer.id) === String(transfer.providerReference) &&
+            String(providerTransfer.reference || '') === reference &&
+            Number(providerTransfer.amount) === Number(transfer.principal) &&
+            String(providerTransfer.currency || '').toUpperCase() ===
+                String(transfer.currency || '').toUpperCase() &&
+            String(providerTransfer.account_number || '') ===
+                String(transfer.accountNumber || '') &&
+            String(providerTransfer.bank_code || '') ===
+                String(transfer.accountBank || '');
+
+        if (!recordMatches) {
+            return res.status(200).json({
+                success: true,
+                pending: true,
+                status: transfer.status,
+                txRef: reference,
+                message: 'Provider record did not pass verification; transfer remains pending'
+            });
+        }
+
+        const providerStatus =
+            String(providerTransfer.status || '').toUpperCase();
+
+        let finalOutcome;
+        if (providerStatus === 'SUCCESSFUL') {
+            finalOutcome = 'succeeded';
+        } else if (providerStatus === 'FAILED') {
+            finalOutcome = 'refunded';
+        } else {
+            return res.status(200).json({
+                success: true,
+                pending: true,
+                status: transfer.status,
+                txRef: reference,
+                message: 'Provider transfer is not in a verified final state'
+            });
+        }
+
+        const finalized = await finalizeWalletTransfer(
+            userId, reference, finalOutcome
+        );
+
+        if (!finalized) {
+            return res.status(200).json({
+                success: true,
+                pending: true,
+                status: 'unknown',
+                txRef: reference,
+                message: 'Transfer requires reconciliation'
+            });
+        }
+
+        const isSuccessful = finalized.status === 'succeeded';
+        const isTerminal = isSuccessful || finalized.status === 'refunded';
+
+        return res.status(200).json({
+            success: isSuccessful,
+            pending: !isTerminal,
+            status: finalized.status,
+            txRef: reference,
+            message: isSuccessful
+                ? 'Transfer confirmed successful'
+                : isTerminal
+                    ? 'Provider confirmed failure; wallet funds were refunded'
+                    : 'Transfer remains under reconciliation'
+        });
+    } catch (_) {
+        // A lookup or database error must never trigger another provider send.
+        return res.status(200).json({
+            success: true,
+            pending: true,
+            status: 'unknown',
+            message: 'Transfer status could not be confirmed; do not retry it'
+        });
+    }
+});
 
 // ── Temporary: inspect Monnify's own record for a reserved account ───────────
 app.get('/api/admin/monnify-debug/:accountRef', async (req, res) => {
@@ -10331,6 +12026,7 @@ app.get('/api/wallet/me', async (req, res) => {
     const { userId } = req.query;
     if (!userId) return res.json({ success: false, message: 'Missing userId' });
     try {
+        if (!(await requireWalletSessionOwner(req, res, userId))) return;
         const wallet = await getWallet(userId);
         let virtualAccount = wallet.virtualAccount;
         // Backfill missing accountName for older virtual accounts
@@ -10342,21 +12038,55 @@ app.get('/api/wallet/me', async (req, res) => {
             await Wallet.findOneAndUpdate({ xameId: userId },
                 { 'virtualAccount.accountName': accountName });
         }
-        res.json({ success: true, balance: wallet.balance, currency: wallet.currency, transactions: wallet.transactions, virtualAccount, pinEnabled: wallet.pinEnabled || false });
+        res.json({
+            success: true,
+            balance: wallet.balance,
+            currency: wallet.currency,
+            dispCurrency: wallet.dispCurrency || wallet.currency,
+            transactions: wallet.transactions,
+            virtualAccount,
+            pinEnabled: wallet.pinEnabled || false
+        });
     } catch(err) {
         res.json({ success: false, message: err.message });
     }
 });
 
-// Update wallet currency
+// Update the user's preferred display currency without relabelling wallet funds.
 app.post('/api/wallet/currency', async (req, res) => {
-    const { userId, currency } = req.body;
-    if (!userId || !currency) return res.json({ success: false, message: 'Missing fields' });
+    const body = req.body || {};
+    const userId = String(body.userId || '').trim();
+    // The fallback supports older clients that send only `currency`.
+    const dispCurrency = String(body.dispCurrency || body.currency || '')
+        .trim()
+        .toUpperCase();
+
+    if (!userId || !/^[A-Z]{3}$/.test(dispCurrency)) {
+        return res.status(400).json({
+            success: false,
+            message: 'A valid display currency is required'
+        });
+    }
+
     try {
-        await Wallet.findOneAndUpdate({ xameId: userId }, { currency }, { upsert: true });
-        res.json({ success: true });
-    } catch(err) {
-        res.json({ success: false, message: err.message });
+        if (!(await requireWalletSessionOwner(req, res, userId))) return;
+
+        const wallet = await getWallet(userId);
+        wallet.dispCurrency = dispCurrency;
+        wallet.updatedAt = new Date();
+        await wallet.save();
+
+        return res.json({
+            success: true,
+            currency: wallet.currency,
+            dispCurrency: wallet.dispCurrency
+        });
+    } catch (err) {
+        console.error('Wallet display-currency update failed:', err.message);
+        return res.status(500).json({
+            success: false,
+            message: 'Could not save display currency'
+        });
     }
 });
 
@@ -10413,41 +12143,234 @@ app.get('/api/wallet/banklist', async (req, res) => {
     }
 });
 
-// P2P transfer between users
+// P2P transfer between users — atomic and idempotent.
 app.post('/api/wallet/p2p', async (req, res) => {
-    const { senderId, recipientId, amount, currency } = req.body;
-    if (!senderId || !recipientId || !amount) return res.json({ success: false, message: 'Missing fields' });
+    const body = req.body || {};
+    const senderId = String(body.senderId || '').trim();
+    const recipientId = String(body.recipientId || '').trim();
+    const amount = Number(body.amount);
+    const currency = String(body.currency || 'NGN').trim().toUpperCase();
+    const reference = String(body.reference || req.get('Idempotency-Key') || '').trim();
+
+    if (!(await requireWalletSessionOwner(req, res, senderId))) return;
+    if (!recipientId || recipientId === senderId ||
+        !Number.isFinite(amount) || amount <= 0 ||
+        !/^[A-Z]{3}$/.test(currency) ||
+        !/^[A-Za-z0-9._:-]{8,100}$/.test(reference)) {
+        return res.status(400).json({
+            success: false,
+            message: 'Valid recipient, amount, currency and stable reference are required'
+        });
+    }
+
+    const fee = Math.round(amount * SERVICE_FEE * 100) / 100;
+    const totalDebit = Math.round((amount + fee) * 100) / 100;
+    const fingerprint = require('crypto').createHash('sha256')
+        .update(JSON.stringify([senderId, recipientId, amount, currency, fee]))
+        .digest('hex');
+
     try {
-        const fee = Math.round(amount * SERVICE_FEE * 100) / 100;
-        const totalDebit = amount + fee;
+        // Ensure the unique idempotency index exists before any wallet mutation.
+        await WalletTransferLedger.init();
         const [senderUser, recipientUser] = await Promise.all([
             User.findOne({ xameId: senderId }).lean(),
-            User.findOne({ xameId: recipientId }).lean(),
+            User.findOne({ xameId: recipientId }).lean()
         ]);
-        const senderName    = senderUser    ? `${senderUser.firstName} ${senderUser.lastName}`.trim()    : senderId;
-        const recipientName = recipientUser ? `${recipientUser.firstName} ${recipientUser.lastName}`.trim() : recipientId;
-        await debitWallet(senderId, totalDebit, `Sent to ${recipientName}`, '💸', 'p2p-'+Date.now());
-        await creditWallet(recipientId, amount, `Received from ${senderName}`, '💰', 'p2p-'+Date.now());
-        if (fee > 0) await creditWallet(PLATFORM_WALLET_ID, fee, 'P2P fee from ' + senderName, '🏦', 'fee-'+Date.now());
-        // Notify via socket — reuse already-fetched user data
-        const recipSocketId = findSocketId(recipientId);
+        if (!senderUser || !recipientUser) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
 
-        if (recipSocketId) {
-            io.to(recipSocketId).emit('wallet:receive', { senderId, senderName, amount, currency });
+        const existing = await WalletTransferLedger.findOne({
+            userId: senderId, reference
+        }).lean();
+
+        if (existing) {
+            if (existing.requestFingerprint !== fingerprint) {
+                return res.status(409).json({
+                    success: false, message: 'Reference already belongs to a different transfer'
+                });
+            }
+            if (existing.status === 'succeeded') {
+                return res.json({
+                    success: true, duplicate: true, fee,
+                    message: 'Transfer already completed'
+                });
+            }
+            return res.status(409).json({
+                success: false, pending: true,
+                message: 'Transfer status requires review; do not submit a new reference'
+            });
         }
-        const senderSocketId = findSocketId(senderId);
-        if (senderSocketId) {
-            io.to(senderSocketId).emit('wallet:debit', { recipientId, recipientName, amount, currency });
+
+        const senderName = `${senderUser.firstName || ''} ${senderUser.lastName || ''}`.trim() || senderId;
+        const recipientName = `${recipientUser.firstName || ''} ${recipientUser.lastName || ''}`.trim() || recipientId;
+        const session = await mongoose.startSession();
+        let duplicate = false;
+
+        try {
+            await session.withTransaction(async () => {
+                await WalletTransferLedger.create([{
+                    userId: senderId,
+                    reference,
+                    requestFingerprint: fingerprint,
+                    principal: amount,
+                    fee,
+                    totalDebit,
+                    currency,
+                    accountBank: 'p2p',
+                    accountNumber: recipientId,
+                    recipientName,
+                    status: 'reserved',
+                    updatedAt: new Date()
+                }], { session });
+
+                const now = new Date();
+                const debitTx = {
+                    id: reference, label: `Sent to ${recipientName}`, icon: '💸',
+                    amount: totalDebit, principal: amount, fee,
+                    type: 'debit', status: 'Completed', ref: reference, ts: now
+                };
+                const debit = await Wallet.findOneAndUpdate(
+                    { xameId: senderId, balance: { $gte: totalDebit } },
+                    {
+                        $inc: { balance: -totalDebit },
+                        $push: { transactions: { $each: [debitTx], $position: 0, $slice: 100 } },
+                        $set: { updatedAt: now }
+                    },
+                    { new: true, session }
+                );
+                if (!debit) throw new Error('Insufficient balance');
+
+                const creditTx = {
+                    id: reference, label: `Received from ${senderName}`, icon: '💰',
+                    amount, type: 'credit', status: 'Completed', ref: reference, ts: now
+                };
+                const credited = await Wallet.findOneAndUpdate(
+                    { xameId: recipientId },
+                    {
+                        $setOnInsert: { xameId: recipientId },
+                        $inc: { balance: amount },
+                        $push: { transactions: { $each: [creditTx], $position: 0, $slice: 100 } },
+                        $set: { updatedAt: now }
+                    },
+                    { new: true, session, upsert: true, setDefaultsOnInsert: true }
+                );
+                if (!credited) throw new Error('Recipient wallet update failed');
+
+                if (fee > 0) {
+                    const feeTx = {
+                        id: reference, label: `P2P fee from ${senderName}`, icon: '🏦',
+                        amount: fee, type: 'credit', status: 'Completed', ref: reference, ts: now
+                    };
+                    const platform = await Wallet.findOneAndUpdate(
+                        { xameId: PLATFORM_WALLET_ID },
+                        {
+                            $setOnInsert: { xameId: PLATFORM_WALLET_ID },
+                            $inc: { balance: fee },
+                            $push: { transactions: { $each: [feeTx], $position: 0, $slice: 100 } },
+                            $set: { updatedAt: now }
+                        },
+                        { new: true, session, upsert: true, setDefaultsOnInsert: true }
+                    );
+                    if (!platform) throw new Error('Platform fee update failed');
+                }
+
+                const changed = await WalletTransferLedger.updateOne(
+                    { userId: senderId, reference, status: 'reserved' },
+                    { $set: { status: 'succeeded', settledAt: now, updatedAt: now } },
+                    { session }
+                );
+                if (changed.modifiedCount !== 1) throw new Error('P2P ledger update failed');
+            });
+        } catch (err) {
+            const keyPattern = err && err.keyPattern;
+            const duplicateIsTransferReference =
+                err && err.code === 11000 &&
+                (
+                    (
+                        keyPattern &&
+                        keyPattern.userId === 1 &&
+                        keyPattern.reference === 1 &&
+                        Object.keys(keyPattern).length === 2
+                    ) ||
+                    String(err.message || '').includes(
+                        'wallet_transfer_user_reference_unique'
+                    )
+                );
+
+            if (duplicateIsTransferReference) {
+                const winner = await WalletTransferLedger.findOne({
+                    userId: senderId, reference
+                }).lean();
+                if (winner && winner.requestFingerprint === fingerprint &&
+                    winner.status === 'succeeded') {
+                    duplicate = true;
+                } else if (winner && winner.requestFingerprint !== fingerprint) {
+                    return res.status(409).json({
+                        success: false, message: 'Reference already belongs to a different transfer'
+                    });
+                } else {
+                    throw err;
+                }
+            } else {
+                throw err;
+            }
+        } finally {
+            await session.endSession();
         }
-        res.json({ success: true, fee, message: 'Transfer successful' });
-    } catch(err) {
-        res.json({ success: false, message: err.message });
+
+        if (!duplicate) {
+            const recipientSocket = findSocketId(recipientId);
+            if (recipientSocket) io.to(recipientSocket).emit('wallet:receive', {
+                senderId, senderName, amount, currency, reference
+            });
+            const senderSocket = findSocketId(senderId);
+            if (senderSocket) io.to(senderSocket).emit('wallet:debit', {
+                recipientId, recipientName, amount, currency, reference
+            });
+        }
+        return res.json({
+            success: true, duplicate, fee, reference,
+            message: duplicate ? 'Transfer already completed' : 'Transfer successful'
+        });
+    } catch (err) {
+        if (err && err.message === 'Insufficient balance') {
+            return res.status(400).json({ success: false, message: 'Insufficient balance' });
+        }
+        console.error('P2P atomic transfer failed:', err.message);
+        return res.status(503).json({
+            success: false, pending: true,
+            message: 'Transfer could not be confirmed. Retry only with the same reference.'
+        });
     }
 });
+// P2P_ATOMIC_LEDGER_V1
 
 // Send to bank account
 app.post('/api/wallet/send-bank', async (req, res) => {
+    if (!(await requireWalletSessionOwner(req, res, req.body && req.body.userId))) return;
+    const requestedAmount = Number(req.body && req.body.amount);
+    if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) {
+        return res.status(400).json({
+            success: false,
+            message: 'Invalid amount'
+        });
+    }
+
+    // Check provider configuration before any wallet debit.
+    if (!process.env.FLW_SECRET) {
+        return res.status(503).json({
+            success: false,
+            message: 'Payment provider is not configured'
+        });
+    }
+
+
     const { userId, account_bank, account_number, amount, currency, narration, accName, bankName } = req.body;
+    const requestedRef = String(req.body.reference || req.get('Idempotency-Key') || '').trim();
+    if (!requestedRef || !/^[A-Za-z0-9._:-]{8,100}$/.test(requestedRef)) {
+        return res.status(400).json({ success: false, message: 'A valid stable transfer reference is required' });
+    }
     // Get sender's real name and virtual account details for structured receipt fields
     const senderUser = await User.findOne({ xameId: userId }).lean();
     const senderFullName = senderUser ? `${senderUser.firstName} ${senderUser.lastName}`.trim() || userId : userId;
@@ -10457,120 +12380,82 @@ app.post('/api/wallet/send-bank', async (req, res) => {
     const senderBankName = senderVA.bankName || 'XamePay';
     const senderAccountNumber = senderVA.accountNumber || '';
     if (!userId || !account_bank || !account_number || !amount) return res.json({ success: false, message: 'Missing fields' });
+    let txRef = null;
+    let debited = false;
     try {
         // Tiered flat fee: FLW rate + ~50% margin, rounded to clean numbers
         let flwFee, fee;
-        if (amount <= 5000)       { flwFee = 10; fee = 15; }
-        else if (amount <= 50000) { flwFee = 25; fee = 40; }
+        if (requestedAmount <= 5000)       { flwFee = 10; fee = 15; }
+        else if (requestedAmount <= 50000) { flwFee = 25; fee = 40; }
         else                      { flwFee = 50; fee = 75; }
         const ourMargin = fee - flwFee;
-        const totalDebit = amount + fee;
-        const txRef = 'bank-'+Date.now();
-        // Debit wallet first
-        const transferLabel = 'Transfer to ' + (accName || account_number) + (bankName ? ' (' + bankName + ')' : '');
-        await debitWallet(userId, totalDebit, transferLabel, '🏦', txRef, {
-            principal: amount, fee,
-            senderName: senderVAName, senderBankName, senderAccountNumber,
-            recipientName: accName || account_number, bankName: bankName || '', accountNumber: account_number,
+        const totalDebit = requestedAmount + fee;
+        txRef = requestedRef;
+        const transferCurrency = currency || 'NGN';
+        const requestFingerprint = require('crypto').createHash('sha256')
+            .update(JSON.stringify([
+                String(account_bank).trim(), String(account_number).trim(),
+                requestedAmount, transferCurrency, fee,
+                String(accName || ''), String(bankName || '')
+            ])).digest('hex');
+
+        const reservation = await reserveWalletTransfer({
+            userId, reference: txRef, requestFingerprint,
+            principal: requestedAmount, fee, totalDebit,
+            currency: transferCurrency,
+            accountBank: String(account_bank).trim(),
+            accountNumber: String(account_number).trim(),
+            recipientName: accName || '',
+            label: 'Transfer to ' + (accName || account_number) + (bankName ? ' (' + bankName + ')' : '')
         });
-        // Log platform revenue for reconciliation
-        try {
-            await PlatformRevenue.create({
-                userId, txRef, type: 'bank_transfer_out',
-                amount, flwFee, userFee: fee, ourMargin, currency: currency || 'NGN',
+
+        if (!reservation.created) {
+            return res.status(202).json({
+                success: reservation.transfer.status === 'succeeded',
+                pending: !['succeeded', 'failed', 'refunded'].includes(reservation.transfer.status),
+                txRef,
+                status: reservation.transfer.status,
+                message: 'This reference already has a transfer record. No new provider request was submitted.'
             });
-        } catch(_) {}
+        }
+        debited = true;
         // Send via Flutterwave
         if (FLW_SECRET) {
             const r = await fetch('https://api.flutterwave.com/v3/transfers', {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${FLW_SECRET}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ account_bank, account_number, amount, currency: currency||'NGN', narration: `XamePay|${senderFullName}`, reference: 'xamepay-'+Date.now() })
+                body: JSON.stringify({ account_bank, account_number, amount: requestedAmount, currency: currency || 'NGN', narration: `XamePay|${senderFullName}`, reference: txRef })
             });
             const data = await r.json();
-            if (data.status === 'success') {
-                // Award cashback in XameCoins
-                try {
-                    const wallet = await Wallet.findOne({ xameId: userId }).lean();
-                    const monthlyVol = wallet?.monthlyVolume || 0;
-                    let cashbackRate = 0.0002; // 0.02% Basic
-                    if (monthlyVol >= 200000) cashbackRate = 0.0008;      // 0.08% Diamond
-                    else if (monthlyVol >= 50000) cashbackRate = 0.0006;  // 0.06% Gold
-                    else if (monthlyVol >= 10000) cashbackRate = 0.0004;  // 0.04% Silver
-                    const cashbackNGN = amount * cashbackRate;
-                    const cashbackCoins = Math.floor(cashbackNGN / COIN_RATE);
-                    if (cashbackCoins > 0) {
-                        await creditCoins(userId, cashbackCoins, 'cashback', `XamePay cashback on ₦${amount} transfer`);
-                        // Stamp cashback onto the original debit transaction so the receipt can show it
-                        await Wallet.findOneAndUpdate(
-                            { xameId: userId, 'transactions.ref': txRef },
-                            { $set: { 'transactions.$.cashback': cashbackCoins } }
-                        );
-                    }
-                    // Update monthly volume
-                    await Wallet.findOneAndUpdate({ xameId: userId },
-                        { $inc: { monthlyVolume: amount } }, { upsert: true });
-                    return res.json({
-                        success: true, fee, principal: amount, totalDebit, cashbackCoins,
-                        txRef, senderName: senderVAName,
-                        senderBankName, senderAccountNumber,
-                        recipientName: accName || account_number, bankName: bankName || '',
-                        accountNumber: account_number, ts: new Date().toISOString(),
-                        message: 'Transfer successful',
-                    });
-                } catch(e) {}
-                return res.json({ success: true, fee, principal: amount, totalDebit, txRef,
-                    senderName: senderVAName, senderBankName, senderAccountNumber,
-                    recipientName: accName || account_number,
-                    bankName: bankName || '', accountNumber: account_number,
-                    ts: new Date().toISOString(), message: 'Transfer successful' });
+            const providerId = data && data.data && data.data.id;
+            if (r.ok && data.status === 'success' && /^\d+$/.test(String(providerId || ''))) {
+                await transitionWalletTransfer(userId, txRef, ['reserved'], {
+                    status: 'submitted',
+                    providerReference: String(providerId)
+                });
+                return res.status(202).json({ success: true, pending: true, fee, principal: requestedAmount, totalDebit, txRef, message: 'Transfer accepted by provider; awaiting final status confirmation.' });
+
             }
-            // Refund on failure
-            await creditWallet(userId, totalDebit, 'Refund - Failed transfer', '↩️', 'refund-'+Date.now());
-            return res.json({ success: false, message: data.message });
+            await transitionWalletTransfer(userId, txRef, ['reserved', 'submitted'], { status: 'unknown' });
+            return res.status(202).json({ success: false, pending: true, txRef, message: 'Transfer outcome is unconfirmed; funds remain reserved while it is checked.' });
         }
         res.json({ success: false, message: 'No payment provider configured' });
     } catch(err) {
-        res.json({ success: false, message: err.message });
+        console.error('XamePay send-bank outcome requires review:', err.message);
+        if (debited && txRef) {
+            try {
+                await transitionWalletTransfer(userId, txRef, ['reserved', 'submitted'], { status: 'unknown' });
+                await Wallet.updateOne({ xameId: userId, 'transactions.ref': txRef }, { $set: { 'transactions.$.status': 'Pending' } });
+            } catch (_) {}
+            return res.status(202).json({ success: false, pending: true, txRef, message: 'Transfer outcome is unconfirmed; check status before retrying.' });
+        }
+        return res.status(500).json({ success: false, message: 'Transfer could not be initiated.' });
     }
 });
 
 // Buy airtime via Flutterwave Bills
 app.post('/api/wallet/airtime', async (req, res) => {
-    const { userId, phone, amount } = req.body;
-    if (!userId || !phone || !amount) return res.json({ success: false, message: 'Missing fields' });
-    try {
-        const flwSecret = process.env.FLW_SECRET_KEY;
-        if (!flwSecret) return res.json({ success: false, message: 'Payment provider not configured' });
-
-        // Debit wallet first
-        await debitWallet(userId, amount, 'Airtime - ' + phone, '📱', 'airtime-' + Date.now());
-
-        // Send airtime via Flutterwave
-        const ref = 'xamepay-airtime-' + userId + '-' + Date.now();
-        const r = await fetch('https://api.flutterwave.com/v3/bills', {
-            method: 'POST',
-            headers: { Authorization: 'Bearer ' + flwSecret, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                country: 'NG',
-                customer: phone,
-                amount,
-                recurrence: 'ONCE',
-                type: 'AIRTIME',
-                reference: ref,
-            })
-        });
-        const data = await r.json();
-        if (data.status === 'success') {
-            res.json({ success: true, message: 'Airtime sent!' });
-        } else {
-            // Refund if failed
-            await creditWallet(userId, amount, 'Refund - Airtime failed', '↩️', 'refund-' + Date.now());
-            res.json({ success: false, message: data.message || 'Airtime purchase failed' });
-        }
-    } catch(err) {
-        res.json({ success: false, message: err.message });
-    }
+  return processWalletBillRequest(req, res, 'airtime');
 });
 
 // Toggle PIN on/off
@@ -10578,6 +12463,7 @@ app.post('/api/wallet/pin/toggle', async (req, res) => {
     const { userId, enable, pin } = req.body;
     if (!userId) return res.json({ success: false, message: 'Missing fields' });
     try {
+        if (!(await requireWalletSessionOwner(req, res, userId))) return;
         const bcrypt = require('bcryptjs');
         const wallet = await Wallet.findOne({ xameId: userId });
         if (!wallet) return res.json({ success: false, message: 'Wallet not found' });
@@ -10623,23 +12509,83 @@ app.post('/api/wallet/request', async (req, res) => {
 
 // Flutterwave payment verification & wallet credit
 app.post('/api/wallet/fund/verify', async (req, res) => {
-    const { transaction_id, expected_amount, currency, userId } = req.body;
-    if (!transaction_id || !userId) return res.json({ success: false, message: 'Missing fields' });
-    try {
-        const r = await fetch(`https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`, {
-            headers: { Authorization: `Bearer ${FLW_SECRET}` }
+    const { transaction_id, expected_amount, currency, userId } = req.body || {};
+
+    if (!(await requireWalletSessionOwner(req, res, userId))) return;
+
+    const expected = Number(expected_amount);
+    const expectedCurrency = String(currency || '').trim().toUpperCase();
+
+    if (!/^\d+$/.test(String(transaction_id || '')) ||
+        !Number.isFinite(expected) || expected <= 0 ||
+        !/^[A-Z]{3}$/.test(expectedCurrency)) {
+        return res.status(400).json({
+            success: false,
+            message: 'Invalid payment verification details.'
         });
-        const data = await r.json();
-        if (data.status === 'success' && data.data.status === 'successful' && data.data.amount >= expected_amount) {
-            const wallet = await creditWallet(userId, data.data.amount, 'Wallet funded via Card', '💳', transaction_id);
-            // Notify user
-            const sockId = findSocketId(userId);
-            if (sockId) io.to(sockId).emit('wallet:funded', { amount: data.data.amount, balance: wallet.balance });
-            return res.json({ success: true, amount: data.data.amount, balance: wallet.balance });
+    }
+
+    const secret = process.env.FLW_SECRET || process.env.FLW_SECRET_KEY;
+    if (!secret) {
+        return res.status(503).json({
+            success: false,
+            message: 'Payment provider is not configured.'
+        });
+    }
+
+    try {
+        const r = await fetch(
+            `https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`,
+            {
+                headers: { Authorization: `Bearer ${secret}` },
+                signal: AbortSignal.timeout(10000)
+            }
+        );
+        const result = await r.json();
+        const payment = result && result.data;
+
+        if (!r.ok || result.status !== 'success' ||
+            !payment || payment.status !== 'successful' ||
+            Number(payment.amount) !== expected ||
+            String(payment.currency || '').toUpperCase() !== expectedCurrency ||
+            String(payment.meta && payment.meta.userId || '') !== String(userId) ||
+            !String(payment.tx_ref || '').startsWith('xamepay-card-' + userId + '-')) {
+            return res.status(400).json({
+                success: false,
+                message: 'Payment verification failed.'
+            });
         }
-        res.json({ success: false, message: 'Payment verification failed' });
-    } catch(err) {
-        res.json({ success: false, message: err.message });
+
+        const credited = await creditWalletOnce(
+            'flutterwave',
+            String(transaction_id),
+            String(userId),
+            Number(payment.amount),
+            'Wallet funded via Card',
+            '💳',
+            expectedCurrency
+        );
+
+        const wallet = credited.wallet || await Wallet.findOne({ xameId: userId }).lean();
+
+        return res.json({
+            success: true,
+            duplicate: Boolean(credited.duplicate),
+            amount: Number(payment.amount),
+            balance: wallet ? wallet.balance : undefined
+        });
+    } catch (err) {
+        if (err && err.code === 'PAYMENT_CREDIT_CONFLICT') {
+            return res.status(409).json({
+                success: false,
+                message: 'Payment reference conflict requires review.'
+            });
+        }
+        console.error('Wallet payment verification/credit failed:', err.message);
+        return res.status(503).json({
+            success: false,
+            message: 'Payment could not be confirmed. Please check its status before retrying.'
+        });
     }
 });
 
@@ -10649,6 +12595,7 @@ app.post('/api/wallet/pin/set', async (req, res) => {
     if (!userId || !pin || !/^\d{4,6}$/.test(pin))
         return res.json({ success: false, message: 'PIN must be 4-6 digits' });
     try {
+        if (!(await requireWalletSessionOwner(req, res, userId))) return;
         const bcrypt = require('bcryptjs');
         const hashed = await bcrypt.hash(pin, 10);
         await Wallet.findOneAndUpdate({ xameId: userId },
@@ -10662,6 +12609,7 @@ app.post('/api/wallet/pin/verify', async (req, res) => {
     const { userId, pin } = req.body;
     if (!userId || !pin) return res.json({ success: false, message: 'Missing fields' });
     try {
+        if (!(await requireWalletSessionOwner(req, res, userId))) return;
         const bcrypt = require('bcryptjs');
         const wallet = await Wallet.findOne({ xameId: userId });
         if (!wallet || !wallet.transactionPin)
@@ -10693,6 +12641,7 @@ app.post('/api/wallet/pin/change', async (req, res) => {
     if (!userId || !oldPin || !newPin || !/^\d{4,6}$/.test(newPin))
         return res.json({ success: false, message: 'Invalid fields' });
     try {
+        if (!(await requireWalletSessionOwner(req, res, userId))) return;
         const bcrypt = require('bcryptjs');
         const wallet = await Wallet.findOne({ xameId: userId });
         if (!wallet || !wallet.transactionPin)
@@ -10722,6 +12671,7 @@ app.get('/api/admin/flw-bills', async (req, res) => {
 // ── Beneficiaries ────────────────────────────────────────────────────────────
 app.get('/api/wallet/beneficiaries/:userId', async (req, res) => {
     try {
+        if (!(await requireWalletSessionOwner(req, res, req.params.userId))) return;
         const wallet = await Wallet.findOne({ xameId: req.params.userId }).lean();
         res.json({ success: true, beneficiaries: wallet?.beneficiaries || [] });
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
@@ -10730,6 +12680,7 @@ app.get('/api/wallet/beneficiaries/:userId', async (req, res) => {
 app.post('/api/wallet/beneficiaries/save', async (req, res) => {
     try {
         const { userId, accountNumber, bankCode, bankName, accountName } = req.body;
+        if (!(await requireWalletSessionOwner(req, res, userId))) return;
         if (!userId || !accountNumber || !bankCode) return res.json({ success: false, message: 'Missing fields' });
         const beneficiary = { accountNumber, bankCode, bankName, accountName, savedAt: new Date() };
         await Wallet.findOneAndUpdate(
@@ -10748,6 +12699,7 @@ app.post('/api/wallet/beneficiaries/save', async (req, res) => {
 
 app.delete('/api/wallet/beneficiaries/:userId/:accountNumber', async (req, res) => {
     try {
+        if (!(await requireWalletSessionOwner(req, res, req.params.userId))) return;
         await Wallet.findOneAndUpdate(
             { xameId: req.params.userId },
             { $pull: { beneficiaries: { accountNumber: req.params.accountNumber } } }
@@ -10758,47 +12710,162 @@ app.delete('/api/wallet/beneficiaries/:userId/:accountNumber', async (req, res) 
 
 // Flutterwave webhook (server-side, uses FLW_SECRET_HASH from .env)
 app.post('/api/wallet/webhook/flw', express.raw({ type: 'application/json' }), async (req, res) => {
+    const secretHash = process.env.FLW_SECRET_HASH;
+    if (!secretHash) {
+        console.error('Flutterwave webhook disabled: signing hash is not configured.');
+        return res.status(503).send('Webhook not configured');
+    }
+
     const signature = req.headers['verif-hash'];
-    if (signature !== (process.env.FLW_SECRET_HASH || 'xamepay-webhook-hash-2024')) return res.status(401).send('Unauthorized');
+    if (!signature || signature !== secretHash) {
+        return res.status(401).send('Unauthorized');
+    }
+
     try {
-        const payload = JSON.parse(req.body);
-        if (payload.event === 'charge.completed' && payload.data.status === 'successful') {
-            const narration = payload.data.narration || '';
-            let userId = (narration.startsWith('XamePay|') ? narration.split('|')[1]?.trim() : narration.startsWith('XamePay ') ? narration.split(' ')[1]?.trim() : narration.split('/')[1]?.trim()) || payload.data.meta?.userId;
-            if (!userId && payload.data.account_number) {
-                const w = await Wallet.findOne({ 'virtualAccount.accountNumber': payload.data.account_number }).lean();
-                if (w) userId = w.xameId;
+        const payload = JSON.parse(
+            Buffer.isBuffer(req.body) ? req.body.toString('utf8') : String(req.body || '')
+        );
+        const d = payload?.data || {};
+
+        if (payload?.event !== 'charge.completed' || d.status !== 'successful') {
+            return res.sendStatus(200);
+        }
+
+        const txRef = String(d.tx_ref || '').trim();
+        const txId = String(d.id ?? '').trim();
+
+        // Card payments are handled by the callback/verification routes.
+        if (txRef.startsWith('xamepay-card-')) return res.sendStatus(200);
+
+        if (!process.env.FLW_SECRET || !/^\d+$/.test(txId) || !txRef) {
+            console.error('Flutterwave secondary webhook cannot verify payment.');
+            return res.status(503).send('Payment verification unavailable');
+        }
+
+        const amount = Number(d.amount);
+        const currency = String(d.currency || '').trim().toUpperCase();
+        if (!Number.isFinite(amount) || amount <= 0 || !/^[A-Z]{3}$/.test(currency)) {
+            return res.status(400).send('Invalid payment details');
+        }
+
+        const verifyResponse = await fetch(
+            `https://api.flutterwave.com/v3/transactions/${encodeURIComponent(txId)}/verify`,
+            {
+                headers: { Authorization: `Bearer ${process.env.FLW_SECRET}` },
+                signal: AbortSignal.timeout(10000)
             }
-            if (userId) {
-                const paymentType = (payload.data.payment_type || '').toLowerCase();
-                const isBankTransfer = paymentType === 'account' ||
-                    paymentType === 'bank_transfer' ||
-                    paymentType === 'banktransfer';
-                const senderBank  = payload.data.meta?.originatorname
-                    || payload.data.meta?.originator_name
-                    || payload.data.customer?.name
-                    || '';
-                const bankName    = payload.data.meta?.bankname
-                    || payload.data.meta?.bank_name
-                    || payload.data.issuer
-                    || '';
-                const issuer      = payload.data.card?.issuer || '';
-                const last4       = payload.data.card?.last_4digits || '';
-                const label = isBankTransfer
-                    ? (senderBank ? `Bank Transfer · ${senderBank}${bankName ? ' (' + bankName + ')' : ''}` : 'Bank Transfer')
-                    : (issuer ? `Card Payment · ${issuer}${last4 ? ' ****' + last4 : ''}` : 'Card Payment');
-                const icon = isBankTransfer ? '🏦' : '💳';
-                const wallet = await creditWallet(userId, payload.data.amount, label, icon, payload.data.id?.toString(), {
-                    senderName:    senderBank,
-                    bankName:      bankName,
-                    accountNumber: payload.data.meta?.originator_account_number || payload.data.meta?.originatoraccountnumber || '',
-                });
-                const sockId = findSocketId(userId);
-                if (sockId) io.to(sockId).emit('wallet:funded', { amount: payload.data.amount, balance: wallet.balance });
+        );
+
+        if (!verifyResponse.ok) {
+            return res.status(503).send('Payment verification unavailable');
+        }
+
+        const verifyBody = await verifyResponse.json();
+        const verified = verifyBody?.data;
+        if (verifyBody?.status !== 'success' || !verified ||
+            String(verified.id) !== txId ||
+            verified.status !== 'successful' ||
+            String(verified.tx_ref || '') !== txRef ||
+            !Number.isFinite(Number(verified.amount)) ||
+            Math.abs(Number(verified.amount) - amount) > 0.01 ||
+            String(verified.currency || '').toUpperCase() !== currency) {
+            console.error('Flutterwave secondary webhook verification mismatch.');
+            return res.status(503).send('Payment verification mismatch');
+        }
+
+        let userId = null;
+        const vaMatch = txRef.match(/^xamepay-va-(\d{8,})-(\d+)$/);
+
+        if (txRef.startsWith('xamepay-va-')) {
+            if (!vaMatch) return res.status(400).send('Invalid virtual-account reference');
+            userId = vaMatch[1];
+        } else {
+            // This secondary endpoint only credits server-issued virtual-account
+            // references. Other funding flows belong to their dedicated handlers.
+            return res.sendStatus(200);
+        }
+
+        if (!userId) {
+            const recognized = txRef.startsWith('xamepay-') ||
+                String(d.narration || '').startsWith('XamePay');
+            return recognized
+                ? res.status(503).send('Payment resolution temporarily unavailable')
+                : res.sendStatus(200);
+        }
+
+        if (txRef.startsWith('xamepay-va-')) {
+            const ownerWallet = await Wallet.findOne({ xameId: userId }).lean();
+            const expectedAccount = String(ownerWallet?.virtualAccount?.accountNumber || '');
+            if (!expectedAccount ||
+                (d.account_number &&
+                 String(d.account_number) !== expectedAccount)) {
+                console.error('Flutterwave virtual-account owner binding failed.');
+                return res.status(503).send('Payment resolution temporarily unavailable');
             }
         }
-        res.sendStatus(200);
-    } catch(err) { res.sendStatus(200); }
+
+        const senderName = String(
+            verified.meta?.originatorname ||
+            verified.meta?.originator_name ||
+            verified.customer?.name ||
+            d.meta?.originatorname ||
+            d.meta?.originator_name ||
+            d.customer?.name ||
+            ''
+        );
+        const bankName = String(
+            verified.meta?.bankname ||
+            verified.meta?.bank_name ||
+            d.meta?.bankname ||
+            d.meta?.bank_name ||
+            verified.issuer ||
+            d.issuer ||
+            ''
+        );
+        const isBankTransfer = ['account', 'bank_transfer', 'banktransfer']
+            .includes(String(verified.payment_type || d.payment_type || '').toLowerCase());
+        const label = isBankTransfer
+            ? (senderName ? `Bank Transfer · ${senderName}${bankName ? ' (' + bankName + ')' : ''}` : 'Bank Transfer')
+            : (bankName ? `Card Payment · ${bankName}` : 'Card Payment');
+        const icon = isBankTransfer ? '🏦' : '💳';
+
+        const creditResult = await creditWalletOnce(
+            'flutterwave',
+            txId,
+            userId,
+            Number(verified.amount),
+            label,
+            icon,
+            currency,
+            {
+                senderName,
+                bankName,
+                accountNumber: String(
+                    verified.meta?.originator_account_number ||
+                    verified.meta?.originatoraccountnumber ||
+                    d.meta?.originator_account_number ||
+                    d.meta?.originatoraccountnumber ||
+                    ''
+                )
+            }
+        );
+
+        if (creditResult.credited) {
+            const wallet = await Wallet.findOne({ xameId: userId }).lean();
+            const socketId = findSocketId(userId);
+            if (socketId) {
+                io.to(socketId).emit('wallet:funded', {
+                    amount: Number(verified.amount),
+                    balance: wallet?.balance
+                });
+            }
+        }
+
+        return res.sendStatus(200);
+    } catch (err) {
+        console.error('Flutterwave secondary webhook processing failed:', err.message);
+        return res.status(503).send('Payment processing temporarily unavailable');
+    }
 });
 
 // ── XamePay Wallet API ───────────────────────────────────────────────────
@@ -10831,32 +12898,96 @@ app.post('/api/wallet/verify', async (req, res) => {
 
 // Flutterwave bank transfer (send to bank)
 app.post('/api/wallet/transfer', async (req, res) => {
+    if (!(await requireWalletSessionOwner(req, res, req.body && req.body.userId))) return;
+    const requestedAmount = Number(req.body && req.body.amount);
+    if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) {
+        return res.status(400).json({
+            success: false,
+            message: 'Invalid amount'
+        });
+    }
+
+
   const { account_bank, account_number, amount, currency, narration, reference, userId } = req.body;
   if (!account_bank || !account_number || !amount || !userId) return res.json({ success: false, message: 'Missing fields' });
 
+  let txRef = null;
+  let debited = false;
   try {
     const flwSecret = process.env.FLW_SECRET || process.env.FLW_SECRET_KEY;
     if (!flwSecret) return res.json({ success: false, message: 'Payment provider not configured' });
 
-    const fee = Math.round(amount * (parseFloat(process.env.SERVICE_FEE) || 0.015) * 100) / 100;
-    const totalDebit = amount + fee;
-    await debitWallet(userId, totalDebit, 'Bank Transfer', '🏦', 'transfer-' + Date.now());
+    const suppliedRef = String(req.body.reference || req.get('Idempotency-Key') || '').trim();
+    if (!suppliedRef || !/^[A-Za-z0-9._:-]{8,100}$/.test(suppliedRef))
+      return res.status(400).json({ success: false, message: 'A valid stable transfer reference is required' });
+    txRef = suppliedRef;
+
+    const fee = Math.round(requestedAmount * (parseFloat(process.env.SERVICE_FEE) || 0.015) * 100) / 100;
+    const totalDebit = requestedAmount + fee;
+    const transferCurrency = currency || 'NGN';
+    const requestFingerprint = require('crypto').createHash('sha256')
+      .update(JSON.stringify([
+        String(account_bank).trim(), String(account_number).trim(),
+        requestedAmount, transferCurrency, fee, String(narration || '')
+      ])).digest('hex');
+
+    const reservation = await reserveWalletTransfer({
+      userId, reference: txRef, requestFingerprint,
+      principal: requestedAmount, fee, totalDebit,
+      currency: transferCurrency,
+      accountBank: String(account_bank).trim(),
+      accountNumber: String(account_number).trim(),
+      recipientName: '',
+      label: 'Bank Transfer'
+    });
+
+    if (!reservation.created) {
+      return res.status(202).json({
+        success: reservation.transfer.status === 'succeeded',
+        pending: !['succeeded', 'failed', 'refunded'].includes(reservation.transfer.status),
+        txRef,
+        status: reservation.transfer.status,
+        message: 'This reference already has a transfer record. No new provider request was submitted.'
+      });
+    }
+    debited = true;
 
     const response = await fetch('https://api.flutterwave.com/v3/transfers', {
       method: 'POST',
       headers: { Authorization: `Bearer ${flwSecret}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ account_bank, account_number, amount, currency: currency || 'NGN', narration: narration || 'XamePay Transfer', reference: reference || 'xamepay-' + Date.now() })
+      body: JSON.stringify({ account_bank, account_number, amount: requestedAmount, currency: currency || 'NGN', narration: narration || 'XamePay Transfer', reference: txRef })
     });
     const data = await response.json();
-    if (data.status === 'success') {
-      res.json({ success: true, fee, data: data.data });
-    } else {
-      await creditWallet(userId, totalDebit, 'Refund - Failed transfer', '↩️', 'refund-' + Date.now());
-      res.json({ success: false, message: data.message });
+    const providerId = data && data.data && data.data.id;
+    if (response.ok && data.status === 'success' && /^\d+$/.test(String(providerId || ''))) {
+      await transitionWalletTransfer(userId, txRef, ['reserved'], {
+        status: 'submitted',
+        providerReference: String(providerId)
+      });
+      return res.status(202).json({
+        success: true, pending: true, fee, txRef,
+        message: 'Transfer accepted by provider; awaiting final status confirmation.'
+      });
     }
+    await transitionWalletTransfer(userId, txRef, ['reserved', 'submitted'], { status: 'unknown' });
+    return res.status(202).json({
+      success: false, pending: true, txRef,
+      message: 'Transfer outcome is unconfirmed. Funds remain reserved while it is checked.'
+    });
   } catch (err) {
     console.error('Wallet transfer error:', err);
-    res.json({ success: false, message: 'Server error' });
+    if (debited && txRef) {
+      try {
+        await transitionWalletTransfer(userId, txRef, ['reserved', 'submitted'], { status: 'unknown' });
+        await Wallet.updateOne({ xameId: userId, 'transactions.ref': txRef },
+          { $set: { 'transactions.$.status': 'Pending' } });
+      } catch (_) {}
+      return res.status(202).json({
+        success: false, pending: true, txRef,
+        message: 'Transfer outcome is unconfirmed. Check its status before retrying.'
+      });
+    }
+    return res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
@@ -14475,3 +16606,5 @@ app.post('/api/web/call-request', async (req, res) => {
     res.json({ success: true });
   } catch (e) { res.status(500).json({ success: false, message: e.message }); }
 });
+
+// XAMEPAY_CREDIT_ROUTE_PATCH_V1
