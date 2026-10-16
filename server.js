@@ -11788,7 +11788,7 @@ app.get('/api/wallet/transfer-status/:reference', async (req, res) => {
         // Flutterwave's transfer lookup requires the provider transfer ID.
         // Without it, do not guess by reference or initiate another transfer.
         if (!/^\d+$/.test(String(transfer.providerReference || '')) ||
-            !process.env.FLW_SECRET) {
+            !FLW_SECRET) {
             return res.status(200).json({
                 success: true,
                 pending: true,
@@ -11803,7 +11803,7 @@ app.get('/api/wallet/transfer-status/:reference', async (req, res) => {
                 encodeURIComponent(String(transfer.providerReference)),
             {
                 headers: {
-                    Authorization: `Bearer ${process.env.FLW_SECRET}`,
+                    Authorization: `Bearer ${FLW_SECRET}`,
                     Accept: 'application/json'
                 },
                 signal: AbortSignal.timeout(8000)
@@ -12358,7 +12358,7 @@ app.post('/api/wallet/send-bank', async (req, res) => {
     }
 
     // Check provider configuration before any wallet debit.
-    if (!process.env.FLW_SECRET) {
+    if (!FLW_SECRET) {
         return res.status(503).json({
             success: false,
             message: 'Payment provider is not configured'
