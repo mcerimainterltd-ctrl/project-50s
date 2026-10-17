@@ -4493,6 +4493,15 @@ function flushPendingIceCandidates(userId, socketId) {
     }
 }
 
+// Wallet events go to the standalone XamePay app when it is connected for
+// this user (room xamepay:<id>), otherwise to the regular socket as before.
+function findWalletTarget(userId) {
+    const room = `xamepay:${userId}`;
+    const members = io.sockets.adapter.rooms.get(room);
+    if (members && members.size > 0) return room;
+    return findSocketId(userId);
+}
+
 function findSocketId(userId) {
     const socketId = userToSocketMap.get(userId);
     if (!socketId) return undefined;
@@ -5781,6 +5790,17 @@ io.on('connection', (socket) => {
 
     socket.userId = userId;
 
+    // XamePay (the standalone wallet app) connects with app=xamepay. Its
+    // socket joins a private room for this user and stays out of every
+    // shared routing map, so it can never displace XamePage's socket.
+    // Identity comes from the verified session, never from the query.
+    if (!isWebGuest && socket.authenticatedUserId &&
+        socket.handshake?.query?.app === 'xamepay') {
+        socket.isXamePay = true;
+        socket.join(`xamepay:${socket.authenticatedUserId}`);
+        return;
+    }
+
     // ========================================================
     // XAMELIVE — Socket.IO
     // ========================================================
@@ -6232,11 +6252,11 @@ io.on('connection', (socket) => {
     });
 
     socket.on('wallet:transfer', async ({ recipientId, recipientName, senderId, senderName, amount, currency }) => {
-        const recipSocketId = findSocketId(recipientId);
+        const recipSocketId = findWalletTarget(recipientId);
         if (recipSocketId) {
             io.to(recipSocketId).emit('wallet:receive', { senderId, senderName, amount, currency });
         }
-        const senderSocketId = findSocketId(senderId);
+        const senderSocketId = findWalletTarget(senderId);
         if (senderSocketId) {
             io.to(senderSocketId).emit('wallet:debit', { recipientId, recipientName: recipientName || recipientId, amount, currency });
         }
@@ -10925,7 +10945,7 @@ app.post('/api/wallet/flw/webhook', express.raw({ type: 'application/json' }), a
 
         // Do not emit a second credit notification for a replayed webhook.
         if (creditResult.credited) {
-          const recipSocketId = findSocketId(userId);
+          const recipSocketId = findWalletTarget(userId);
           if (recipSocketId) {
             io.to(recipSocketId).emit('wallet:receive', {
               senderId: 'bank',
@@ -11068,7 +11088,7 @@ app.post('/api/wallet/monnify/webhook', express.raw({ type: 'application/json' }
                 return res.status(503).send('Wallet confirmation unavailable');
             }
 
-            const sockId = findSocketId(userId);
+            const sockId = findWalletTarget(userId);
             if (sockId) {
                 io.to(sockId).emit('wallet:receive', {
                     senderId: 'bank',
@@ -11134,7 +11154,7 @@ app.post('/api/wallet/psk/webhook', express.raw({ type: 'application/json' }), a
     const customerEmail = payload.data.customer?.email || '';
     const userId = customerEmail.split('@')[0];
     if (userId && amount) {
-      const recipSocketId = findSocketId(userId);
+      const recipSocketId = findWalletTarget(userId);
       if (recipSocketId) {
         io.to(recipSocketId).emit('wallet:receive', {
           senderId: 'bank',
@@ -12320,11 +12340,11 @@ app.post('/api/wallet/p2p', async (req, res) => {
         }
 
         if (!duplicate) {
-            const recipientSocket = findSocketId(recipientId);
+            const recipientSocket = findWalletTarget(recipientId);
             if (recipientSocket) io.to(recipientSocket).emit('wallet:receive', {
                 senderId, senderName, amount, currency, reference
             });
-            const senderSocket = findSocketId(senderId);
+            const senderSocket = findWalletTarget(senderId);
             if (senderSocket) io.to(senderSocket).emit('wallet:debit', {
                 recipientId, recipientName, amount, currency, reference
             });
