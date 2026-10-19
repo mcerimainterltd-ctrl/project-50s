@@ -3702,6 +3702,12 @@ app.post('/api/live/:sessionId/end', async (req, res) => {
                     '[XAMELIVE] Cloudflare stop failed:',
                     err.message
                 );
+
+                return res.status(502).json({
+                    success: false,
+                    message:
+                        'Unable to stop the live broadcast at the streaming provider. Please retry.'
+                });
             }
 
             session.status = 'ENDED';
