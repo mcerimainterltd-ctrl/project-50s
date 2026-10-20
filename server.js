@@ -2616,6 +2616,53 @@ async function refreshLiveSessionStatus(session) {
                 sessionId: session.sessionId
             });
         }
+        // Stale STARTING: broadcaster never connected. End it so the
+        // broadcaster is not locked out. No startedAt => no minutes charged.
+        if (
+            session.status === 'STARTING' &&
+            session.createdAt &&
+            Date.now() - new Date(session.createdAt).getTime() > 3 * 60 * 1000 &&
+            cloudStatus !== 'connected' &&
+            cloudStatus !== 'reconnected'
+        ) {
+            try {
+                await cloudflareStreamRequest(
+                    `/stream/live_inputs/${encodeURIComponent(session.cloudflareLiveInputId)}`,
+                    {
+                        method: 'PUT',
+                        body: JSON.stringify({ enabled: false })
+                    }
+                );
+            } catch (disableErr) {
+                console.error(
+                    '[XAMELIVE] Stale STARTING disable failed:',
+                    disableErr.message
+                );
+            }
+
+            session.status = 'ENDED';
+            session.endedAt = new Date();
+            session.viewerCount = 0;
+
+            await recordLiveSessionUsage(session, session.endedAt);
+
+            await LiveSession.updateOne(
+                { _id: session._id },
+                {
+                    $set: {
+                        status: 'ENDED',
+                        endedAt: session.endedAt,
+                        viewerCount: 0,
+                        usageRecorded: true
+                    }
+                }
+            );
+
+            session.usageRecorded = true;
+
+            liveViewerSockets.delete(session.sessionId);
+            io.emit('live:ended', { sessionId: session.sessionId });
+        }
     } catch (err) {
         console.error(
             '[XAMELIVE] Cloudflare status check failed:',
