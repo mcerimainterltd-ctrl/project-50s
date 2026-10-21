@@ -3542,6 +3542,8 @@ app.post('/api/live/purchase/verify', async (req, res) => {
     }
 });
 
+const liveStartLocks = new Set();
+
 app.post('/api/live/start', async (req, res) => {
     try {
         const authUser = await getAuthenticatedUserFromSession(req);
@@ -3611,6 +3613,19 @@ app.post('/api/live/start', async (req, res) => {
                 message: 'Live title is too long.'
             });
         }
+
+        // Prevent double-tap/retry creating two sessions at once.
+        const startLockKey = String(authUser.xameId);
+
+        if (liveStartLocks.has(startLockKey)) {
+            return res.status(409).json({
+                success: false,
+                message: 'A live start is already in progress.'
+            });
+        }
+
+        liveStartLocks.add(startLockKey);
+        res.once('close', () => liveStartLocks.delete(startLockKey));
 
         const existing = await LiveSession.findOne({
             broadcasterXameId: authUser.xameId,
