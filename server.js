@@ -2495,7 +2495,20 @@ async function refreshLiveSessionStatus(session) {
             { method: 'GET' }
         );
 
-        const cloudStatus = input?.status || '';
+        const rawCloudStatus = input?.status;
+        const cloudStatus = typeof rawCloudStatus === 'string'
+            ? rawCloudStatus
+            : (rawCloudStatus?.current?.state === 'connected'
+                ? 'connected'
+                : (rawCloudStatus?.current?.reason ||
+                   rawCloudStatus?.current?.state || ''));
+
+        console.log(
+            '[XAMELIVE] cloud status',
+            session.sessionId,
+            session.status,
+            JSON.stringify(rawCloudStatus ?? null).slice(0, 300)
+        );
 
         if (
             (cloudStatus === 'connected' ||
