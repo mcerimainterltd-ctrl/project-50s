@@ -1852,6 +1852,12 @@ const liveSessionSchema = new mongoose.Schema({
         required: true,
         index: true
     },
+    broadcasterDisplayName: {
+        type: String,
+        default: '',
+        trim: true,
+        maxlength: 80
+    },
     title: {
         type: String,
         required: true,
@@ -2468,10 +2474,17 @@ app.post('/api/media/upload-init', async (req, res) => {
 // XAMELIVE — Cloudflare Stream
 // ============================================================
 
+function liveHostDisplayName(user) {
+    if (!user) return '';
+    const preferred = String(user.preferredName || '').trim();
+    return preferred || String(user.firstName || '').trim();
+}
+
 function liveSessionPublicData(session) {
     return {
         sessionId: session.sessionId,
         broadcasterXameId: session.broadcasterXameId,
+        broadcasterDisplayName: session.broadcasterDisplayName || '',
         title: session.title,
         category: session.category,
         status: session.status,
@@ -2816,7 +2829,13 @@ async function getActiveGoLiveAccessEntitlement(xameId) {
     return GoLiveEntitlement.findOne({
         xameId: String(xameId),
         status: 'ACTIVE',
-        expiresAt: { $gt: now }
+        expiresAt: { $gt: now },
+        $expr: {
+            $gt: [
+                { $subtract: ['$includedMinutes', '$usedMinutes'] },
+                0
+            ]
+        }
     }).sort({
         expiresAt: 1
     });
@@ -3689,6 +3708,7 @@ app.post('/api/live/start', async (req, res) => {
         const session = await LiveSession.create({
             sessionId,
             broadcasterXameId: authUser.xameId,
+            broadcasterDisplayName: liveHostDisplayName(authUser),
             title,
             category,
             status: 'STARTING',
