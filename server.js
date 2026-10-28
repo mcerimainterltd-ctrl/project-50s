@@ -1625,6 +1625,7 @@ const userSchema = new mongoose.Schema({
     password:           { type: String },
     profilePic:         { type: String, default: '' },
     phone:              { type: String, unique: true, sparse: true },
+    unverifiedPhone:    { type: String, default: '' },
     referralCode:       { type: String, default: '' },
     hidePreferredName:  { type: Boolean, default: false },
     hideProfilePicture: { type: Boolean, default: false },
@@ -4812,6 +4813,14 @@ app.post('/api/register',
             const referralCode   = xameId.replace('@', '').toUpperCase() + Math.random().toString(36).substring(2, 6).toUpperCase();
             const userData       = { xameId, firstName, lastName, dob, password: hashedPassword, referralCode };
             if (phone) { userData.phone = phone; delete global.verifiedPhones[phone]; }
+            else if (req.body.unverifiedPhone) {
+                const unverified = normalizeInternationalPhone(req.body.unverifiedPhone);
+                if (!unverified) return res.status(400).json({
+                    success: false,
+                    message: 'Phone number must be in international format starting with +.'
+                });
+                userData.unverifiedPhone = unverified;
+            }
             const user           = await new User(userData).save();
             const resp           = user.toObject(); delete resp.password;
             console.log(`✅ Registered: ${xameId}`);
