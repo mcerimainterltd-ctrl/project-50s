@@ -4812,6 +4812,7 @@ app.post('/api/register',
             const hashedPassword = await bcrypt.hash(password, 10);
             const referralCode   = xameId.replace('@', '').toUpperCase() + Math.random().toString(36).substring(2, 6).toUpperCase();
             const userData       = { xameId, firstName, lastName, dob, password: hashedPassword, referralCode };
+            console.log('[REGISTER] verifiedPhone=' + !!phone + ' unverifiedSent=' + !!req.body.unverifiedPhone + ' bodyKeys=' + Object.keys(req.body).join(','));
             if (phone) { userData.phone = phone; delete global.verifiedPhones[phone]; }
             else if (req.body.unverifiedPhone) {
                 const unverified = normalizeInternationalPhone(req.body.unverifiedPhone);
