@@ -9189,8 +9189,10 @@ app.post('/api/pstn/sms', async (req, res) => {
 
 app.post('/api/phone/check-xamepage', async (req, res) => {
     try {
+        const authUser = await getAuthenticatedUserFromSession(req);
+        if (!authUser) return res.status(401).json({ success: false, message: 'Unauthorized.' });
         const { phones } = req.body; // array of phone numbers
-        if (!phones || !Array.isArray(phones)) return res.status(400).json({ success: false });
+        if (!phones || !Array.isArray(phones) || phones.length > 200) return res.status(400).json({ success: false });
         const users = await User.find({ xameId: { $in: phones } }, { xameId: 1, preferredName: 1, firstName: 1, profilePic: 1 });
         const map = {};
         users.forEach(u => { map[u.xameId] = { name: u.preferredName || u.firstName, profilePic: u.profilePic }; });
