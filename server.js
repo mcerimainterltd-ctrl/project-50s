@@ -4944,7 +4944,12 @@ app.post('/api/auth/send-otp', async (req, res) => {
             });
             console.log(`✅ OTP sent to ${phone}`);
         } else {
-            console.warn('⚠️ Twilio not configured — OTP:', code);
+            console.warn('⚠️ Twilio not configured — phone OTP unavailable');
+            delete global.phoneOtps[phone];
+            return res.status(503).json({
+                success: false,
+                message: 'Phone verification is temporarily unavailable. You can register without a phone number.'
+            });
         }
 
         res.json({ success: true, message: 'OTP sent successfully.' });
