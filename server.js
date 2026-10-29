@@ -2316,6 +2316,19 @@ async function requireWalletSessionOwner(req, res, requestedUserId) {
 }
 
 // ── XamePay International: isolated, non-executing foundation ─────────────
+// Audit only: logs wallet calls that lack a valid session for the requested user.
+// Never blocks, never throws, never logs tokens or BVNs.
+async function walletAuthAudit(req, route, requestedId) {
+    try {
+        const user = await getAuthenticatedUserFromSession(req);
+        let outcome = null;
+        if (!user) outcome = 'no-valid-session';
+        else if (!requestedId || String(user.xameId) !== String(requestedId)) outcome = 'user-mismatch';
+        if (outcome) console.warn('WALLET-NOAUTH ' + route + ' ' + outcome +
+            ' requestedId=' + String(requestedId || '') + ' ip=' + (req.ip || ''));
+    } catch (_) {}
+}
+
 const createXamePayInternationalRouter =
     require('./routes/xamepayInternational');
 
@@ -9405,6 +9418,7 @@ async function getMonnifyToken() {
 
 // Create Monnify virtual account
 app.post('/api/wallet/monnify/virtual-account', async (req, res) => {
+    walletAuthAudit(req, '/api/wallet/monnify/virtual-account', req.body && req.body.userId).catch(() => {});
     const { userId, email, confirmSwitch, bvn } = req.body;
     if (!userId) return res.json({ success: false, message: 'Missing userId' });
     try {
@@ -9650,6 +9664,7 @@ app.post('/api/wallet/monnify/virtual-account', async (req, res) => {
 });
 
 app.post('/api/wallet/flw/virtual-account', async (req, res) => {
+    walletAuthAudit(req, '/api/wallet/flw/virtual-account', req.body && req.body.userId).catch(() => {});
   const { userId, email, name, currency, bvn, confirmSwitch } = req.body;
   const flwSecret = process.env.FLW_SECRET_KEY;
   if (!flwSecret || !userId) return res.json({ success: false, message: 'Missing fields' });
@@ -9838,6 +9853,7 @@ app.get('/api/wallet/flw/card-callback', async (req, res) => {
 // Squad card/bank payment init (NGN or USD)
 // ── Squad Virtual Account ─────────────────────────────────────────────────────
 app.post('/api/wallet/squad/virtual-account', async (req, res) => {
+    walletAuthAudit(req, '/api/wallet/squad/virtual-account', req.body && req.body.userId).catch(() => {});
     const { userId, firstName, middleName, lastName, bvn, gender, dob, address } = req.body;
     if (!userId || !firstName || !lastName || !bvn || !dob) {
         return res.status(400).json({ success: false, message: 'Missing required fields: firstName, lastName, bvn, dob.' });
@@ -9972,6 +9988,7 @@ app.post('/api/wallet/squad/virtual-account', async (req, res) => {
 });
 
 app.post('/api/wallet/squad/init-payment', async (req, res) => {
+    walletAuthAudit(req, '/api/wallet/squad/init-payment', req.body && req.body.userId).catch(() => {});
     const { userId, amount, currency, email, name } = req.body;
     if (!userId || !amount) return res.json({ success: false, message: 'Missing fields.' });
     try {
@@ -10775,6 +10792,7 @@ app.post('/api/wallet/squad/webhook', express.raw({ type: 'application/json' }),
 
 // Flutterwave USSD payment
 app.post('/api/wallet/flw/ussd', async (req, res) => {
+    walletAuthAudit(req, '/api/wallet/flw/ussd', req.body && req.body.userId).catch(() => {});
     const { userId, amount, currency, phone, account_bank } = req.body;
     if (!userId || !amount) return res.json({ success: false, message: 'Missing fields.' });
     if (!account_bank) return res.json({ success: false, message: 'Please select a bank.' });
@@ -12599,6 +12617,7 @@ app.post('/api/wallet/pin/toggle', async (req, res) => {
 
 // Wallet money request
 app.post('/api/wallet/request', async (req, res) => {
+    walletAuthAudit(req, '/api/wallet/request', req.body && req.body.fromId).catch(() => {});
     const { fromId, toId, amount, currency, note } = req.body;
     if (!fromId || !toId || !amount) return res.json({ success: false, message: 'Missing fields.' });
     try {
