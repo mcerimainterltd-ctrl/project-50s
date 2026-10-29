@@ -7456,6 +7456,23 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Mid-call ICE-restart renegotiation relay (additive; forwards only).
+    socket.on('call-renegotiate-offer', ({ recipientId, offer, callId }) => {
+        const senderId = socketToUserMap.get(socket.id);
+        if (!senderId || !recipientId || !offer) return;
+        if (webCallSockets?.has(recipientId)) return;
+        const sid = findSocketId(recipientId);
+        if (sid) io.to(sid).emit('call-renegotiate-offer', { offer, callId, senderId });
+    });
+
+    socket.on('call-renegotiate-answer', ({ recipientId, answer, callId }) => {
+        const senderId = socketToUserMap.get(socket.id);
+        if (!senderId || !recipientId || !answer) return;
+        if (webCallSockets?.has(recipientId)) return;
+        const sid = findSocketId(recipientId);
+        if (sid) io.to(sid).emit('call-renegotiate-answer', { answer, callId, senderId });
+    });
+
     socket.on('stream-ready', ({ recipientId, streamType }) => {
         const sid = findSocketId(recipientId);
         if (sid) io.to(sid).emit('stream-ready', { senderId: socketToUserMap.get(socket.id), streamType });
