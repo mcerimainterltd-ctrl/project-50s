@@ -9763,6 +9763,16 @@ app.post('/api/wallet/flw/init-payment', async (req, res) => {
 
     const value = Number(amount);
     const paymentCurrency = String(currency || 'NGN').trim().toUpperCase();
+    // XAMEPAY_CURRENCY_GUARD_V1: payment currency must equal the wallet currency
+    try {
+        const _gw = await Wallet.findOne({ xameId: userId }).select('currency').lean();
+        const _gc = String((_gw && _gw.currency) || process.env.WALLET_DEFAULT_CURRENCY || 'NGN').trim().toUpperCase();
+        if (paymentCurrency !== _gc) {
+            return res.status(400).json({ success: false, code: 'PAYMENT_CURRENCY_MISMATCH', message: 'Payments must be made in your wallet currency (' + _gc + ').' });
+        }
+    } catch (_) {
+        return res.status(503).json({ success: false, message: 'Wallet currency could not be checked.' });
+    }
     if (!Number.isFinite(value) || value <= 0 ||
         !/^[A-Z]{3}$/.test(paymentCurrency)) {
         return res.status(400).json({ success: false, message: 'Invalid amount or currency.' });
@@ -10008,6 +10018,16 @@ app.post('/api/wallet/squad/init-payment', async (req, res) => {
     walletAuthAudit(req, '/api/wallet/squad/init-payment', req.body && req.body.userId).catch(() => {});
     const { userId, amount, currency, email, name } = req.body;
     if (!userId || !amount) return res.json({ success: false, message: 'Missing fields.' });
+    // XAMEPAY_CURRENCY_GUARD_V1: payment currency must equal the wallet currency
+    try {
+        const _gw = await Wallet.findOne({ xameId: userId }).select('currency').lean();
+        const _gc = String((_gw && _gw.currency) || process.env.WALLET_DEFAULT_CURRENCY || 'NGN').trim().toUpperCase();
+        if (String(currency || "NGN").trim().toUpperCase() !== _gc) {
+            return res.status(400).json({ success: false, code: 'PAYMENT_CURRENCY_MISMATCH', message: 'Payments must be made in your wallet currency (' + _gc + ').' });
+        }
+    } catch (_) {
+        return res.status(503).json({ success: false, message: 'Wallet currency could not be checked.' });
+    }
     try {
         const txRef = 'xamepay-sqd-' + userId + '-' + Date.now();
         const baseUrl = process.env.SQUAD_BASE_URL || 'https://sandbox-api-d.squadco.com';
