@@ -11362,6 +11362,8 @@ app.get('/api/vtu/operators/:countryCode', async (req, res) => {
 
 // Buy airtime
 app.post('/api/vtu/airtime', async (req, res) => {
+  // XAMEPAY_VTU_AIRTIME_RETIRED_V1: prototype route had no session check and no wallet debit; it spent the provider balance directly
+  return res.status(410).json({ success: false, message: 'This endpoint has been retired. Use the wallet airtime flow.' });
   const { phone, countryCode, amount, operatorId, userId } = req.body;
   if (!phone || !amount || !userId) return res.json({ success: false, message: 'Missing fields' });
   try {
