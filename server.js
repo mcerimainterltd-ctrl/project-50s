@@ -12656,6 +12656,24 @@ app.post('/api/wallet/p2p', async (req, res) => {
 
         const senderName = `${senderUser.firstName || ''} ${senderUser.lastName || ''}`.trim() || senderId;
         const recipientName = `${recipientUser.firstName || ''} ${recipientUser.lastName || ''}`.trim() || recipientId;
+        // XAMEPAY_P2P_CURRENCY_GUARD_V1: a balance is denominated in its wallet
+        // currency; never move a number between wallets of different currencies.
+        {
+            const [sw, rw] = await Promise.all([
+                Wallet.findOne({ xameId: senderId }).lean(),
+                Wallet.findOne({ xameId: recipientId }).lean()
+            ]);
+            const dflt = String(process.env.WALLET_DEFAULT_CURRENCY || 'NGN').toUpperCase();
+            const sc = String((sw && sw.currency) || dflt).toUpperCase();
+            const rc = String((rw && rw.currency) || dflt).toUpperCase();
+            if (sc !== currency || rc !== currency) {
+                return res.status(400).json({
+                    success: false,
+                    code: 'CROSS_CURRENCY_NOT_ENABLED',
+                    message: 'Sending between wallets of different currencies is not enabled yet.'
+                });
+            }
+        }
         const session = await mongoose.startSession();
         let duplicate = false;
 
