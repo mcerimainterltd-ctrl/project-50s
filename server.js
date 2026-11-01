@@ -12669,6 +12669,51 @@ app.post('/api/wallet/region', async (req, res) => {
     }
 });
 
+// XAMEPAY_INTL_QUOTE_V1: read-only lookup of the network and accepted amounts for a phone number.
+app.get('/api/wallet/intl/quote', async (req, res) => {
+    const userId = String(req.query.userId || '').trim();
+    const country = String(req.query.country || '').trim().toUpperCase();
+    const phone = String(req.query.phone || '').replace(/[^\d+]/g, '');
+    if (!userId || !/^[A-Z]{2}$/.test(country) || phone.replace(/\D/g, '').length < 6) {
+        return res.status(400).json({ success: false, message: 'A valid number and country are required.' });
+    }
+    try {
+        if (!(await requireWalletSessionOwner(req, res, userId))) return;
+        const w = await Wallet.findOne({ xameId: userId }).select('currency').lean();
+        const dflt = String(process.env.WALLET_DEFAULT_CURRENCY || 'NGN').toUpperCase();
+        const currency = String((w && w.currency) || dflt).toUpperCase();
+        const d = await reloadlyRequest('GET', '/operators/auto-detect/phone/' +
+            encodeURIComponent(phone.replace(/^\+/, '')) + '/countries/' + country);
+        if (!d.ok || !d.json || !d.json.operatorId) {
+            return res.json({ success: false, code: 'OPERATOR_NOT_DETECTED',
+                message: 'Could not detect the network for this number.' });
+        }
+        const op = d.json;
+        const dest = String(op.destinationCurrencyCode || '').toUpperCase();
+        let reason = '';
+        if (String(op.status || 'ACTIVE').toUpperCase() !== 'ACTIVE' || op.data || op.bundle || op.pin) {
+            reason = 'This network cannot be topped up with airtime here.';
+        } else if (!op.supportsLocalAmounts || dest !== currency) {
+            reason = 'Needs a wallet in ' + (dest || 'the destination currency') + '.';
+        }
+        const fixed = String(op.denominationType || '').toUpperCase() === 'FIXED';
+        return res.json({
+            success: true,
+            supported: !reason,
+            reason,
+            operatorName: String(op.name || ''),
+            currency: dest,
+            fixed,
+            amounts: fixed ? (op.localFixedAmounts || []).map(Number) : [],
+            min: fixed ? 0 : (Number(op.localMinAmount) || 0),
+            max: fixed ? 0 : (Number(op.localMaxAmount) || 0)
+        });
+    } catch (err) {
+        console.error('Intl quote failed:', err.message);
+        return res.status(503).json({ success: false, message: 'Network lookup unavailable. Try again shortly.' });
+    }
+});
+
 // Update the user's preferred display currency without relabelling wallet funds.
 app.post('/api/wallet/currency', async (req, res) => {
     const body = req.body || {};
