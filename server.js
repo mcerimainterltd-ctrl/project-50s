@@ -12707,10 +12707,194 @@ app.get('/api/wallet/convert/quote', async (req, res) => {
         return res.json({ success: true, needed: true, from, to, balance: bal,
             destPerSource: fx.destPerSource, marginPercent: margin, receive,
             rateSource: fx.source, quotedAt: fx.at,
+            token: fxSignQuote({ userId, from, to, country: region.code, balance: bal,
+                destPerSource: fx.destPerSource, marginPercent: margin, receive,
+                rateSource: fx.source }),
+            expiresInSeconds: 90,
             note: 'Indicative quote only. No conversion has been made.' });
     } catch (err) {
         console.error('Convert quote failed:', err.message);
         return res.status(503).json({ success: false, message: 'Exchange rate unavailable. Try again shortly.' });
+    }
+});
+
+// XAMEPAY_CONVERT_CONFIRM_V1: whole-wallet currency conversion, off until three settings are present:
+// XAMEPAY_CONVERSION_ENABLED=true, FX_MARGIN_PERCENT (set explicitly, 0 allowed), XAMEPAY_QUOTE_SECRET (24+ chars).
+const walletConversionLedgerSchema = new mongoose.Schema({
+    userId: { type: String, required: true },
+    reference: { type: String, required: true },
+    fromCurrency: { type: String, required: true },
+    toCurrency: { type: String, required: true },
+    fromCountry: { type: String, default: '' },
+    toCountry: { type: String, required: true },
+    amountFrom: { type: Number, required: true },
+    amountTo: { type: Number, required: true },
+    destPerSource: { type: Number, required: true },
+    marginPercent: { type: Number, required: true },
+    rateSource: { type: String, default: '' },
+    createdAt: { type: Date, default: Date.now }
+}, { versionKey: false });
+walletConversionLedgerSchema.index({ userId: 1, reference: 1 }, { unique: true, name: 'wallet_conversion_user_reference_unique' });
+const WalletConversionLedger = mongoose.model('WalletConversionLedger', walletConversionLedgerSchema);
+
+function fxSignQuote(payload) {
+    const secret = process.env.XAMEPAY_QUOTE_SECRET || '';
+    if (secret.length < 24) return '';
+    const c = require('crypto');
+    const body = Buffer.from(JSON.stringify({ ...payload, exp: Date.now() + 90 * 1000,
+        n: c.randomBytes(8).toString('hex') })).toString('base64url');
+    return body + '.' + c.createHmac('sha256', secret).update(body).digest('base64url');
+}
+
+function fxVerifyQuote(token) {
+    const secret = process.env.XAMEPAY_QUOTE_SECRET || '';
+    if (secret.length < 24 || typeof token !== 'string') return null;
+    const c = require('crypto');
+    const parts = token.split('.');
+    if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+    const expect = c.createHmac('sha256', secret).update(parts[0]).digest('base64url');
+    const a = Buffer.from(parts[1]); const b = Buffer.from(expect);
+    if (a.length !== b.length || !c.timingSafeEqual(a, b)) return null;
+    let p;
+    try { p = JSON.parse(Buffer.from(parts[0], 'base64url').toString()); } catch (_) { return null; }
+    if (!p || !Number.isFinite(p.exp) || p.exp < Date.now() || !p.n) return null;
+    return p;
+}
+
+async function convertCheckPin(w, pin) {
+    const bcrypt = require('bcryptjs');
+    if (!w.transactionPin || !w.pinEnabled) {
+        return { ok: false, status: 400, code: 'PIN_REQUIRED', message: 'Set and enable a transaction PIN to convert your balance.' };
+    }
+    if (w.pinLockedUntil && w.pinLockedUntil > new Date()) {
+        return { ok: false, status: 423, code: 'PIN_LOCKED', message: 'PIN locked. Try again in 30 minutes.' };
+    }
+    if (typeof pin !== 'string' || !pin) {
+        return { ok: false, status: 400, code: 'PIN_REQUIRED', message: 'Enter your transaction PIN.' };
+    }
+    if (await bcrypt.compare(pin, w.transactionPin)) {
+        await Wallet.updateOne({ xameId: w.xameId }, { $set: { pinAttempts: 0, pinLockedUntil: null } });
+        return { ok: true };
+    }
+    const upd = await Wallet.findOneAndUpdate({ xameId: w.xameId }, { $inc: { pinAttempts: 1 } }, { new: true });
+    if (upd && upd.pinAttempts >= 5) {
+        await Wallet.updateOne({ xameId: w.xameId },
+            { $set: { pinLockedUntil: new Date(Date.now() + 30 * 60 * 1000), pinAttempts: 0 } });
+        return { ok: false, status: 423, code: 'PIN_LOCKED', message: 'Too many attempts. PIN locked for 30 minutes.' };
+    }
+    return { ok: false, status: 401, code: 'PIN_INCORRECT',
+        message: 'Incorrect PIN. ' + (5 - (upd ? upd.pinAttempts : 0)) + ' attempts remaining.' };
+}
+
+app.post('/api/wallet/convert/confirm', async (req, res) => {
+    const body = req.body || {};
+    const userId = String(body.userId || '').trim();
+    const fail = (status, code, message) => res.status(status).json({ success: false, code, message });
+    if (process.env.XAMEPAY_CONVERSION_ENABLED !== 'true') {
+        return fail(403, 'CONVERSION_DISABLED', 'Currency conversion is not enabled yet.');
+    }
+    if (process.env.FX_MARGIN_PERCENT === undefined || process.env.FX_MARGIN_PERCENT === '' ||
+        (process.env.XAMEPAY_QUOTE_SECRET || '').length < 24) {
+        return fail(503, 'CONVERSION_NOT_CONFIGURED', 'Currency conversion is not configured.');
+    }
+    try {
+        if (!userId || !(await requireWalletSessionOwner(req, res, userId))) return;
+        const q = fxVerifyQuote(body.token);
+        if (!q || String(q.userId) !== userId) {
+            return fail(400, 'QUOTE_INVALID', 'This quote has expired. Please request a new one.');
+        }
+        const region = require('./xamepay-regions').regionFor(q.country);
+        if (!region || !region.enabled || region.currency !== q.to || q.from === q.to ||
+            !(Number(q.balance) >= 0.01) || !(Number(q.receive) > 0) || !(Number(q.destPerSource) > 0)) {
+            return fail(400, 'QUOTE_INVALID', 'This quote cannot be used. Please request a new one.');
+        }
+
+        const prior = await WalletConversionLedger.findOne({ userId, reference: q.n }).lean();
+        if (prior) {
+            return res.json({ success: true, duplicate: true, currency: prior.toCurrency,
+                balance: prior.amountTo, homeCountry: prior.toCountry });
+        }
+
+        const [bills, transfers, holds] = await Promise.all([
+            WalletBillLedger.countDocuments({ userId, status: { $in: ['reserved', 'submitted', 'pending', 'unknown'] } }),
+            WalletTransferLedger.countDocuments({ userId, status: { $in: ['reserved', 'submitted', 'unknown'] } }),
+            WalletCreditHold.countDocuments({ userId, status: 'held' })
+        ]);
+        if (bills || transfers || holds) {
+            return fail(409, 'WALLET_ACTIVITY_PENDING', 'You have a pending transaction. Try again once it has settled.');
+        }
+
+        const since = new Date(Date.now() - 24 * 3600 * 1000);
+        const dailyLimit = Math.max(1, Number(process.env.XAMEPAY_CONVERT_DAILY_LIMIT || 2));
+        const cooldownMin = Math.max(0, Number(process.env.XAMEPAY_CONVERT_COOLDOWN_MIN || 10));
+        const recent = await WalletConversionLedger.find({ userId, createdAt: { $gte: since } })
+            .sort({ createdAt: -1 }).lean();
+        if (recent.length >= dailyLimit) {
+            return fail(429, 'CONVERSION_LIMIT', 'Daily conversion limit reached. Try again tomorrow.');
+        }
+        if (recent[0] && Date.now() - new Date(recent[0].createdAt).getTime() < cooldownMin * 60 * 1000) {
+            return fail(429, 'CONVERSION_COOLDOWN', 'Please wait a few minutes before converting again.');
+        }
+
+        const w = await Wallet.findOne({ xameId: userId }).lean();
+        if (!w) return fail(404, 'WALLET_NOT_FOUND', 'Wallet not found.');
+        const pin = await convertCheckPin(w, body.pin);
+        if (!pin.ok) return fail(pin.status, pin.code, pin.message);
+
+        const session = await mongoose.startSession();
+        let out = null;
+        try {
+            await session.withTransaction(async () => {
+                const now = new Date();
+                const dupe = await WalletConversionLedger.findOne({ userId, reference: q.n }).session(session);
+                if (dupe) { out = { duplicate: true, ledger: dupe }; return; }
+
+                await Wallet.updateOne(
+                    { xameId: userId, currency: q.from },
+                    { $set: { 'transactions.$[e].currency': q.from } },
+                    { arrayFilters: [{ $or: [{ 'e.currency': { $exists: false } }, { 'e.currency': '' }] }], session }
+                );
+                const entry = {
+                    id: 'conv-' + q.n,
+                    label: 'Converted ' + q.from + ' ' + Number(q.balance).toFixed(2) + ' to ' + q.to + ' ' +
+                        Number(q.receive).toFixed(2) + ' (1 ' + q.from + ' = ' + Number(q.destPerSource).toPrecision(6) + ' ' + q.to + ')',
+                    icon: '💱', amount: Number(q.receive), principal: Number(q.balance), fee: 0,
+                    type: 'credit', status: 'Completed', ref: 'conv-' + q.n, currency: q.to, ts: now
+                };
+                const upd = await Wallet.findOneAndUpdate(
+                    { xameId: userId, currency: q.from, balance: q.balance },
+                    { $set: { currency: q.to, homeCountry: region.code, balance: Number(q.receive), updatedAt: now },
+                      $push: { transactions: { $each: [entry], $position: 0, $slice: 100 } } },
+                    { new: true, session }
+                );
+                if (!upd) { const e = new Error('Balance changed'); e.code = 'BALANCE_CHANGED'; throw e; }
+                await WalletConversionLedger.create([{
+                    userId, reference: q.n, fromCurrency: q.from, toCurrency: q.to,
+                    fromCountry: String(w.homeCountry || ''), toCountry: region.code,
+                    amountFrom: Number(q.balance), amountTo: Number(q.receive),
+                    destPerSource: Number(q.destPerSource), marginPercent: Number(q.marginPercent),
+                    rateSource: String(q.rateSource || '')
+                }], { session });
+                out = { duplicate: false, wallet: upd };
+            });
+        } catch (err) {
+            if (err && err.code === 'BALANCE_CHANGED') {
+                return fail(409, 'BALANCE_CHANGED', 'Your balance changed. Please request a new quote.');
+            }
+            if (err && err.code === 11000) {
+                return res.json({ success: true, duplicate: true, currency: q.to, balance: Number(q.receive), homeCountry: region.code });
+            }
+            throw err;
+        } finally {
+            await session.endSession();
+        }
+        console.log('[XamePay conversion]', userId, q.from, '->', q.to, q.balance, '->', q.receive);
+        return res.json({ success: true, duplicate: Boolean(out && out.duplicate), converted: true,
+            from: q.from, to: q.to, amountFrom: Number(q.balance), balance: Number(q.receive),
+            currency: q.to, homeCountry: region.code });
+    } catch (err) {
+        console.error('Conversion failed:', err.message);
+        return fail(500, 'CONVERSION_FAILED', 'Could not complete the conversion. Your balance was not changed.');
     }
 });
 
