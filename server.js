@@ -489,6 +489,7 @@ const walletSchema = new mongoose.Schema({
         status:    { type: String, default: 'Completed' },
         ref:       { type: String },
         flwRef:    { type: String, default: '' },
+        currency:  { type: String, default: '' }, // XAMEPAY_WALLET_REGION_V1: currency this entry was made in
         source:    { type: String, default: '' }, // e.g. 'client_payment' for tagged business revenue
         ts:        { type: Date, default: Date.now },
         senderName:              { type: String, default: '' },
@@ -12601,6 +12602,70 @@ app.get('/api/wallet/me', async (req, res) => {
         });
     } catch(err) {
         res.json({ success: false, message: err.message });
+    }
+});
+
+// XAMEPAY_WALLET_REGION_V1: change the wallet's home country (and currency when safe).
+// Never relabels a balance: a different currency is allowed only at an exactly zero balance.
+app.post('/api/wallet/region', async (req, res) => {
+    const body = req.body || {};
+    const userId = String(body.userId || '').trim();
+    const region = require('./xamepay-regions').regionFor(body.country);
+    if (!userId || !region || !region.enabled) {
+        return res.status(400).json({ success: false, code: 'COUNTRY_NOT_SUPPORTED',
+            message: 'XamePay is not open in that country yet.' });
+    }
+    try {
+        if (!(await requireWalletSessionOwner(req, res, userId))) return;
+        const wallet = await Wallet.findOne({ xameId: userId }).lean();
+        if (!wallet) return res.status(404).json({ success: false, message: 'Wallet not found.' });
+
+        const dflt = String(process.env.WALLET_DEFAULT_CURRENCY || 'NGN').toUpperCase();
+        const oldCur = String(wallet.currency || dflt).toUpperCase();
+        if (oldCur === region.currency && wallet.homeCountry === region.code) {
+            return res.json({ success: true, changed: false, currency: oldCur, homeCountry: region.code });
+        }
+
+        const [bills, transfers, holds] = await Promise.all([
+            WalletBillLedger.countDocuments({ userId, status: { $in: ['reserved', 'submitted', 'pending', 'unknown'] } }),
+            WalletTransferLedger.countDocuments({ userId, status: { $in: ['reserved', 'submitted', 'unknown'] } }),
+            WalletCreditHold.countDocuments({ userId, status: 'held' })
+        ]);
+        if (bills || transfers || holds) {
+            return res.status(409).json({ success: false, code: 'WALLET_ACTIVITY_PENDING',
+                message: 'You have a pending transaction. Try again once it has settled.' });
+        }
+
+        const sameCurrency = oldCur === region.currency;
+        const bal = Number(wallet.balance || 0);
+        if (!sameCurrency && Math.abs(bal) >= 0.005) {
+            return res.status(409).json({ success: false, code: 'CONVERSION_REQUIRED',
+                message: 'Your wallet holds a balance. Switching currency needs a conversion, which is not available yet.' });
+        }
+
+        // Stamp existing history with the currency it was made in (idempotent).
+        await Wallet.updateOne(
+            { xameId: userId },
+            { $set: { 'transactions.$[e].currency': oldCur } },
+            { arrayFilters: [{ $or: [{ 'e.currency': { $exists: false } }, { 'e.currency': '' }] }] }
+        );
+
+        const updated = await Wallet.findOneAndUpdate(
+            sameCurrency ? { xameId: userId }
+                         : { xameId: userId, balance: { $gt: -0.005, $lt: 0.005 } },
+            { $set: { currency: region.currency, homeCountry: region.code, updatedAt: new Date() } },
+            { new: true }
+        );
+        if (!updated) {
+            return res.status(409).json({ success: false, code: 'CONVERSION_REQUIRED',
+                message: 'Your balance changed. Please try again.' });
+        }
+        console.log('[XamePay wallet region]', userId, oldCur, '->', region.currency, region.code);
+        return res.json({ success: true, changed: true, currency: updated.currency,
+            homeCountry: updated.homeCountry, balance: updated.balance });
+    } catch (err) {
+        console.error('Wallet region switch failed:', err.message);
+        return res.status(500).json({ success: false, message: 'Could not change the wallet region.' });
     }
 });
 
