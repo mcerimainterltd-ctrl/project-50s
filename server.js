@@ -12605,6 +12605,76 @@ app.get('/api/wallet/me', async (req, res) => {
     }
 });
 
+// XAMEPAY_FX_QUOTE_V1: server-side exchange rates and conversion quotes (read-only; no money moves).
+// Source: Flutterwave v3 transfer rates. Flutterwave documents these as transfer estimates that
+// refresh a few times a day, not trading rates, so a margin is required before any real conversion.
+// Semantics (per their docs): rate = how much of the source currency buys 1 unit of the destination.
+let _fxCache = {};
+async function fxRate(from, to) {
+    if (from === to) return { rate: 1, source: 'identity', at: new Date().toISOString() };
+    const key = from + '>' + to;
+    const hit = _fxCache[key];
+    if (hit && Date.now() - hit.at < 60 * 1000) return hit.val;
+    const secret = process.env.FLW_SECRET_KEY || process.env.FLW_SECRET || FLW_SECRET;
+    if (!secret) throw new Error('FX provider not configured');
+    const url = 'https://api.flutterwave.com/v3/transfers/rates?amount=1&destination_currency=' +
+        encodeURIComponent(to) + '&source_currency=' + encodeURIComponent(from);
+    const r = await fetch(url, { headers: { Authorization: 'Bearer ' + secret }, signal: AbortSignal.timeout(12000) });
+    const j = await r.json().catch(() => null);
+    const rate = j && j.status === 'success' && j.data ? Number(j.data.rate) : NaN;
+    if (!r.ok || !Number.isFinite(rate) || rate <= 0) throw new Error('FX rate unavailable');
+    const val = { rate, source: 'flutterwave_transfer_rates', at: new Date().toISOString() };
+    _fxCache[key] = { at: Date.now(), val };
+    return val;
+}
+
+// Public, no user data: lets you compare provider rates with the app display.
+app.get('/api/xamepay/fx', async (req, res) => {
+    const from = String(req.query.from || '').trim().toUpperCase();
+    const to = String(req.query.to || '').trim().toUpperCase();
+    const known = new Set(Object.values(require('./xamepay-regions').REGIONS).map(r => r.currency));
+    if (!known.has(from) || !known.has(to)) {
+        return res.status(400).json({ success: false, message: 'Unsupported currency pair.' });
+    }
+    try {
+        const fx = await fxRate(from, to);
+        return res.json({ success: true, from, to, ratePerUnit: fx.rate,
+            meaning: from + ' needed for 1 ' + to, source: fx.source, quotedAt: fx.at, indicative: true });
+    } catch (err) {
+        console.error('FX rate failed:', err.message);
+        return res.status(503).json({ success: false, message: 'Exchange rate unavailable. Try again shortly.' });
+    }
+});
+
+app.get('/api/wallet/convert/quote', async (req, res) => {
+    const userId = String(req.query.userId || '').trim();
+    const region = require('./xamepay-regions').regionFor(req.query.country);
+    if (!userId || !region || !region.enabled) {
+        return res.status(400).json({ success: false, code: 'COUNTRY_NOT_SUPPORTED',
+            message: 'XamePay is not open in that country yet.' });
+    }
+    try {
+        if (!(await requireWalletSessionOwner(req, res, userId))) return;
+        const w = await Wallet.findOne({ xameId: userId }).lean();
+        if (!w) return res.status(404).json({ success: false, message: 'Wallet not found.' });
+        const dflt = String(process.env.WALLET_DEFAULT_CURRENCY || 'NGN').toUpperCase();
+        const from = String(w.currency || dflt).toUpperCase();
+        const to = region.currency;
+        const bal = Number(w.balance || 0);
+        if (from === to) return res.json({ success: true, needed: false, from, to });
+        const fx = await fxRate(from, to);
+        const margin = Math.max(0, Math.min(10, Number(process.env.FX_MARGIN_PERCENT || 0)));
+        const receive = Math.floor((bal / fx.rate) * (1 - margin / 100) * 100) / 100;
+        return res.json({ success: true, needed: true, from, to, balance: bal,
+            ratePerUnit: fx.rate, marginPercent: margin, receive,
+            rateSource: fx.source, quotedAt: fx.at,
+            note: 'Indicative quote only. No conversion has been made.' });
+    } catch (err) {
+        console.error('Convert quote failed:', err.message);
+        return res.status(503).json({ success: false, message: 'Exchange rate unavailable. Try again shortly.' });
+    }
+});
+
 // XAMEPAY_WALLET_REGION_V1: change the wallet's home country (and currency when safe).
 // Never relabels a balance: a different currency is allowed only at an exactly zero balance.
 app.post('/api/wallet/region', async (req, res) => {
