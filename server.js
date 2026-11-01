@@ -1043,6 +1043,11 @@ async function walletBillCheckProvider(ledger) {
   // WALLET_BILL_HISTORY_STATUS_GUARD_V3
   // Never query or settle a reservation that has not been submitted.
   if (!ledger || ledger.status === 'reserved') return ledger;
+  // XAMEPAY_RELOADLY_INTL_V1: Reloadly purchases settle via Reloadly's own status lookup.
+  if (ledger.provider === 'reloadly') {
+    return ['succeeded', 'refunded'].includes(ledger.status)
+      ? ledger : await reloadlyCheckStatus(ledger);
+  }
 
   const secret = process.env.FLW_SECRET_KEY ||
     process.env.FLW_SECRET || FLW_SECRET;
@@ -1201,11 +1206,283 @@ async function walletBillCheckProvider(ledger) {
   }).lean();
 }
 
+// XAMEPAY_RELOADLY_INTL_V1
+// International airtime via Reloadly. v1: local-amount connections only
+// (wallet currency == destination currency), so no FX is involved.
+// Same rule as the Flutterwave flow: never refund on an unconfirmed result.
+let _rlTokenCache = { token: null, at: 0 };
+async function reloadlyToken(force) {
+  if (!force && _rlTokenCache.token && Date.now() - _rlTokenCache.at < 30 * 60 * 1000) {
+    return _rlTokenCache.token;
+  }
+  _rlTokenCache = { token: await getReloadlyToken(), at: Date.now() };
+  return _rlTokenCache.token;
+}
+
+async function reloadlyRequest(method, path, body) {
+  const base = process.env.RELOADLY_MODE === 'live'
+    ? 'https://topups.reloadly.com'
+    : 'https://topups-sandbox.reloadly.com';
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const token = await reloadlyToken(attempt > 0);
+    const r = await fetch(base + path, {
+      method,
+      headers: {
+        Authorization: 'Bearer ' + token,
+        Accept: 'application/com.reloadly.topups-v1+json',
+        'Content-Type': 'application/json'
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(20000)
+    });
+    if (r.status === 401 && attempt === 0) continue;
+    const raw = await r.text();
+    let json = null;
+    try { json = JSON.parse(raw); } catch (_) {}
+    return { ok: r.ok, status: r.status, json };
+  }
+  return { ok: false, status: 401, json: null };
+}
+
+async function reloadlyCheckStatus(ledger) {
+  if (!ledger || ledger.status === 'reserved') return ledger;
+  // XAMEPAY_RELOADLY_INTL_V1: Reloadly purchases settle via Reloadly's own status lookup.
+  if (ledger.provider === 'reloadly') {
+    return ['succeeded', 'refunded'].includes(ledger.status)
+      ? ledger : await reloadlyCheckStatus(ledger);
+  }
+  const txId = String(ledger.providerReference || '').trim();
+  if (!/^\d+$/.test(txId)) return ledger;
+  const reload = () => WalletBillLedger.findOne({
+    userId: ledger.userId, reference: ledger.reference
+  }).lean();
+  let res;
+  try {
+    res = await reloadlyRequest('GET', '/topups/' + txId + '/status');
+  } catch (_) {
+    return ledger;
+  }
+  const j = res.json || {};
+  const tx = j.transaction || j;
+  const st = String(j.status || tx.status || '').toUpperCase();
+  const ident = tx.customIdentifier;
+  if (!res.ok || (ident && String(ident) !== String(ledger.reference))) {
+    await transitionWalletBill(ledger.userId, ledger.reference, 'pending',
+      { providerChecked: true, providerStatus: 'status_lookup_incomplete' });
+    return reload();
+  }
+  if (st === 'SUCCESSFUL') {
+    await transitionWalletBill(ledger.userId, ledger.reference, 'succeeded', {
+      confirmedSuccess: true, providerChecked: true,
+      providerReference: txId, providerStatus: 'successful'
+    });
+  } else if (st === 'REFUNDED' || st === 'FAILED') {
+    await transitionWalletBill(ledger.userId, ledger.reference, 'refunded', {
+      definitiveFailure: true, providerChecked: true,
+      providerReference: txId, providerStatus: st.toLowerCase(),
+      failureCode: String(j.code || st).toLowerCase().slice(0, 60)
+    });
+  } else {
+    await transitionWalletBill(ledger.userId, ledger.reference, 'pending', {
+      providerChecked: true,
+      providerStatus: st ? st.toLowerCase() : 'awaiting_status_check'
+    });
+  }
+  return reload();
+}
+
+async function processReloadlyAirtimeRequest(req, res, userId, country) {
+  const body = req.body || {};
+  const reference = String(body.reference || '').trim();
+  if (!/^[A-Za-z0-9_-]{12,128}$/.test(reference)) {
+    return res.status(400).json({ success: false, code: 'INVALID_REFERENCE',
+      message: 'A valid purchase reference is required.' });
+  }
+  const amount = Number(body.amount);
+  if (!Number.isFinite(amount) || amount < 1) {
+    return res.status(400).json({ success: false, message: 'Invalid amount.' });
+  }
+  const phone = String(body.phone || '').replace(/[^\d+]/g, '');
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length < 6 || digits.length > 16) {
+    return res.status(400).json({ success: false,
+      message: 'A valid phone number is required.' });
+  }
+
+  // A retried reference returns its existing status, never a second purchase.
+  try {
+    const existing = await WalletBillLedger.findOne({ userId, reference }).lean();
+    if (existing) {
+      if (existing.provider !== 'reloadly') {
+        return res.status(409).json({ success: false,
+          code: 'WALLET_BILL_IDEMPOTENCY_CONFLICT',
+          message: 'This reference belongs to a different purchase.' });
+      }
+      let led = existing;
+      if (['reserved', 'submitted', 'pending', 'unknown'].includes(led.status)) {
+        led = await reloadlyCheckStatus(led);
+      }
+      return res.status(200).json(walletBillClientResult(led));
+    }
+  } catch (_) {
+    return res.status(503).json({ success: false,
+      message: 'Purchase status could not be checked.' });
+  }
+
+  let wallet;
+  try {
+    wallet = await Wallet.findOne({ xameId: userId }).lean();
+  } catch (_) {
+    return res.status(503).json({ success: false,
+      message: 'Wallet could not be checked.' });
+  }
+  if (!wallet) {
+    return res.status(404).json({ success: false, message: 'Wallet not found.' });
+  }
+  const currency = String(wallet.currency || 'NGN').toUpperCase();
+
+  // Detect the network before any money moves.
+  let op;
+  try {
+    const d = await reloadlyRequest('GET', '/operators/auto-detect/phone/' +
+      encodeURIComponent(phone.replace(/^\+/, '')) + '/countries/' + country);
+    if (!d.ok || !d.json || !d.json.operatorId) {
+      return res.status(400).json({ success: false, code: 'OPERATOR_NOT_DETECTED',
+        message: 'Could not detect the network for this number. Check the number and country.' });
+    }
+    op = d.json;
+  } catch (_) {
+    return res.status(503).json({ success: false, code: 'PROVIDER_UNAVAILABLE',
+      message: 'The top-up provider is unavailable. Try again shortly.' });
+  }
+
+  if (String(op.status || 'ACTIVE').toUpperCase() !== 'ACTIVE' || op.data || op.bundle || op.pin) {
+    return res.status(400).json({ success: false, code: 'OPERATOR_UNSUPPORTED',
+      message: 'This number is on a network that cannot be topped up with airtime here.' });
+  }
+  const dest = String(op.destinationCurrencyCode || '').toUpperCase();
+  if (!op.supportsLocalAmounts || dest !== currency) {
+    return res.status(400).json({ success: false, code: 'INTL_CURRENCY_UNSUPPORTED',
+      message: 'International top-ups currently need a wallet in the destination currency.' });
+  }
+  if (String(op.denominationType || '').toUpperCase() === 'FIXED') {
+    const allowed = (op.localFixedAmounts || []).map(Number);
+    if (!allowed.some(a => Math.abs(a - amount) < 0.005)) {
+      return res.status(400).json({ success: false, code: 'AMOUNT_NOT_OFFERED',
+        message: 'Choose one of the amounts this network offers.', amounts: allowed });
+    }
+  } else {
+    const min = Number(op.localMinAmount) || 0;
+    const max = Number(op.localMaxAmount) || 0;
+    if ((min > 0 && amount < min) || (max > 0 && amount > max)) {
+      return res.status(400).json({ success: false, code: 'AMOUNT_OUT_OF_RANGE',
+        message: 'Amount must be between ' + min + ' and ' + max + '.' });
+    }
+  }
+
+  const fee = 0;
+  const totalDebit = Number(amount.toFixed(2));
+  let ledger;
+  let created = false;
+  try {
+    const reservation = await reserveWalletBill({
+      userId, reference, serviceType: 'airtime', provider: 'reloadly',
+      country, currency,
+      product: { operatorId: String(op.operatorId) },
+      customerFingerprint: walletBillHash(phone),
+      principal: amount, fee, totalDebit
+    });
+    ledger = reservation.ledger;
+    created = reservation.created;
+  } catch (error) {
+    const code = error && error.code;
+    const message = String(error && error.message || '');
+    if (code === 'WALLET_BILL_IDEMPOTENCY_CONFLICT') {
+      return res.status(409).json({ success: false, code,
+        message: 'This reference belongs to a different purchase.' });
+    }
+    if (/Insufficient|balance/i.test(message)) {
+      return res.status(402).json({ success: false,
+        message: 'Insufficient wallet balance.' });
+    }
+    console.error('[XamePay reloadly reserve]', error);
+    return res.status(500).json({ success: false,
+      message: 'Could not safely reserve this purchase.' });
+  }
+
+  if (!created) {
+    if (['reserved', 'submitted', 'pending', 'unknown'].includes(ledger.status)) {
+      ledger = await reloadlyCheckStatus(ledger);
+    }
+    return res.status(200).json(walletBillClientResult(ledger));
+  }
+
+  try {
+    ledger = await transitionWalletBill(userId, reference, 'submitted', {
+      providerReference: reference, providerStatus: 'submission_started'
+    });
+  } catch (error) {
+    console.error('[XamePay reloadly submit marker]', error);
+    return res.status(202).json({ success: false, pending: true, status: 'unknown',
+      reference, message: 'The purchase is reserved. Check its status before retrying.' });
+  }
+
+  let resp;
+  try {
+    resp = await reloadlyRequest('POST', '/topups', {
+      operatorId: Number(op.operatorId),
+      amount,
+      useLocalAmount: true,
+      customIdentifier: reference,
+      recipientPhone: { countryCode: country, number: phone }
+    });
+  } catch (_) {
+    await transitionWalletBill(userId, reference, 'unknown',
+      { providerStatus: 'submission_outcome_unknown' });
+    ledger = await WalletBillLedger.findOne({ userId, reference }).lean();
+    return res.status(202).json(walletBillClientResult(ledger));
+  }
+
+  const j = resp.json || {};
+  const txId = j.transactionId || (j.transaction && j.transaction.transactionId) || null;
+  if (txId) {
+    await transitionWalletBill(userId, reference, 'pending', {
+      providerReference: String(txId),
+      providerStatus: String(j.status || 'awaiting_status_check').toLowerCase()
+    });
+    ledger = await WalletBillLedger.findOne({ userId, reference }).lean();
+    ledger = await reloadlyCheckStatus(ledger);
+  } else {
+    console.error('[XamePay reloadly topup]', resp.status, JSON.stringify(j).slice(0, 300));
+    const st = String(j.status || '').toUpperCase();
+    if (st === 'FAILED' || st === 'REFUNDED') {
+      await transitionWalletBill(userId, reference, 'refunded', {
+        definitiveFailure: true, providerChecked: true,
+        providerStatus: st.toLowerCase(),
+        failureCode: String(j.code || j.errorCode || st).toLowerCase().slice(0, 60)
+      });
+    } else {
+      await transitionWalletBill(userId, reference, 'unknown',
+        { providerStatus: 'submission_http_' + resp.status });
+    }
+    ledger = await WalletBillLedger.findOne({ userId, reference }).lean();
+  }
+  return res.status(
+    ledger.status === 'succeeded' || ledger.status === 'refunded' ? 200 : 202
+  ).json(walletBillClientResult(ledger));
+}
+
 async function processWalletBillRequest(req, res, serviceType) {
   const body = req.body || {};
   const userId = String(body.userId || '').trim();
 
   if (!(await requireWalletSessionOwner(req, res, userId))) return;
+
+  // XAMEPAY_RELOADLY_INTL_V1: airtime outside Nigeria goes through Reloadly.
+  const intlCountry = String(body.countryCode || body.country || '').trim().toUpperCase();
+  if (serviceType === 'airtime' && /^[A-Z]{2}$/.test(intlCountry) && intlCountry !== 'NG') {
+    return processReloadlyAirtimeRequest(req, res, userId, intlCountry);
+  }
 
   const secret = process.env.FLW_SECRET_KEY ||
     process.env.FLW_SECRET || FLW_SECRET;
