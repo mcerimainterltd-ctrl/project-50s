@@ -12610,7 +12610,7 @@ app.get('/api/wallet/me', async (req, res) => {
 // refresh a few times a day, not trading rates, so a margin is required before any real conversion.
 // Semantics (per their docs): rate = how much of the source currency buys 1 unit of the destination.
 let _fxCache = {};
-async function fxRate(from, to) {
+async function fxRateRaw(from, to) {
     if (from === to) return { rate: 1, source: 'identity', at: new Date().toISOString() };
     const key = from + '>' + to;
     const hit = _fxCache[key];
@@ -12628,6 +12628,43 @@ async function fxRate(from, to) {
     return val;
 }
 
+// XAMEPAY_FX_ORIENTATION_V1: Flutterwave's documentation and its live answers disagree on rate
+// direction, so direction is verified against an independent reference rate. A rate that matches
+// neither direction is refused, never guessed.
+let _fxRefCache = {};
+async function fxReference(from, to) {
+    let hit = _fxRefCache[from];
+    if (!(hit && Date.now() - hit.at < 10 * 60 * 1000)) {
+        const r = await fetch('https://open.er-api.com/v6/latest/' + encodeURIComponent(from),
+            { signal: AbortSignal.timeout(12000) });
+        const j = await r.json().catch(() => null);
+        if (!r.ok || !j || j.result !== 'success' || !j.rates) throw new Error('FX reference unavailable');
+        hit = { at: Date.now(), rates: j.rates };
+        _fxRefCache[from] = hit;
+    }
+    const ref = Number(hit.rates[to]);
+    if (!Number.isFinite(ref) || ref <= 0) throw new Error('FX reference unavailable');
+    return ref;
+}
+
+async function fxRate(from, to) {
+    if (from === to) {
+        return { destPerSource: 1, source: 'identity', orientation: 'identity', reference: 1, at: new Date().toISOString() };
+    }
+    const raw = await fxRateRaw(from, to);
+    const ref = await fxReference(from, to);
+    const tol = 0.12;
+    let destPerSource, orientation;
+    if (Math.abs(raw.rate / ref - 1) <= tol) {
+        destPerSource = raw.rate; orientation = 'destination_per_source';
+    } else if (Math.abs((1 / raw.rate) / ref - 1) <= tol) {
+        destPerSource = 1 / raw.rate; orientation = 'source_per_destination';
+    } else {
+        throw new Error('FX rate failed plausibility check');
+    }
+    return { destPerSource, source: raw.source, orientation, reference: ref, at: raw.at };
+}
+
 // Public, no user data: lets you compare provider rates with the app display.
 app.get('/api/xamepay/fx', async (req, res) => {
     const from = String(req.query.from || '').trim().toUpperCase();
@@ -12638,8 +12675,10 @@ app.get('/api/xamepay/fx', async (req, res) => {
     }
     try {
         const fx = await fxRate(from, to);
-        return res.json({ success: true, from, to, ratePerUnit: fx.rate,
-            meaning: from + ' needed for 1 ' + to, source: fx.source, quotedAt: fx.at, indicative: true });
+        return res.json({ success: true, from, to, destPerSource: fx.destPerSource,
+            meaning: '1 ' + from + ' buys ' + fx.destPerSource + ' ' + to,
+            source: fx.source, orientation: fx.orientation, referenceRate: fx.reference,
+            quotedAt: fx.at, indicative: true });
     } catch (err) {
         console.error('FX rate failed:', err.message);
         return res.status(503).json({ success: false, message: 'Exchange rate unavailable. Try again shortly.' });
@@ -12664,9 +12703,9 @@ app.get('/api/wallet/convert/quote', async (req, res) => {
         if (from === to) return res.json({ success: true, needed: false, from, to });
         const fx = await fxRate(from, to);
         const margin = Math.max(0, Math.min(10, Number(process.env.FX_MARGIN_PERCENT || 0)));
-        const receive = Math.floor((bal / fx.rate) * (1 - margin / 100) * 100) / 100;
+        const receive = Math.floor(bal * fx.destPerSource * (1 - margin / 100) * 100) / 100;
         return res.json({ success: true, needed: true, from, to, balance: bal,
-            ratePerUnit: fx.rate, marginPercent: margin, receive,
+            destPerSource: fx.destPerSource, marginPercent: margin, receive,
             rateSource: fx.source, quotedAt: fx.at,
             note: 'Indicative quote only. No conversion has been made.' });
     } catch (err) {
