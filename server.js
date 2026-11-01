@@ -11891,6 +11891,25 @@ async function getWallet(xameId) {
 
 // Helper: add transaction and update balance
 
+// XAMEPAY_CREDIT_CURRENCY_GUARD_V1
+// Payments whose currency differs from the wallet's are held for review, never credited.
+const walletCreditHoldSchema = new mongoose.Schema({
+    provider: { type: String, required: true },
+    transactionId: { type: String, required: true },
+    userId: { type: String, required: true },
+    amount: { type: Number, required: true },
+    paymentCurrency: { type: String, required: true },
+    walletCurrency: { type: String, required: true },
+    description: { type: String, default: '' },
+    status: { type: String, enum: ['held', 'released', 'refunded'], default: 'held' },
+    createdAt: { type: Date, default: Date.now }
+}, { versionKey: false });
+walletCreditHoldSchema.index(
+    { provider: 1, transactionId: 1 },
+    { unique: true, name: 'wallet_credit_hold_unique' }
+);
+const WalletCreditHold = mongoose.model('WalletCreditHold', walletCreditHoldSchema);
+
 // Credit a provider payment once, atomically with its wallet-ledger record.
 // Call only after the provider transaction has been independently verified.
 async function creditWalletOnce(provider, transactionId, userId, amount, description, icon, currency = '', extra = {}) {
@@ -11934,6 +11953,33 @@ async function creditWalletOnce(provider, transactionId, userId, amount, descrip
         }
 
         return { credited: false, duplicate: true };
+    }
+
+    // XAMEPAY_CREDIT_CURRENCY_GUARD_V1: never add a number to a wallet of another currency.
+    {
+        const dflt = String(process.env.WALLET_DEFAULT_CURRENCY || 'NGN').toUpperCase();
+        const target = await Wallet.findOne({ xameId: normalizedUserId }).select('currency').lean();
+        const walletCur = String((target && target.currency) || dflt).toUpperCase();
+        const payCur = normalizedCurrency || dflt;
+        if (payCur !== walletCur) {
+            await WalletCreditHold.init();
+            try {
+                await WalletCreditHold.create({
+                    provider: normalizedProvider,
+                    transactionId: normalizedTransactionId,
+                    userId: normalizedUserId,
+                    amount: numericAmount,
+                    paymentCurrency: payCur,
+                    walletCurrency: walletCur,
+                    description: String(description || '')
+                });
+            } catch (holdErr) {
+                if (!(holdErr && holdErr.code === 11000)) throw holdErr;
+            }
+            console.error('[XamePay credit held: currency mismatch]', normalizedProvider,
+                normalizedTransactionId, payCur, 'into', walletCur);
+            return { credited: false, duplicate: false, held: true };
+        }
     }
 
     const session = await mongoose.startSession();
@@ -13064,6 +13110,15 @@ app.post('/api/wallet/fund/verify', async (req, res) => {
             '💳',
             expectedCurrency
         );
+
+        // XAMEPAY_CREDIT_CURRENCY_GUARD_V1
+        if (credited.held) {
+            return res.status(202).json({
+                success: false,
+                held: true,
+                message: 'This payment could not be applied to your wallet automatically. It has been held for review.'
+            });
+        }
 
         const wallet = credited.wallet || await Wallet.findOne({ xameId: userId }).lean();
 
