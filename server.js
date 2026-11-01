@@ -469,6 +469,7 @@ const walletSchema = new mongoose.Schema({
     currency:     { type: String, default: process.env.WALLET_DEFAULT_CURRENCY || 'NGN' },
     // Preferred display currency; never changes the denomination of balance.
     dispCurrency: { type: String, default: '' },
+    homeCountry:  { type: String, default: '' },
     virtualAccount: {
         accountNumber:    { type: String, default: '' },
         bankName:         { type: String, default: '' },
@@ -5079,6 +5080,16 @@ app.post('/api/register',
         if (!errs.isEmpty()) return res.status(400).json({ success: false, errors: errs.array() });
 
         const { firstName, lastName, dob, password } = req.body;
+        // XAMEPAY_HOME_COUNTRY_V1: optional home country; XamePay sends it, other clients may not.
+        let homeRegion = null;
+        const hc = req.body.homeCountry;
+        if (hc !== undefined && hc !== null && String(hc).trim() !== '') {
+            homeRegion = require('./xamepay-regions').regionFor(hc);
+            if (!homeRegion || !homeRegion.enabled) {
+                return res.status(400).json({ success: false, code: 'COUNTRY_NOT_SUPPORTED',
+                    message: 'XamePay is not open in that country yet.' });
+            }
+        }
         const phone = normalizeInternationalPhone(req.body.phone);
         if (req.body.phone && !phone) {
             return res.status(400).json({
@@ -5111,6 +5122,15 @@ app.post('/api/register',
                     message: 'Phone number must be in international format starting with +.'
                 });
                 userData.unverifiedPhone = unverified;
+            }
+            // XAMEPAY_HOME_COUNTRY_V1: create the wallet in the home currency before the
+            // account exists, so no later route can create it with the global default.
+            if (homeRegion) {
+                await Wallet.findOneAndUpdate(
+                    { xameId },
+                    { $setOnInsert: { xameId, currency: homeRegion.currency, homeCountry: homeRegion.code } },
+                    { upsert: true, setDefaultsOnInsert: true }
+                );
             }
             const user           = await new User(userData).save();
             const resp           = user.toObject(); delete resp.password;
@@ -12495,6 +12515,7 @@ app.get('/api/wallet/me', async (req, res) => {
             balance: wallet.balance,
             currency: wallet.currency,
             dispCurrency: wallet.dispCurrency || wallet.currency,
+            homeCountry: wallet.homeCountry || '',
             transactions: wallet.transactions,
             virtualAccount,
             pinEnabled: wallet.pinEnabled || false
