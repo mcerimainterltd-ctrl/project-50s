@@ -9738,6 +9738,32 @@ async function getMonnifyToken() {
 }
 
 // Create Monnify virtual account
+// XAMEPAY_VA_NGN_ONLY_V1: virtual bank accounts are Nigerian bank accounts; never offer one
+// to a wallet in another currency, since transfers into it would not be credited correctly.
+app.post(
+    ['/api/wallet/monnify/virtual-account', '/api/wallet/flw/virtual-account',
+     '/api/wallet/squad/virtual-account', '/api/wallet/psk/virtual-account'],
+    async (req, res, next) => {
+        try {
+            const uid = String((req.body && req.body.userId) || '').trim();
+            if (!uid) return next();
+            const w = await Wallet.findOne({ xameId: uid }).select('currency').lean();
+            const dflt = String(process.env.WALLET_DEFAULT_CURRENCY || 'NGN').toUpperCase();
+            const cur = String((w && w.currency) || dflt).toUpperCase();
+            if (cur !== 'NGN') {
+                return res.status(400).json({
+                    success: false,
+                    code: 'VIRTUAL_ACCOUNT_NGN_ONLY',
+                    message: 'Bank-transfer funding accounts are available for Naira wallets only.'
+                });
+            }
+            return next();
+        } catch (e) {
+            return res.status(503).json({ success: false, message: 'Wallet could not be checked.' });
+        }
+    }
+);
+
 app.post('/api/wallet/monnify/virtual-account', async (req, res) => {
     walletAuthAudit(req, '/api/wallet/monnify/virtual-account', req.body && req.body.userId).catch(() => {});
     const { userId, email, confirmSwitch, bvn } = req.body;
