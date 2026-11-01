@@ -5070,6 +5070,13 @@ function normalizeInternationalPhone(value) {
 // API — AUTH
 // ============================================================
 
+// XAMEPAY_REGIONS_ROUTE_V1: countries currently open for XamePay wallets (public, read-only).
+app.get('/api/xamepay/regions', (req, res) => {
+    const regions = require('./xamepay-regions').enabledRegions()
+        .map(r => ({ code: r.code, name: r.name, currency: r.currency }));
+    res.json({ success: true, regions });
+});
+
 app.post('/api/register',
     body('firstName').trim().escape().notEmpty(),
     body('lastName').trim().escape().notEmpty(),
