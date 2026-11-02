@@ -4527,7 +4527,6 @@ function xamepayAdminGate(req, res, next) {
     const given = Buffer.from(String(req.headers['x-admin-secret'] || ''));
     if (secret.length >= 16 && given.length === secret.length &&
         require('crypto').timingSafeEqual(given, secret)) return next();
-    if (typeof basicAuth === 'function') return basicAuth(req, res, next);
     return res.status(401).json({ success: false, message: 'Unauthorized.' });
 }
 app.use(['/api/admin/ai-assist', '/api/admin/delete-account', '/api/admin/delete-announcement', '/api/admin/delete-discovery-post', '/api/admin/flw-bills', '/api/admin/platform-revenue', '/api/admin/reset-password', '/api/admin/set-version', '/api/admin/suspend-account', '/api/admin/wallet-balance', '/api/admin/wallet-credit', '/api/admin/xametv/premium/categories', '/api/admin/xametv/premium/channels'], xamepayAdminGate);
