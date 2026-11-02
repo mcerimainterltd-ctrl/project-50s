@@ -4689,7 +4689,7 @@ app.delete('/api/admin/xametv/premium/channels/:channelId', async (req, res) => 
 });
 
 app.post('/api/admin/cleanup-stale-fcm-tokens', async (req, res) => {
-    if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
+    if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
         return res.status(401).json({ success: false, message: 'Unauthorized' });
 
     const { confirm } = req.body;
@@ -4735,7 +4735,7 @@ app.post('/api/admin/cleanup-stale-fcm-tokens', async (req, res) => {
 });
 
 app.post('/api/admin/cleanup-old-web-calls', async (req, res) => {
-    if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
+    if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
         return res.status(401).json({ success: false, message: 'Unauthorized' });
 
     const { userId, confirm } = req.body;
@@ -4767,7 +4767,7 @@ app.post('/api/admin/cleanup-old-web-calls', async (req, res) => {
 });
 
 app.post('/api/admin/cleanup-old-web-messages', async (req, res) => {
-    if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
+    if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
         return res.status(401).json({ success: false, message: 'Unauthorized' });
 
     const { userId, confirm } = req.body;
@@ -4808,7 +4808,7 @@ app.post('/api/admin/cleanup-old-web-messages', async (req, res) => {
 });
 
 app.post('/api/admin/fix-thumbnails', async (req, res) => {
-    if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
+    if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
         return res.status(401).json({ success: false, message: 'Unauthorized' });
     try {
         const posts = await DiscoveryPost.find({ thumbnailUrl: /so_0,f_jpg/ }).lean();
@@ -12500,7 +12500,7 @@ app.get('/api/wallet/transfer-status/:reference', async (req, res) => {
 
 // ── Temporary: inspect Monnify's own record for a reserved account ───────────
 app.get('/api/admin/monnify-debug/:accountRef', async (req, res) => {
-    if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
+    if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
         return res.status(401).json({ success: false, message: 'Unauthorized.' });
     try {
         const token = await getMonnifyToken();
@@ -12517,7 +12517,7 @@ app.get('/api/admin/monnify-debug/:accountRef', async (req, res) => {
 
 // ── Temporary: find which user owns a given virtual account number ──────────
 app.get('/api/admin/find-by-account/:accountNumber', async (req, res) => {
-    if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
+    if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
         return res.status(401).json({ success: false, message: 'Unauthorized.' });
     try {
         const w = await Wallet.findOne({ 'virtualAccount.accountNumber': req.params.accountNumber }).lean();
@@ -12537,7 +12537,7 @@ app.get('/api/admin/find-by-account/:accountNumber', async (req, res) => {
 
 // ── Temporary: find a post by title for debugging ────────────────────────────
 app.get('/api/admin/find-post/:title', async (req, res) => {
-    if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
+    if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
         return res.status(401).json({ success: false, message: 'Unauthorized.' });
     try {
         const posts = await DiscoveryPost.find({ title: new RegExp(req.params.title, 'i') }).lean();
@@ -15646,7 +15646,7 @@ app.get('/api/app/download', async (req, res) => {
 });
 
 app.get('/api/admin/users', async (req, res) => {
-    if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
+    if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
         return res.status(401).json({ success: false, message: 'Unauthorized.' });
     const { query = '', page = 1, limit = 20 } = req.query;
     try {
@@ -16793,7 +16793,7 @@ app.post('/api/admin/delete-announcement', async (req, res) => {
 // ── Cloudinary signed upload ─────────────────────────────────────────────────
 // ── Fix existing broken thumbnail URLs ───────────────────────────────────────
 app.post('/api/admin/fix-thumbnails', async (req, res) => {
-    if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
+    if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
         return res.status(401).json({ success: false, message: 'Unauthorized' });
     try {
         const posts = await DiscoveryPost.find({ thumbnailUrl: /so_0,f_jpg/ }).lean();
@@ -16949,7 +16949,7 @@ app.post('/api/admin/credit-wallet', async (req, res) => {
 
 // ── Fix Virtual Account Names ────────────────────────────────────────────────
 app.post('/api/admin/fix-virtual-account-names', async (req, res) => {
-    if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
+    if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
         return res.status(401).json({ success: false, message: 'Unauthorized.' });
     try {
         const users = await User.find({}).lean();
@@ -16969,7 +16969,7 @@ app.post('/api/admin/fix-virtual-account-names', async (req, res) => {
 
 // ── Delete single user virtual account (for testing) ───────────────────────
 app.post('/api/admin/delete-virtual-account-single', async (req, res) => {
-    if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
+    if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
         return res.status(401).json({ success: false, message: 'Unauthorized.' });
     const { userId } = req.body;
     if (!userId) return res.status(400).json({ success: false, message: 'userId required' });
@@ -16991,7 +16991,7 @@ app.post('/api/admin/delete-virtual-account-single', async (req, res) => {
 
 // ── Delete virtual accounts (force re-setup) ────────────────────────────────
 app.post('/api/admin/delete-virtual-accounts', async (req, res) => {
-    if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
+    if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
         return res.status(401).json({ success: false, message: 'Unauthorized.' });
     try {
         const result = await Wallet.updateMany(
@@ -17017,7 +17017,7 @@ app.post('/api/admin/delete-virtual-accounts', async (req, res) => {
 
 // ── Recreate virtual accounts with correct names ─────────────────────────────
 app.post('/api/admin/recreate-virtual-accounts', async (req, res) => {
-    if (req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
+    if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
         return res.status(401).json({ success: false, message: 'Unauthorized.' });
     const flwSecret = process.env.FLW_SECRET_KEY;
     if (!flwSecret) return res.json({ success: false, message: 'FLW_SECRET_KEY not set' });
