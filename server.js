@@ -13477,6 +13477,7 @@ app.post('/api/wallet/send-bank', async (req, res) => {
         if (FLW_SECRET) {
             const r = await fetch('https://api.flutterwave.com/v3/transfers', {
                 method: 'POST',
+                signal: AbortSignal.timeout(20000), // XAMEPAY_SENDBANK_TIMEOUT_V1
                 headers: { Authorization: `Bearer ${FLW_SECRET}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ account_bank, account_number, amount: requestedAmount, currency: currency || 'NGN', narration: `XamePay|${senderFullName}`, reference: txRef })
             });
