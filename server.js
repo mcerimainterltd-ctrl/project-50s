@@ -4520,6 +4520,17 @@ app.get('/api/xametv/premium/catalogue', async (req, res) => {
 
 // PUT is an upsert: stable IDs let administrators update entries without
 // changing their identity. DELETE operations below deactivate, not erase.
+// XAMEPAY_ADMIN_GATE_V1: admin routes that had no check of their own now need the admin secret
+// header, or your existing basic auth.
+function xamepayAdminGate(req, res, next) {
+    const secret = Buffer.from(String(process.env.ADMIN_SECRET || ''));
+    const given = Buffer.from(String(req.headers['x-admin-secret'] || ''));
+    if (secret.length >= 16 && given.length === secret.length &&
+        require('crypto').timingSafeEqual(given, secret)) return next();
+    if (typeof basicAuth === 'function') return basicAuth(req, res, next);
+    return res.status(401).json({ success: false, message: 'Unauthorized.' });
+}
+app.use(['/api/admin/ai-assist', '/api/admin/delete-account', '/api/admin/delete-announcement', '/api/admin/delete-discovery-post', '/api/admin/flw-bills', '/api/admin/platform-revenue', '/api/admin/reset-password', '/api/admin/set-version', '/api/admin/suspend-account', '/api/admin/wallet-balance', '/api/admin/wallet-credit', '/api/admin/xametv/premium/categories', '/api/admin/xametv/premium/channels'], xamepayAdminGate);
 app.put('/api/admin/xametv/premium/categories/:categoryId', async (req, res) => {
     if (!premiumTvAdminAuthorized(req, res)) return;
     const categoryId = req.params.categoryId;
