@@ -13359,6 +13359,17 @@ app.post('/api/wallet/send-bank', async (req, res) => {
     const senderFullName = senderUser ? `${senderUser.firstName} ${senderUser.lastName}`.trim() || userId : userId;
     const senderWallet = await Wallet.findOne({ xameId: userId }).lean();
     const senderVA = senderWallet?.virtualAccount || {};
+    // XAMEPAY_SENDBANK_CURRENCY_GUARD_V1: the payout currency must be the wallet's own currency;
+    // never debit a balance in one currency to pay out another.
+    {
+        const dfltCur = String(process.env.WALLET_DEFAULT_CURRENCY || 'NGN').toUpperCase();
+        const walletCur = String((senderWallet && senderWallet.currency) || dfltCur).toUpperCase();
+        const reqCur = String(currency || 'NGN').trim().toUpperCase();
+        if (reqCur !== walletCur) {
+            return res.status(400).json({ success: false, code: 'CURRENCY_MISMATCH',
+                message: 'The transfer currency must match your wallet currency.' });
+        }
+    }
     const senderVAName = senderVA.accountName || senderFullName;
     const senderBankName = senderVA.bankName || 'XamePay';
     const senderAccountNumber = senderVA.accountNumber || '';
