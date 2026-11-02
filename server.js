@@ -13369,6 +13369,12 @@ app.post('/api/wallet/send-bank', async (req, res) => {
             return res.status(400).json({ success: false, code: 'CURRENCY_MISMATCH',
                 message: 'The transfer currency must match your wallet currency.' });
         }
+        // XAMEPAY_SENDBANK_NGN_ONLY_V1: the fee schedule is in naira, so bank payouts from other
+        // currencies stay closed until a per-currency fee table exists.
+        if (walletCur !== 'NGN') {
+            return res.status(403).json({ success: false, code: 'BANK_PAYOUT_NGN_ONLY',
+                message: 'Bank transfers from this wallet are not available yet.' });
+        }
     }
     const senderVAName = senderVA.accountName || senderFullName;
     const senderBankName = senderVA.bankName || 'XamePay';
@@ -13430,6 +13436,7 @@ app.post('/api/wallet/send-bank', async (req, res) => {
                 return res.status(202).json({ success: true, pending: true, fee, principal: requestedAmount, totalDebit, txRef, message: 'Transfer accepted by provider; awaiting final status confirmation.' });
 
             }
+            console.error('[XamePay send-bank provider reply] XAMEPAY_SENDBANK_DIAG_V1', r.status, data && data.status, String((data && data.message) || '').slice(0, 200));
             await transitionWalletTransfer(userId, txRef, ['reserved', 'submitted'], { status: 'unknown' });
             return res.status(202).json({ success: false, pending: true, txRef, message: 'Transfer outcome is unconfirmed; funds remain reserved while it is checked.' });
         }
