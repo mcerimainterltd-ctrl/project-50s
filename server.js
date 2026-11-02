@@ -12500,6 +12500,19 @@ app.get('/api/wallet/transfer-status/:reference', async (req, res) => {
     }
 });
 
+// XAMEPAY_SETTLE_ONE_V1: admin closes one stuck transfer as succeeded. Moves no balance; never refunds.
+app.post('/api/admin/settle-transfer/:reference', async (req, res) => {
+    if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
+        return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    try {
+        const reference = String(req.params.reference);
+        const t = await WalletTransferLedger.findOne({ reference }).select('userId status').lean();
+        if (!t) return res.status(404).json({ success: false, message: 'Not found' });
+        const f = await finalizeWalletTransfer(t.userId, reference, 'succeeded');
+        return res.json({ success: !!f, status: f && f.status });
+    } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
+});
+
 // XAMEPAY_LEDGER_READ_V1: read-only view of one transfer ledger entry (admin secret required).
 app.get('/api/admin/transfer-ledger/:reference', async (req, res) => {
     if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
