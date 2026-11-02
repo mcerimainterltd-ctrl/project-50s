@@ -16862,6 +16862,9 @@ app.get('/api/admin/reporters', basicAuth, async (req, res) => {
 
 // ── Monthly Creator Payout (call via cron or admin) ───────────────────────────
 app.post('/api/admin/creator-payout', basicAuth, async (req, res) => {
+    // XAMEPAY_CREATOR_PAYOUT_PAUSED_V1: this job credits no wallet (it filters on a field wallets do not have)
+    // and can create stray wallet records. Paused until rebuilt with a payout ledger.
+    return res.status(503).json({ success: false, message: 'Creator payouts are paused.' });
     try {
         const users = await User.find({});
         let credited = 0;
@@ -16913,6 +16916,18 @@ app.post('/api/admin/creator-payout', basicAuth, async (req, res) => {
 
 // ── Manual wallet credit (admin) ─────────────────────────────────────────────
 app.post('/api/admin/credit-wallet', async (req, res) => {
+    // XAMEPAY_ADMIN_CREDIT_AUTH_V1: manual credits need the admin secret; fails closed when it is not configured.
+    {
+        const secret = Buffer.from(String(process.env.ADMIN_SECRET || ''));
+        const given = Buffer.from(String(req.headers['x-admin-secret'] || ''));
+        const okSecret = secret.length >= 16 && given.length === secret.length &&
+            require('crypto').timingSafeEqual(given, secret);
+        if (!okSecret) return res.status(401).json({ success: false, message: 'Unauthorized.' });
+        const amt = Number(req.body && req.body.amount);
+        if (!Number.isFinite(amt) || amt <= 0) {
+            return res.status(400).json({ success: false, message: 'Invalid amount.' });
+        }
+    }
     try {
         const { userId, amount, label, icon } = req.body;
         if (!userId || !amount) return res.json({ success: false, message: 'Missing fields' });
