@@ -1893,6 +1893,36 @@ const PSTN_RATES = {
     'default': { rate: 20, label: 'International' }
 };
 
+// XAMEPAY_BVN_ENCRYPTION_V1: BVNs are encrypted at rest (AES-256-GCM) when BVN_ENCRYPTION_KEY is set.
+// Without a valid key the old behaviour continues and a warning is logged. Old plaintext values still read.
+function bvnKey() {
+    const k = Buffer.from(process.env.BVN_ENCRYPTION_KEY || '', 'base64');
+    return k.length === 32 ? k : null;
+}
+function bvnEnc(v) {
+    const text = String(v || '');
+    if (!text || text === '00000000000' || text.startsWith('enc:v1:')) return text;
+    const key = bvnKey();
+    if (!key) { console.warn('BVN_ENCRYPTION_KEY missing or invalid: BVN stored unencrypted'); return text; }
+    const c = require('crypto');
+    const iv = c.randomBytes(12);
+    const ci = c.createCipheriv('aes-256-gcm', key, iv);
+    const enc = Buffer.concat([ci.update(text, 'utf8'), ci.final()]);
+    return 'enc:v1:' + Buffer.concat([iv, ci.getAuthTag(), enc]).toString('base64');
+}
+function bvnDec(v) {
+    const text = String(v || '');
+    if (!text.startsWith('enc:v1:')) return text;
+    const key = bvnKey();
+    if (!key) return '';
+    try {
+        const raw = Buffer.from(text.slice(7), 'base64');
+        const d = require('crypto').createDecipheriv('aes-256-gcm', key, raw.subarray(0, 12));
+        d.setAuthTag(raw.subarray(12, 28));
+        return Buffer.concat([d.update(raw.subarray(28)), d.final()]).toString('utf8');
+    } catch (_) { return ''; }
+}
+
 const userSchema = new mongoose.Schema({
     xameId:             { type: String, required: true, unique: true },
     firstName:          { type: String, required: true },
@@ -9709,7 +9739,7 @@ app.post('/api/wallet/save-bvn', async (req, res) => {
         const hashed = await bcrypt.hash(bvn, 10);
         await User.findOneAndUpdate({ xameId: userId }, { bvn: hashed });
         // Also store plain for Flutterwave use (needed for VA creation)
-        await User.findOneAndUpdate({ xameId: userId }, { bvnPlain: bvn });
+        await User.findOneAndUpdate({ xameId: userId }, { bvnPlain: bvnEnc(bvn) });
         res.json({ success: true, message: 'BVN saved successfully' });
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
@@ -9772,7 +9802,7 @@ app.post('/api/wallet/monnify/virtual-account', async (req, res) => {
     try {
         // Silently save BVN if provided, same as the Flutterwave route does
         if (bvn && bvn !== '00000000000' && bvn.length === 11) {
-            try { await User.findOneAndUpdate({ xameId: userId }, { bvnPlain: bvn }); } catch(_) {}
+            try { await User.findOneAndUpdate({ xameId: userId }, { bvnPlain: bvnEnc(bvn) }); } catch(_) {}
         }
         const existingWallet = await Wallet.findOne({ xameId: userId });
         if (existingWallet?.virtualAccount?.provider === 'monnify' && existingWallet.virtualAccount.accountNumber) {
@@ -9808,7 +9838,7 @@ app.post('/api/wallet/monnify/virtual-account', async (req, res) => {
         const accountReference = 'xamepay-mnfy-' + userId + '-' + Date.now();
         // CBN mandates a valid BVN or NIN be linked to every reserved account in production.
         // Sandbox does not enforce this, but live mode will — same fallback pattern as Flutterwave.
-        const finalBvn = bvn || vaUser?.bvnPlain || '00000000000';
+        const finalBvn = bvn || bvnDec(vaUser?.bvnPlain) || '00000000000';
         const response = await fetch(`${baseUrl}/api/v2/bank-transfer/reserved-accounts`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -10019,7 +10049,7 @@ app.post('/api/wallet/flw/virtual-account', async (req, res) => {
   try {
     // Silently save BVN if provided
     if (bvn && bvn !== '00000000000' && bvn.length === 11) {
-        try { await User.findOneAndUpdate({ xameId: userId }, { bvnPlain: bvn }); } catch(_) {}
+        try { await User.findOneAndUpdate({ xameId: userId }, { bvnPlain: bvnEnc(bvn) }); } catch(_) {}
     }
     // Return saved virtual account if exists and already Flutterwave (idempotent re-fetch)
     const existingWallet = await Wallet.findOne({ xameId: userId });
@@ -10056,7 +10086,7 @@ app.post('/api/wallet/flw/virtual-account', async (req, res) => {
       body: JSON.stringify({
         email: email || userId + '@xamepage.app',
         is_permanent: true,
-        bvn: bvn || vaUser?.bvnPlain || '00000000000',
+        bvn: bvn || bvnDec(vaUser?.bvnPlain) || '00000000000',
         tx_ref: 'xamepay-va-' + userId + '-' + Date.now(),
         amount: 0,
         currency: currency || 'NGN',
@@ -16979,7 +17009,7 @@ app.post('/api/admin/recreate-virtual-accounts', async (req, res) => {
                     body: JSON.stringify({
                         email: user.xameId + '@xamepage.app',
                         is_permanent: true,
-                        bvn: user.bvnPlain || '',
+                        bvn: bvnDec(user.bvnPlain) || '',
                         tx_ref: 'xamepay-va-' + user.xameId + '-' + Date.now(),
                         amount: 0,
                         currency: 'NGN',
