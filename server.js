@@ -10511,12 +10511,15 @@ app.get('/api/public/profile/:xameId', async (req, res) => {
 // ── Android App Links verification ──────────────────────────────────────────
 app.get('/.well-known/assetlinks.json', (req, res) => {
   res.json([{
-    relation: ['delegate_permission/common.handle_all_urls'],
+    relation: [
+      'delegate_permission/common.handle_all_urls',
+      'delegate_permission/common.get_login_creds'
+    ],
     target: {
       namespace: 'android_app',
       package_name: 'com.xamepage.app',
       sha256_cert_fingerprints: [
-        'F1:EE:03:97:F8:05:46:03:47:26:C4:CE:2C:1C:98:97:4A:81:B2:97:65:63:DB:6D:78:C2:B9:57:E3:EE:A5:1'
+        '12:7B:3D:48:B3:1B:83:02:E1:93:70:C0:2A:03:C6:18:5B:5C:24:54:02:2E:C7:7F:51:54:CC:B8:08:A4:11:ED'
       ]
     }
   }]);
