@@ -12686,6 +12686,16 @@ app.get('/api/xamepay/fx', async (req, res) => {
 });
 
 app.get('/api/wallet/convert/quote', async (req, res) => {
+    // XAMEPAY_CONVERT_QUOTE_GATE_V1: refuse early, before a user types a PIN.
+    if (process.env.XAMEPAY_CONVERSION_ENABLED !== 'true') {
+        return res.status(403).json({ success: false, code: 'CONVERSION_DISABLED',
+            message: 'Currency conversion is not available yet.' });
+    }
+    if ((process.env.XAMEPAY_QUOTE_SECRET || '').length < 24 ||
+        process.env.FX_MARGIN_PERCENT === undefined || process.env.FX_MARGIN_PERCENT === '') {
+        return res.status(503).json({ success: false, code: 'CONVERSION_NOT_CONFIGURED',
+            message: 'Currency conversion is not configured.' });
+    }
     const userId = String(req.query.userId || '').trim();
     const region = require('./xamepay-regions').regionFor(req.query.country);
     if (!userId || !region || !region.enabled) {
