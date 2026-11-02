@@ -12500,6 +12500,17 @@ app.get('/api/wallet/transfer-status/:reference', async (req, res) => {
     }
 });
 
+// XAMEPAY_LEDGER_READ_V1: read-only view of one transfer ledger entry (admin secret required).
+app.get('/api/admin/transfer-ledger/:reference', async (req, res) => {
+    if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
+        return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    try {
+        const t = await WalletTransferLedger.findOne({ reference: String(req.params.reference) })
+            .select('userId reference status providerReference principal fee totalDebit currency failureCode createdAt updatedAt').lean();
+        return res.json({ success: !!t, transfer: t || null });
+    } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
+});
+
 // ── Temporary: inspect Monnify's own record for a reserved account ───────────
 app.get('/api/admin/monnify-debug/:accountRef', async (req, res) => {
     if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
