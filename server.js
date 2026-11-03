@@ -5600,6 +5600,24 @@ app.post('/api/login', async (req, res) => {
 });
 
 // Setup extra security
+// ── EXTRA-SECURITY-GUARD-INJECT: session must own the Xame-ID ──
+async function _esOwnerGuard(req, res, next) {
+    try {
+        const user = await getAuthenticatedUserFromSession(req);
+        if (!user) { console.warn('ES-NOAUTH no-valid-session ' + req.method + ' ip=' + (req.ip || '')); return next(); }
+        const requested = req.method === 'GET' ? req.params.userId : req.body && req.body.userId;
+        if (!requested || String(user.xameId) !== String(requested)) {
+            console.warn('ES-NOAUTH user-mismatch ' + req.method + ' ip=' + (req.ip || '')); return next();
+        }
+        next();
+    } catch (err) {
+        console.error('Extra-security guard error:', err);
+        res.status(500).json({ success: false, message: 'Server error.' });
+    }
+}
+app.use('/api/extra-security', _esOwnerGuard);
+// ── END EXTRA-SECURITY-GUARD-INJECT ──
+
 app.post('/api/extra-security/setup', async (req, res) => {
     const { userId, email, phone, enabled } = req.body;
     try {
