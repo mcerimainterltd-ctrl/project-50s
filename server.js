@@ -4521,7 +4521,7 @@ app.get('/api/xametv/premium/catalogue', async (req, res) => {
 // PUT is an upsert: stable IDs let administrators update entries without
 // changing their identity. DELETE operations below deactivate, not erase.
 // XAMEPAY_ADMIN_GATE_V1: admin routes that had no check of their own now need the admin secret
-// header, or your existing basic auth.
+// header.
 function xamepayAdminGate(req, res, next) {
     const secret = Buffer.from(String(process.env.ADMIN_SECRET || ''));
     const given = Buffer.from(String(req.headers['x-admin-secret'] || ''));
@@ -4529,7 +4529,7 @@ function xamepayAdminGate(req, res, next) {
         require('crypto').timingSafeEqual(given, secret)) return next();
     return res.status(401).json({ success: false, message: 'Unauthorized.' });
 }
-app.use(['/api/admin/ai-assist', '/api/admin/delete-account', '/api/admin/delete-announcement', '/api/admin/delete-discovery-post', '/api/admin/flw-bills', '/api/admin/platform-revenue', '/api/admin/reset-password', '/api/admin/set-version', '/api/admin/suspend-account', '/api/admin/wallet-balance', '/api/admin/wallet-credit', '/api/admin/xametv/premium/categories', '/api/admin/xametv/premium/channels'], xamepayAdminGate);
+app.use(['/api/admin/ai-assist', '/api/admin/delete-account', '/api/admin/delete-announcement', '/api/admin/delete-discovery-post', '/api/admin/flw-bills', '/api/admin/platform-revenue', '/api/admin/reset-password', '/api/admin/set-version', '/api/admin/suspend-account', '/api/admin/wallet-balance', '/api/admin/wallet-credit'], xamepayAdminGate);
 app.put('/api/admin/xametv/premium/categories/:categoryId', async (req, res) => {
     if (!premiumTvAdminAuthorized(req, res)) return;
     const categoryId = req.params.categoryId;
@@ -12501,15 +12501,50 @@ app.get('/api/wallet/transfer-status/:reference', async (req, res) => {
     }
 });
 
-// XAMEPAY_SETTLE_ONE_V1: admin closes one stuck transfer as succeeded. Moves no balance; never refunds.
+// XAMEPAY_SETTLE_VERIFY_V1: admin settles one stuck transfer, verified with Flutterwave where possible.
+// With a provider ID the outcome is whatever Flutterwave reports (final states only). Without one,
+// Flutterwave never confirmed it, so the caller must state what the dashboard shows for the reference.
 app.post('/api/admin/settle-transfer/:reference', async (req, res) => {
     if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
         return res.status(401).json({ success: false, message: 'Unauthorized.' });
     try {
         const reference = String(req.params.reference);
-        const t = await WalletTransferLedger.findOne({ reference }).select('userId status').lean();
+        const t = await WalletTransferLedger.findOne({ reference })
+            .select('userId status providerReference principal currency accountNumber accountBank').lean();
         if (!t) return res.status(404).json({ success: false, message: 'Not found' });
-        const f = await finalizeWalletTransfer(t.userId, reference, 'succeeded');
+        if (!['reserved', 'submitted', 'unknown'].includes(t.status)) {
+            return res.json({ success: false, status: t.status, message: 'Already settled.' });
+        }
+        let outcome = null;
+        if (/^\d+$/.test(String(t.providerReference || '')) && FLW_SECRET) {
+            const r = await fetch('https://api.flutterwave.com/v3/transfers/' + encodeURIComponent(String(t.providerReference)), {
+                headers: { Authorization: `Bearer ${FLW_SECRET}`, Accept: 'application/json' },
+                signal: AbortSignal.timeout(8000)
+            });
+            const b = await r.json().catch(() => null);
+            const p = b && b.data;
+            const ok = r.ok && b && b.status === 'success' && p &&
+                String(p.id) === String(t.providerReference) &&
+                String(p.reference || '') === reference &&
+                Number(p.amount) === Number(t.principal) &&
+                String(p.currency || '').toUpperCase() === String(t.currency || '').toUpperCase() &&
+                String(p.account_number || '') === String(t.accountNumber || '') &&
+                String(p.bank_code || '') === String(t.accountBank || '');
+            if (!ok) return res.status(409).json({ success: false, message: 'Flutterwave record did not match or could not be read.' });
+            const fs = String(p.status || '').toUpperCase();
+            if (fs === 'SUCCESSFUL') outcome = 'succeeded';
+            else if (fs === 'FAILED') outcome = 'refunded';
+            else return res.status(409).json({ success: false, status: fs.toLowerCase(), message: 'Flutterwave has not finalised this transfer yet.' });
+        } else {
+            const v = String((req.body && req.body.verifiedOutcome) || '');
+            if (v !== 'paid' && v !== 'never_sent') {
+                return res.status(409).json({ success: false, code: 'NO_PROVIDER_ID',
+                    message: 'No provider ID. Check the Flutterwave dashboard, then send verifiedOutcome as paid or never_sent.' });
+            }
+            outcome = v === 'paid' ? 'succeeded' : 'refunded';
+        }
+        const f = await finalizeWalletTransfer(t.userId, reference, outcome);
+        console.log('[XamePay settle-transfer]', reference, outcome);
         return res.json({ success: !!f, status: f && f.status });
     } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
 });
