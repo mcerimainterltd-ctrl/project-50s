@@ -11245,6 +11245,7 @@ app.post('/api/wallet/flw/webhook', express.raw({ type: 'application/json' }), a
   }
   if (!signature || signature !== secretHash) return res.status(401).send('Unauthorized');
   const payload = typeof req.body === 'string' ? JSON.parse(req.body) : (Buffer.isBuffer(req.body) ? JSON.parse(req.body.toString()) : req.body);
+  if (payload && payload.event === 'transfer.completed') { await xamepaySettleTransferEvent(payload); return res.sendStatus(200); } // XAMEPAY_TRANSFER_WEBHOOK_V1
   if (payload.event === 'charge.completed' && payload.data.status === 'successful') {
     const narration = payload.data.narration || '';
     const txRef     = payload.data.tx_ref || '';
@@ -12512,6 +12513,37 @@ app.post('/api/admin/settle-transfer/:reference', async (req, res) => {
         return res.json({ success: !!f, status: f && f.status });
     } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
 });
+
+// XAMEPAY_TRANSFER_WEBHOOK_V1: settle an outgoing transfer when Flutterwave reports it final.
+// The webhook body is never trusted: the transfer is re-read from Flutterwave and must match our ledger.
+async function xamepaySettleTransferEvent(payload) {
+    try {
+        const d = (payload && payload.data) || {};
+        const reference = String(d.reference || '').trim();
+        if (!/^[A-Za-z0-9._:-]{8,100}$/.test(reference)) return;
+        const t = await WalletTransferLedger.findOne({ reference }).lean();
+        if (!t || !['reserved', 'submitted', 'unknown'].includes(t.status)) return;
+        if (!/^\d+$/.test(String(t.providerReference || '')) || !FLW_SECRET) return;
+        const r = await fetch('https://api.flutterwave.com/v3/transfers/' + encodeURIComponent(String(t.providerReference)), {
+            headers: { Authorization: `Bearer ${FLW_SECRET}`, Accept: 'application/json' },
+            signal: AbortSignal.timeout(8000)
+        });
+        if (!r.ok) return;
+        const b = await r.json();
+        const p = b && b.data;
+        const ok = b.status === 'success' && p &&
+            String(p.id) === String(t.providerReference) &&
+            String(p.reference || '') === reference &&
+            Number(p.amount) === Number(t.principal) &&
+            String(p.currency || '').toUpperCase() === String(t.currency || '').toUpperCase() &&
+            String(p.account_number || '') === String(t.accountNumber || '') &&
+            String(p.bank_code || '') === String(t.accountBank || '');
+        if (!ok) return;
+        const st = String(p.status || '').toUpperCase();
+        if (st === 'SUCCESSFUL') await finalizeWalletTransfer(t.userId, reference, 'succeeded');
+        else if (st === 'FAILED') await finalizeWalletTransfer(t.userId, reference, 'refunded');
+    } catch (e) { console.error('transfer webhook settle failed:', e.message); }
+}
 
 // XAMEPAY_LEDGER_READ_V1: read-only view of one transfer ledger entry (admin secret required).
 app.get('/api/admin/transfer-ledger/:reference', async (req, res) => {
@@ -13806,6 +13838,7 @@ app.post('/api/wallet/webhook/flw', express.raw({ type: 'application/json' }), a
         );
         const d = payload?.data || {};
 
+        if (payload && payload.event === 'transfer.completed') { await xamepaySettleTransferEvent(payload); return res.sendStatus(200); } // XAMEPAY_TRANSFER_WEBHOOK_V1
         if (payload?.event !== 'charge.completed' || d.status !== 'successful') {
             return res.sendStatus(200);
         }
