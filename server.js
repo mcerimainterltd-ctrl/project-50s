@@ -17290,6 +17290,46 @@ ${pic ? `<img src="${pic}" class="avatar" alt="${name}">` : `<div class="avatar-
     } catch (err) { res.redirect('/'); }
 });
 
+// ── XamePay app lock code: salted client-side hash, permanent across devices ──
+const AppLock = mongoose.models.AppLock || mongoose.model('AppLock', new mongoose.Schema({
+    xameId:    { type: String, required: true, unique: true },
+    salt:      { type: String, required: true },
+    hash:      { type: String, required: true },
+    updatedAt: { type: Date, default: Date.now },
+}));
+
+app.post('/api/app-lock/set', async (req, res) => {
+    try {
+        const user = await getAuthenticatedUserFromSession(req);
+        if (!user) return res.status(401).json({ success: false, message: 'Authentication required' });
+        const { salt, hash, replace } = req.body || {};
+        if (typeof salt !== 'string' || typeof hash !== 'string' || !salt || !hash || salt.length > 64 || hash.length > 128)
+            return res.status(400).json({ success: false, message: 'Invalid lock data' });
+        const existing = await AppLock.findOne({ xameId: user.xameId });
+        if (existing && existing.hash !== hash && replace !== true)
+            return res.status(409).json({ success: false, message: 'A code already exists for this account' });
+        await AppLock.updateOne({ xameId: user.xameId },
+            { $set: { salt, hash, updatedAt: new Date() } }, { upsert: true });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('app-lock set error:', err);
+        res.status(500).json({ success: false, message: 'Server error.' });
+    }
+});
+
+app.get('/api/app-lock/get', async (req, res) => {
+    try {
+        const user = await getAuthenticatedUserFromSession(req);
+        if (!user) return res.status(401).json({ success: false, message: 'Authentication required' });
+        const row = await AppLock.findOne({ xameId: user.xameId });
+        if (!row) return res.json({ success: true, hasLock: false });
+        res.json({ success: true, hasLock: true, salt: row.salt, hash: row.hash });
+    } catch (err) {
+        console.error('app-lock get error:', err);
+        res.status(500).json({ success: false, message: 'Server error.' });
+    }
+});
+
 // ── POST /api/change-password ────────────────────────────────────────────────
 app.post('/api/change-password', async (req, res) => {
     try {
