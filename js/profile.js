@@ -397,7 +397,7 @@ async function showExtraSecurityDialog() {
   if (existing) existing.remove();
 
   // Load current settings
-  const res = await fetch(`${serverURL}/api/extra-security/${USER.xameId}`);
+  const res = await fetch(`${serverURL}/api/extra-security/${USER.xameId}`, { headers: { 'Authorization': `Bearer ${persistentStorage.get('xame:sessionToken')}` } });
   const data = await res.json();
   const es = data.extraSecurity || { enabled: false, email: '', phone: '' };
 
@@ -458,7 +458,7 @@ async function showExtraSecurityDialog() {
     if (enabled && !email && !phone) { showNotification('Please enter an email or phone number.'); return; }
     const r = await fetch(`${serverURL}/api/extra-security/setup`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${persistentStorage.get('xame:sessionToken')}` },
       body: JSON.stringify({ userId: USER.xameId, email, phone, enabled })
     });
     const d = await r.json();
