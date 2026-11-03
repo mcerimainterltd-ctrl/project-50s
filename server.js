@@ -5270,6 +5270,107 @@ app.post('/api/contacts/match', async (req, res) => {
     }
 });
 
+// ── FORGOT-PASSWORD-INJECT: /api/forgot-password/send-otp + /reset ──
+global.forgotPwOtps = global.forgotPwOtps || {};
+const _fpResend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+const _fpMaskEmail = (e) => { const p = String(e).split('@'); return (p[0] || '').slice(0, 1) + '***@' + (p[1] || ''); };
+const _fpMaskPhone = (n) => '***' + String(n).replace(/\D/g, '').slice(-3);
+
+app.post('/api/forgot-password/send-otp', async (req, res) => {
+    try {
+        const xameId = typeof req.body?.xameId === 'string' ? req.body.xameId.trim() : '';
+        if (!xameId) return res.status(400).json({ success: false, message: 'Xame-ID required.' });
+        const user = await User.findOne({ xameId });
+        if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
+        if (user.suspended) return res.status(403).json({ success: false, message: 'Your account has been suspended. Please contact support.' });
+
+        const emails = _fpResend ? [...new Set([user.extraSecurity?.email].filter(Boolean))] : [];
+        const phones = twilioClient ? [...new Set([user.extraSecurity?.phone, user.phone].filter(Boolean))] : [];
+        if (!emails.length && !phones.length) {
+            return res.json({ success: false, noRecovery: true, message: 'No recovery email or phone is saved on this account, so a reset code cannot be sent. Please contact support.' });
+        }
+        const prev = global.forgotPwOtps[xameId];
+        if (prev && Date.now() - prev.sentAt < 60 * 1000) {
+            return res.status(429).json({ success: false, message: 'A code was just sent. Please wait a minute before requesting another.' });
+        }
+        const code = crypto.randomInt(100000, 1000000).toString();
+        global.forgotPwOtps[xameId] = { code, expires: Date.now() + 10 * 60 * 1000, sentAt: Date.now(), attempts: 0 };
+
+        const labels = [], jobs = [];
+        emails.forEach((e) => {
+            labels.push('email ' + _fpMaskEmail(e));
+            jobs.push(_fpResend.emails.send({
+                from: process.env.RESEND_FROM_EMAIL || 'XamePage Security <onboarding@resend.dev>',
+                to: e,
+                subject: 'Your XamePage Password Reset Code',
+                html: `<div style="font-family:sans-serif;max-width:400px;margin:0 auto;padding:24px;background:#1a2332;color:#fff;border-radius:12px;">
+                    <h2 style="color:#00B0A0;">XamePage Password Reset</h2>
+                    <p>Your password reset code is:</p>
+                    <h1 style="font-size:42px;letter-spacing:8px;color:#00B0A0;text-align:center;">${code}</h1>
+                    <p style="color:#aaa;font-size:13px;">This code expires in 10 minutes. If you did not request it, ignore this message.</p>
+                </div>`
+            }));
+        });
+        phones.forEach((p) => {
+            labels.push('SMS ' + _fpMaskPhone(p));
+            jobs.push(twilioClient.messages.create({
+                body: `Your XamePage password reset code is: ${code}. Expires in 10 minutes. Do not share.`,
+                from: process.env.TWILIO_PHONE_NUMBER,
+                to: p
+            }));
+        });
+        const results = await Promise.allSettled(jobs);
+        const sent = labels.filter((_, i) => results[i].status === 'fulfilled' && !(results[i].value && results[i].value.error));
+        if (!sent.length) {
+            delete global.forgotPwOtps[xameId];
+            console.error('Forgot-password: all sends failed', results.map(r => r.status === 'rejected' ? String((r.reason && r.reason.message) || r.reason) : (r.value && r.value.error ? JSON.stringify(r.value.error) : 'ok')));
+            return res.status(502).json({ success: false, message: 'Could not send the code. Please try again shortly.' });
+        }
+        return res.json({ success: true, message: `Code sent to ${sent.join(' and ')}.` });
+    } catch (err) {
+        console.error('Forgot-password send-otp error:', err);
+        res.status(500).json({ success: false, message: 'Server error.' });
+    }
+});
+
+app.post('/api/forgot-password/reset', async (req, res) => {
+    try {
+        const xameId = typeof req.body?.xameId === 'string' ? req.body.xameId.trim() : '';
+        const otp = typeof req.body?.otp === 'string' ? req.body.otp.trim() : '';
+        const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+        if (!xameId || !otp || !newPassword) return res.status(400).json({ success: false, message: 'Missing details.' });
+        if (newPassword.length < 8) return res.status(400).json({ success: false, message: 'Password must be at least 8 characters.' });
+
+        const rec = global.forgotPwOtps[xameId];
+        if (!rec) return res.status(400).json({ success: false, message: 'No active code. Please request a new one.' });
+        if (Date.now() > rec.expires) {
+            delete global.forgotPwOtps[xameId];
+            return res.status(400).json({ success: false, message: 'Code expired. Please request a new one.' });
+        }
+        if (rec.code !== otp) {
+            rec.attempts += 1;
+            if (rec.attempts >= 5) {
+                delete global.forgotPwOtps[xameId];
+                return res.status(429).json({ success: false, message: 'Too many incorrect attempts. Please request a new code.' });
+            }
+            return res.status(400).json({ success: false, message: 'Invalid code. Please check and try again.' });
+        }
+        const user = await User.findOne({ xameId });
+        if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
+        if (user.suspended) return res.status(403).json({ success: false, message: 'Your account has been suspended. Please contact support.' });
+
+        user.password = await bcrypt.hash(newPassword, 10);
+        await user.save();
+        delete global.forgotPwOtps[xameId];
+        console.log(`🔑 Password reset via OTP: ${xameId}`);
+        return res.json({ success: true, message: 'Password reset successful.' });
+    } catch (err) {
+        console.error('Forgot-password reset error:', err);
+        res.status(500).json({ success: false, message: 'Server error.' });
+    }
+});
+// ── END FORGOT-PASSWORD-INJECT ──
+
 app.post('/api/auth/send-otp', async (req, res) => {
     const phone = normalizeInternationalPhone(req.body.phone);
     if (!phone) return res.status(400).json({
