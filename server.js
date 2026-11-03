@@ -12545,6 +12545,20 @@ async function xamepaySettleTransferEvent(payload) {
     } catch (e) { console.error('transfer webhook settle failed:', e.message); }
 }
 
+// XAMEPAY_STUCK_LIST_V1: read-only list of outgoing transfers stuck for over 10 minutes (admin secret required).
+app.get('/api/admin/stuck-transfers', async (req, res) => {
+    if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
+        return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    try {
+        const list = await WalletTransferLedger.find({
+            status: { $in: ['reserved', 'submitted', 'unknown'] },
+            updatedAt: { $lt: new Date(Date.now() - 10 * 60 * 1000) }
+        }).select('userId reference status providerReference principal totalDebit currency createdAt')
+          .sort({ createdAt: 1 }).limit(50).lean();
+        return res.json({ success: true, count: list.length, list });
+    } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
+});
+
 // XAMEPAY_LEDGER_READ_V1: read-only view of one transfer ledger entry (admin secret required).
 app.get('/api/admin/transfer-ledger/:reference', async (req, res) => {
     if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
