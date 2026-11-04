@@ -17,6 +17,7 @@ const SpaceMessage = require('./models/SpaceMessage');
 const express    = require('express');
 const { Resend }  = require('resend');
 // const resend      = // new Resend(process.env.RESEND_API_KEY);
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : { emails: { send: async () => { throw new Error('RESEND_API_KEY not set'); } } };
 const twilio      = require('twilio');
 const twilioClient = process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
     ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
