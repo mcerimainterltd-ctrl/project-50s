@@ -5277,7 +5277,6 @@ const _fpMaskEmail = (e) => { const p = String(e).split('@'); return (p[0] || ''
 const _fpMaskPhone = (n) => '***' + String(n).replace(/\D/g, '').slice(-3);
 
 app.post('/api/forgot-password/send-otp', async (req, res) => {
-    return res.status(503).json({ success: false, message: 'Password reset is temporarily unavailable. Please contact support.' }); // FP-KILL-SWITCH
     try {
         const xameId = typeof req.body?.xameId === 'string' ? req.body.xameId.trim() : '';
         if (!xameId) return res.status(400).json({ success: false, message: 'Xame-ID required.' });
