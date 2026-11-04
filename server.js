@@ -4525,7 +4525,7 @@ app.get('/api/xametv/premium/catalogue', async (req, res) => {
 // header.
 function xamepayAdminGate(req, res, next) {
     const secret = Buffer.from(String(process.env.ADMIN_SECRET || ''));
-    const given = Buffer.from(String(req.headers['x-admin-secret'] || ''));
+    const given = Buffer.from(String(req.headers['x-admin-secret'] || (req.body && req.body.secret) || ''));
     if (secret.length >= 16 && given.length === secret.length &&
         require('crypto').timingSafeEqual(given, secret)) return next();
     return res.status(401).json({ success: false, message: 'Unauthorized.' });
