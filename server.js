@@ -5604,7 +5604,7 @@ async function _esOwnerGuard(req, res, next) {
     try {
         const user = await getAuthenticatedUserFromSession(req);
         if (!user) { console.warn('ES-NOAUTH no-valid-session ' + req.method + ' ip=' + (req.ip || '')); return res.status(401).json({ success: false, message: 'Authentication required' }); }
-        const requested = req.method === 'GET' ? req.params.userId : req.body && req.body.userId;
+        const requested = req.method === 'GET' ? decodeURIComponent(String(req.path || '/').slice(1).split('/')[0]) : req.body && req.body.userId;
         if (!requested || String(user.xameId) !== String(requested)) {
             console.warn('ES-NOAUTH user-mismatch ' + req.method + ' ip=' + (req.ip || '')); return res.status(403).json({ success: false, message: 'Access denied' });
         }
