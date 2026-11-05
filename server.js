@@ -1213,6 +1213,30 @@ async function walletBillCheckProvider(ledger) {
 // International airtime via Reloadly. v1: local-amount connections only
 // (wallet currency == destination currency), so no FX is involved.
 // Same rule as the Flutterwave flow: never refund on an unconfirmed result.
+// XAMEPAY_BILL_RECONCILER_V1: settle pending airtime, data and bill purchases without waiting for the app.
+// Uses the same provider checks as the status route; unclear results stay pending and are never refunded.
+let _billReconcileBusy = false;
+async function reconcilePendingBills() {
+    if (_billReconcileBusy || mongoose.connection.readyState !== 1) return;
+    _billReconcileBusy = true;
+    try {
+        const now = Date.now();
+        const list = await WalletBillLedger.find({
+            status: { $in: ['submitted', 'pending', 'unknown'] },
+            updatedAt: { $lt: new Date(now - 2 * 60 * 1000) },
+            createdAt: { $gt: new Date(now - 7 * 24 * 3600 * 1000) }
+        }).sort({ updatedAt: 1 }).limit(20).lean();
+        if (list.length) console.log('[XamePay bill reconcile] checking', list.length);
+        for (const led of list) {
+            try { await walletBillCheckProvider(led); }
+            catch (e) { console.error('[XamePay bill reconcile]', led.reference, e.message); }
+        }
+    } catch (e) {
+        console.error('[XamePay bill reconcile] sweep failed:', e.message);
+    } finally { _billReconcileBusy = false; }
+}
+setInterval(reconcilePendingBills, 5 * 60 * 1000).unref();
+
 let _rlTokenCache = { token: null, at: 0 };
 async function reloadlyToken(force) {
   if (!force && _rlTokenCache.token && Date.now() - _rlTokenCache.at < 30 * 60 * 1000) {
