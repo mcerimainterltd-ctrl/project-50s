@@ -12740,6 +12740,32 @@ app.get('/api/admin/stuck-transfers', async (req, res) => {
     } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
 });
 
+// XAMEPAY_TRANSFER_SWEEP_V1: settle stuck outgoing transfers without waiting for a webhook or the app.
+// Reuses xamepaySettleTransferEvent, which re-reads each transfer from Flutterwave and settles only on a
+// matching final status. Transfers with no provider ID are left as they are.
+let _transferSweepBusy = false;
+async function sweepStuckTransfers() {
+    if (_transferSweepBusy || mongoose.connection.readyState !== 1) return;
+    _transferSweepBusy = true;
+    try {
+        const now = Date.now();
+        const list = await WalletTransferLedger.find({
+            status: { $in: ['reserved', 'submitted', 'unknown'] },
+            providerReference: { $regex: /^\d+$/ },
+            updatedAt: { $lt: new Date(now - 10 * 60 * 1000) },
+            createdAt: { $gt: new Date(now - 7 * 24 * 3600 * 1000) }
+        }).select('reference').sort({ updatedAt: 1 }).limit(10).lean();
+        if (list.length) console.log('[XamePay transfer sweep] checking', list.length);
+        for (const t of list) {
+            try { await xamepaySettleTransferEvent({ data: { reference: t.reference } }); }
+            catch (e) { console.error('[XamePay transfer sweep]', t.reference, e.message); }
+        }
+    } catch (e) {
+        console.error('[XamePay transfer sweep] failed:', e.message);
+    } finally { _transferSweepBusy = false; }
+}
+setInterval(sweepStuckTransfers, 5 * 60 * 1000).unref();
+
 // XAMEPAY_LEDGER_READ_V1: read-only view of one transfer ledger entry (admin secret required).
 app.get('/api/admin/transfer-ledger/:reference', async (req, res) => {
     if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
