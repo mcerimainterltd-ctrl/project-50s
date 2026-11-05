@@ -14468,6 +14468,8 @@ const discoveryStorySchema = new mongoose.Schema({
     authorAvatar: { type: String, default: '' },
     mediaUrl:     { type: String, required: true },
     mediaType:    { type: String, enum: ['image','video'], default: 'image' },
+    caption:      { type: String, default: '' },
+    description:  { type: String, default: '' },
     seen:         [{ type: String }],
     expiresAt:    { type: Date, default: () => new Date(Date.now() + 72*60*60*1000) },
     ts:           { type: Date, default: Date.now },
@@ -14675,6 +14677,8 @@ app.get('/api/discover/stories', async (req, res) => {
                 storyId:   s.storyId,
                 mediaUrl:  s.mediaUrl,
                 mediaType: s.mediaType,
+                caption:     s.caption || '',
+                description: s.description || '',
                 expiresAt: s.expiresAt,
                 ts:        s.ts,
                 seen:      userId ? s.seen.includes(userId) : false,
@@ -15118,6 +15122,8 @@ app.post('/api/discover/post', memoryUpload.array('media', 10), async (req, res)
 app.post('/api/discover/story', memoryUpload.single('media'), async (req, res) => {
     try {
         const { authorId, mediaType } = req.body;
+        const caption     = String(req.body.caption || '').trim().slice(0, 200);
+        const description = String(req.body.description || '').trim().slice(0, 1000);
         if (!authorId) return res.json({ success: false, message: 'authorId required' });
 
         const author = await User.findOne({ xameId: authorId }).lean();
@@ -15148,6 +15154,8 @@ app.post('/api/discover/story', memoryUpload.single('media'), async (req, res) =
             authorAvatar: author.hideProfilePicture ? '' : (author.profilePic || ''),
             mediaUrl,
             mediaType:    mediaType || 'image',
+            caption,
+            description,
         });
 
         res.json({ success: true, storyId: story.storyId, mediaUrl });
