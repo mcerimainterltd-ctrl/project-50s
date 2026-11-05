@@ -9874,6 +9874,37 @@ app.post('/api/block-contact', async (req, res) => {
     }
 });
 
+// BLOCK_ROUTES_V1: list and unblock, session-authenticated
+app.get('/api/blocked-contacts', async (req, res) => {
+    try {
+        const me = await getAuthenticatedUserFromSession(req);
+        if (!me) return res.status(401).json({ success: false, message: 'Authentication required.' });
+        const ids = me.blockedUsers || [];
+        const found = ids.length
+            ? await User.find({ xameId: { $in: ids } }).select('xameId firstName lastName preferredName').lean()
+            : [];
+        const byId = {};
+        found.forEach(u => { byId[u.xameId] = u.preferredName || `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.xameId; });
+        res.json({ success: true, blocked: ids.map(id => ({ xameId: id, name: byId[id] || id })) });
+    } catch (err) {
+        res.status(500).json({ success: false, message: 'Server error.' });
+    }
+});
+
+app.post('/api/unblock-contact', async (req, res) => {
+    try {
+        const me = await getAuthenticatedUserFromSession(req);
+        if (!me) return res.status(401).json({ success: false, message: 'Authentication required.' });
+        const { contactId } = req.body || {};
+        if (!contactId || typeof contactId !== 'string')
+            return res.status(400).json({ success: false, message: 'Missing fields' });
+        await User.updateOne({ xameId: me.xameId }, { $pull: { blockedUsers: contactId } });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ success: false, message: 'Server error.' });
+    }
+});
+
 app.post('/api/clear-chat', async (req, res) => {
     try {
         const { userId, contactId } = req.body;
