@@ -5171,6 +5171,8 @@ app.post('/api/register',
                     message: 'Phone number must be in international format starting with +.'
                 });
                 userData.unverifiedPhone = unverified;
+                // REG_UNVERIFIED_PHONE_TO_ES_V1: show the number in Extra Security; leave it OFF
+                userData.extraSecurity = { enabled: false, email: '', phone: unverified };
             }
             // XAMEPAY_HOME_COUNTRY_V1: create the wallet in the home currency before the
             // account exists, so no later route can create it with the global default.
