@@ -17502,6 +17502,21 @@ app.post('/api/app-lock/set', async (req, res) => {
         const existing = await AppLock.findOne({ xameId: user.xameId });
         if (existing && lockDec(existing.hash) !== hash && replace !== true)
             return res.status(409).json({ success: false, message: 'A code already exists for this account' });
+        // XAMEPAY_APPLOCK_PROOF_V1: replacing an existing code needs proof of the current one (oldHash) or a
+        // session under 10 minutes old (forgot-code flow). Log-only until XAMEPAY_APPLOCK_PROOF_ENFORCE=true.
+        if (existing && replace === true && lockDec(existing.hash) !== hash) {
+            const cur = Buffer.from(lockDec(existing.hash));
+            const given = Buffer.from(typeof req.body.oldHash === 'string' ? req.body.oldHash : '');
+            const proofOk = cur.length > 0 && given.length === cur.length &&
+                require('crypto').timingSafeEqual(cur, given);
+            const sess = (user.sessions || []).find(x => x.token === getSessionToken(req));
+            const fresh = !!(sess && sess.createdAt && Date.now() - new Date(sess.createdAt).getTime() < 10 * 60 * 1000);
+            if (!proofOk && !fresh) {
+                console.warn('[APPLOCK-REPLACE-NOPROOF]', String(user.xameId));
+                if (process.env.XAMEPAY_APPLOCK_PROOF_ENFORCE === 'true')
+                    return res.status(403).json({ success: false, message: 'Current code required' });
+            }
+        }
         await AppLock.updateOne({ xameId: user.xameId },
             { $set: { salt, hash: lockEnc(hash), updatedAt: new Date() } }, { upsert: true });
         res.json({ success: true });
