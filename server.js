@@ -14656,8 +14656,17 @@ app.get('/api/discover/music-library', (req, res) => {
 app.get('/api/discover/stories', async (req, res) => {
     try {
         const { userId } = req.query;
+        if (!userId) return res.json({ success: true, stories: [] });
+        const meDoc = await User.findOne({ xameId: userId }).select('contacts').lean();
+        if (!meDoc) return res.json({ success: true, stories: [] });
+        const contactObjIds = (meDoc.contacts || []).map(c => c.contactId).filter(Boolean);
+        const contactDocs = contactObjIds.length
+            ? await User.find({ _id: { $in: contactObjIds } }).select('xameId').lean()
+            : [];
+        const allowedAuthors = [userId, ...contactDocs.map(u => u.xameId).filter(Boolean)];
         const stories = await DiscoveryStory.find({
-            expiresAt: { $gt: new Date() }
+            expiresAt: { $gt: new Date() },
+            authorId:  { $in: allowedAuthors }
         }).sort({ ts: -1 }).limit(50).lean();
 
         // Group by author
