@@ -17454,6 +17454,37 @@ ${pic ? `<img src="${pic}" class="avatar" alt="${name}">` : `<div class="avatar-
 });
 
 // ── XamePay app lock code: salted client-side hash, permanent across devices ──
+// XAMEPAY_APPLOCK_ENCRYPTION_V1: the stored app-lock hash is encrypted at rest (AES-256-GCM) when
+// APP_LOCK_ENCRYPTION_KEY is set, so a database leak alone cannot be brute-forced offline.
+// Without a valid key the old behaviour continues. Never remove the key once it is in use.
+function lockKey() {
+    const k = Buffer.from(process.env.APP_LOCK_ENCRYPTION_KEY || '', 'base64');
+    return k.length === 32 ? k : null;
+}
+function lockEnc(v) {
+    const text = String(v || '');
+    if (!text || text.startsWith('enc:v1:')) return text;
+    const key = lockKey();
+    if (!key) { console.warn('APP_LOCK_ENCRYPTION_KEY missing or invalid: app-lock hash stored unencrypted'); return text; }
+    const c = require('crypto');
+    const iv = c.randomBytes(12);
+    const ci = c.createCipheriv('aes-256-gcm', key, iv);
+    const enc = Buffer.concat([ci.update(text, 'utf8'), ci.final()]);
+    return 'enc:v1:' + Buffer.concat([iv, ci.getAuthTag(), enc]).toString('base64');
+}
+function lockDec(v) {
+    const text = String(v || '');
+    if (!text.startsWith('enc:v1:')) return text;
+    const key = lockKey();
+    if (!key) return '';
+    try {
+        const raw = Buffer.from(text.slice(7), 'base64');
+        const d = require('crypto').createDecipheriv('aes-256-gcm', key, raw.subarray(0, 12));
+        d.setAuthTag(raw.subarray(12, 28));
+        return Buffer.concat([d.update(raw.subarray(28)), d.final()]).toString('utf8');
+    } catch (_) { return ''; }
+}
+
 const AppLock = mongoose.models.AppLock || mongoose.model('AppLock', new mongoose.Schema({
     xameId:    { type: String, required: true, unique: true },
     salt:      { type: String, required: true },
@@ -17469,10 +17500,10 @@ app.post('/api/app-lock/set', async (req, res) => {
         if (typeof salt !== 'string' || typeof hash !== 'string' || !salt || !hash || salt.length > 64 || hash.length > 128)
             return res.status(400).json({ success: false, message: 'Invalid lock data' });
         const existing = await AppLock.findOne({ xameId: user.xameId });
-        if (existing && existing.hash !== hash && replace !== true)
+        if (existing && lockDec(existing.hash) !== hash && replace !== true)
             return res.status(409).json({ success: false, message: 'A code already exists for this account' });
         await AppLock.updateOne({ xameId: user.xameId },
-            { $set: { salt, hash, updatedAt: new Date() } }, { upsert: true });
+            { $set: { salt, hash: lockEnc(hash), updatedAt: new Date() } }, { upsert: true });
         res.json({ success: true });
     } catch (err) {
         console.error('app-lock set error:', err);
@@ -17486,7 +17517,7 @@ app.get('/api/app-lock/get', async (req, res) => {
         if (!user) return res.status(401).json({ success: false, message: 'Authentication required' });
         const row = await AppLock.findOne({ xameId: user.xameId });
         if (!row) return res.json({ success: true, hasLock: false });
-        res.json({ success: true, hasLock: true, salt: row.salt, hash: row.hash });
+        res.json({ success: true, hasLock: true, salt: row.salt, hash: lockDec(row.hash) });
     } catch (err) {
         console.error('app-lock get error:', err);
         res.status(500).json({ success: false, message: 'Server error.' });
