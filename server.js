@@ -1964,6 +1964,7 @@ const userSchema = new mongoose.Schema({
     hidePreferredName:  { type: Boolean, default: false },
     hideProfilePicture: { type: Boolean, default: false },
     contacts:           [contactSchema],
+    blockedUsers:       { type: [String], default: [] },
     contactRequests:    [{
         fromId:   { type: String, required: true },
         fromName: { type: String, default: '' },
@@ -7104,6 +7105,12 @@ io.on('connection', (socket) => {
         }
 
         try {
+            // BLOCK_ENFORCE_MSG_V1: blocked sender: ack as sent, never save or deliver
+            if (senderId && recipientId && !String(recipientId).startsWith('web_') &&
+                await User.exists({ xameId: recipientId, blockedUsers: senderId })) {
+                if (typeof callback === 'function') callback({ success: true, messageId: message.id });
+                return;
+            }
             const newMsg = new Message({
                 messageId:   message.id,
                 senderId,
@@ -7715,6 +7722,10 @@ io.on('connection', (socket) => {
     socket.on('call-user', async ({ recipientId, offer, callType }) => {
         const callerId      = socketToUserMap.get(socket.id);
         const recipSocketId = findSocketId(recipientId);
+        // BLOCK_ENFORCE_CALL_V1: blocked caller gets a generic unavailable error
+        if (callerId && recipientId && await User.exists({ xameId: recipientId, blockedUsers: callerId })) {
+            return socket.emit('call-error', { message: 'User unavailable.' });
+        }
 
         if (recipSocketId) {
             try {
