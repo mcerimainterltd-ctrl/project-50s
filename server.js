@@ -17455,17 +17455,17 @@ ${pic ? `<img src="${pic}" class="avatar" alt="${name}">` : `<div class="avatar-
 
 // ── XamePay app lock code: salted client-side hash, permanent across devices ──
 // XAMEPAY_APPLOCK_ENCRYPTION_V1: the stored app-lock hash is encrypted at rest (AES-256-GCM) when
-// APP_LOCK_ENCRYPTION_KEY is set, so a database leak alone cannot be brute-forced offline.
+// XAMEPAY_APP_LOCK_ENCRYPTION_KEY is set, so a database leak alone cannot be brute-forced offline.
 // Without a valid key the old behaviour continues. Never remove the key once it is in use.
 function lockKey() {
-    const k = Buffer.from(process.env.APP_LOCK_ENCRYPTION_KEY || '', 'base64');
+    const k = Buffer.from(process.env.XAMEPAY_APP_LOCK_ENCRYPTION_KEY || '', 'base64');
     return k.length === 32 ? k : null;
 }
 function lockEnc(v) {
     const text = String(v || '');
     if (!text || text.startsWith('enc:v1:')) return text;
     const key = lockKey();
-    if (!key) { console.warn('APP_LOCK_ENCRYPTION_KEY missing or invalid: app-lock hash stored unencrypted'); return text; }
+    if (!key) { console.warn('XAMEPAY_APP_LOCK_ENCRYPTION_KEY missing or invalid: app-lock hash stored unencrypted'); return text; }
     const c = require('crypto');
     const iv = c.randomBytes(12);
     const ci = c.createCipheriv('aes-256-gcm', key, iv);
