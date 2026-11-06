@@ -12873,6 +12873,76 @@ app.get('/api/admin/pending-wallet-items', async (req, res) => {
     } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
 });
 
+// XAMEPAY_BILL_ADMIN_V1: admin tools for one stuck airtime, data or bill purchase (admin secret required).
+function xamepayAdminOk(req) {
+    const secret = Buffer.from(String(process.env.ADMIN_SECRET || ''));
+    const given = Buffer.from(String(req.headers['x-admin-secret'] || ''));
+    return secret.length > 0 && given.length === secret.length &&
+        require('crypto').timingSafeEqual(given, secret);
+}
+
+app.get('/api/admin/bill-lookup/:reference', async (req, res) => {
+    if (!xamepayAdminOk(req)) return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    try {
+        const reference = String(req.params.reference || '').trim();
+        const found = await WalletBillLedger.find({ reference }).limit(2).lean();
+        if (found.length !== 1) return res.status(404).json({ success: false, message: 'Not found, or ambiguous.' });
+        const led = found[0];
+        const key = process.env.FLW_SECRET_KEY || process.env.FLW_SECRET || FLW_SECRET;
+        if (!key) return res.status(503).json({ success: false, message: 'Provider not configured.' });
+        const from = new Date(new Date(led.createdAt).getTime() - 48 * 3600 * 1000).toISOString();
+        const to = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+        const results = [];
+        for (const status of ['Successful', 'Failed', 'Reversed']) {
+            const params = new URLSearchParams({ status, from, to, reference: led.reference, page: '1', limit: '100' });
+            try {
+                const r = await fetch('https://api.flutterwave.com/v3/bills/history?' + params.toString(), {
+                    headers: { Authorization: 'Bearer ' + key }, signal: AbortSignal.timeout(12000)
+                });
+                const j = await r.json().catch(() => null);
+                const rows = Array.isArray(j && j.data) ? j.data : null;
+                results.push({
+                    status, http: r.status, apiStatus: j && j.status,
+                    message: String((j && j.message) || '').slice(0, 200),
+                    count: rows ? rows.length : null,
+                    matches: rows ? rows.filter(x => x && String(x.customer_reference || '').trim() === String(led.reference))
+                        .map(x => ({ status: x.status, amount: x.amount, currency: x.currency, country: x.country, tx_ref: x.tx_ref })) : []
+                });
+            } catch (e) { results.push({ status, error: e.message }); }
+        }
+        return res.json({ success: true, reference, ledgerStatus: led.status, providerStatus: led.providerStatus,
+            window: { from, to }, results });
+    } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
+});
+
+app.post('/api/admin/settle-bill/:reference', async (req, res) => {
+    if (!xamepayAdminOk(req)) return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    try {
+        const reference = String(req.params.reference || '').trim();
+        const v = String((req.body && req.body.verifiedOutcome) || '');
+        if (v !== 'paid' && v !== 'never_sent') {
+            return res.status(400).json({ success: false,
+                message: 'Check the Flutterwave dashboard, then send verifiedOutcome as paid or never_sent.' });
+        }
+        const found = await WalletBillLedger.find({ reference }).limit(2).lean();
+        if (found.length !== 1) return res.status(404).json({ success: false, message: 'Not found, or ambiguous.' });
+        const led = found[0];
+        if (!['reserved', 'submitted', 'pending', 'unknown'].includes(led.status)) {
+            return res.json({ success: false, status: led.status, message: 'Already settled.' });
+        }
+        if (v === 'paid') {
+            await transitionWalletBill(led.userId, reference, 'succeeded',
+                { confirmedSuccess: true, providerChecked: true, providerStatus: 'admin_verified_paid' });
+        } else {
+            await transitionWalletBill(led.userId, reference, 'refunded',
+                { definitiveFailure: true, providerChecked: true, providerStatus: 'admin_verified_never_sent', failureCode: 'admin_verified' });
+        }
+        console.log('[XamePay settle-bill]', reference, v);
+        const after = await WalletBillLedger.findOne({ userId: led.userId, reference }).lean();
+        return res.json({ success: true, status: after && after.status });
+    } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
+});
+
 // XAMEPAY_LEDGER_READ_V1: read-only view of one transfer ledger entry (admin secret required).
 app.get('/api/admin/transfer-ledger/:reference', async (req, res) => {
     if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
