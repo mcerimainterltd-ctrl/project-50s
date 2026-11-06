@@ -7065,6 +7065,7 @@ io.on('connection', (socket) => {
                     albumId:      msg.albumId      || null,
                     albumIndex:   msg.albumIndex   ?? null,
                     albumTotal:   msg.albumTotal   || null,
+                    editedAt:     msg.editedAt     || null,
                 });
             });
 
