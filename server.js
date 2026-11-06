@@ -2017,6 +2017,7 @@ const messageSchema = new mongoose.Schema({
     albumId:    { type: String, default: null },       // groups multi-image picks sent together
     albumIndex: { type: Number, default: null },       // position within the album (0-based)
     albumTotal: { type: Number, default: null },       // total images in this album
+    editedAt:   { type: Number, default: null },       // set when the sender edits the text
     actionButton: {                                     // optional tappable button (e.g. download links)
         label: { type: String, default: '' },
         url:   { type: String, default: '' },
@@ -7241,6 +7242,38 @@ io.on('connection', (socket) => {
         } catch (err) {
             console.error('sync-deletions error:', err);
             callback({ success: false, message: 'Server error.' });
+        }
+    });
+
+    // EDIT_MESSAGE_V1: sender may edit own plain-text message within 15 minutes
+    socket.on('edit-message', async (data, callback) => {
+        const cb  = typeof callback === 'function' ? callback : () => {};
+        const uid = socketToUserMap.get(socket.id);
+        if (!uid) return cb({ success: false, message: 'Not authenticated.' });
+        const { messageId, newText } = data || {};
+        if (typeof messageId !== 'string' || typeof newText !== 'string')
+            return cb({ success: false, message: 'Invalid payload.' });
+        const text = newText.trim();
+        if (!text || text.length > 4000) return cb({ success: false, message: 'Invalid text.' });
+        try {
+            const msg = await Message.findOne({ messageId, senderId: uid }).lean();
+            if (!msg) return cb({ success: false, message: 'Message not found.' });
+            if (!msg.text || (msg.file && msg.file.url) || msg.callType)
+                return cb({ success: false, message: 'Only text messages can be edited.' });
+            if (Date.now() - msg.ts > 15 * 60 * 1000)
+                return cb({ success: false, message: 'Edit time has passed.' });
+            const editedAt = Date.now();
+            await Message.updateOne({ messageId, senderId: uid }, { $set: { text, editedAt } });
+            const recipSocketId = findSocketId(msg.recipientId);
+            if (recipSocketId) {
+                io.to(recipSocketId).emit('message-edited', {
+                    senderId: uid, messageId, newText: text, editedAt
+                });
+            }
+            cb({ success: true, editedAt });
+        } catch (err) {
+            console.error('edit-message error:', err);
+            cb({ success: false, message: 'Server error.' });
         }
     });
 
