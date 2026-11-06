@@ -12846,6 +12846,33 @@ async function sweepStuckTransfers() {
 }
 setInterval(sweepStuckTransfers, 5 * 60 * 1000).unref();
 
+// XAMEPAY_PENDING_ITEMS_V1: read-only list of pending purchases and held payments (admin secret required).
+// User IDs are left out of the output on purpose.
+app.get('/api/admin/pending-wallet-items', async (req, res) => {
+    const secret = Buffer.from(String(process.env.ADMIN_SECRET || ''));
+    const given = Buffer.from(String(req.headers['x-admin-secret'] || ''));
+    if (!secret.length || given.length !== secret.length || !require('crypto').timingSafeEqual(given, secret))
+        return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    try {
+        const bills = await WalletBillLedger.find({ status: { $in: ['reserved', 'submitted', 'pending', 'unknown'] } })
+            .select('reference serviceType provider status principal currency country providerStatus providerReference createdAt updatedAt')
+            .sort({ createdAt: 1 }).limit(50).lean();
+        const holds = await WalletCreditHold.find({ status: 'held' })
+            .select('provider transactionId amount paymentCurrency walletCurrency createdAt')
+            .sort({ createdAt: 1 }).limit(50).lean();
+        return res.json({
+            success: true,
+            bills: bills.map(b => ({
+                reference: b.reference, serviceType: b.serviceType, provider: b.provider, status: b.status,
+                principal: b.principal, currency: b.currency, country: b.country,
+                providerStatus: b.providerStatus, hasProviderRef: !!b.providerReference,
+                createdAt: b.createdAt, updatedAt: b.updatedAt
+            })),
+            holds
+        });
+    } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
+});
+
 // XAMEPAY_LEDGER_READ_V1: read-only view of one transfer ledger entry (admin secret required).
 app.get('/api/admin/transfer-ledger/:reference', async (req, res) => {
     if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET)
