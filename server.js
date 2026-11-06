@@ -966,8 +966,26 @@ async function transitionWalletBill(userId, reference, outcome, details = {}) {
             );
 
         if (update.matchedCount !== 1) {
-          throw new Error('Wallet history entry missing; settlement aborted.');
-        }
+        // XAMEPAY_BILL_SETTLE_NOHISTORY_V1: a wallet keeps only its latest 100 history entries, so an old
+        // purchase's entry may be gone. Settle the balance anyway and record a fresh history entry.
+        const nowFb = new Date();
+        const fb = outcome === 'refunded'
+            ? await Wallet.updateOne(
+                { xameId: ledger.userId },
+                {
+                    $inc: { balance: ledger.totalDebit },
+                    $push: { transactions: { $each: [{
+                        id: 'refund-' + ledger.reference, ref: 'refund-' + ledger.reference,
+                        label: 'Refund: ' + ledger.serviceType + ' purchase', icon: ledger.serviceType,
+                        amount: ledger.totalDebit, type: 'credit', status: 'Completed',
+                        source: 'wallet_bill_refund', currency: ledger.currency, ts: nowFb
+                    }], $position: 0, $slice: 100 } },
+                    $set: { updatedAt: nowFb }
+                },
+                { session })
+            : await Wallet.updateOne({ xameId: ledger.userId }, { $set: { updatedAt: nowFb } }, { session });
+        if (fb.matchedCount !== 1) throw new Error('Wallet history entry missing; settlement aborted.');
+      }
 
         ledger.status = outcome;
         ledger.settledAt = new Date();
@@ -1742,6 +1760,10 @@ async function processWalletBillRequest(req, res, serviceType) {
     return res.status(202).json(walletBillClientResult(ledger));
   }
 
+  // XAMEPAY_BILL_DIAG_V1: record what the provider said when a bill request is not cleanly accepted.
+  if (!response.ok || !(payload && payload.status === 'success')) {
+    console.error('[XamePay bill provider reply] XAMEPAY_BILL_DIAG_V1', response.status, payload && payload.status, String((payload && payload.message) || '').slice(0, 200));
+  }
   // Do not refund based only on an initial POST response. A definitive
   // final result must come from a successful status lookup.
   const providerReference = String(
