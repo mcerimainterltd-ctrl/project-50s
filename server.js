@@ -9856,8 +9856,12 @@ app.post('/api/remove-contact', async (req, res) => {
 
 app.post('/api/block-contact', async (req, res) => {
     try {
-        const { userId, contactId } = req.body;
-        if (!userId || !contactId)
+        // BLOCK_ROUTE_SESSION_V1: the blocker is the session user, never a body-supplied id
+        const me = await getAuthenticatedUserFromSession(req);
+        if (!me) return res.status(401).json({ success: false, message: 'Authentication required.' });
+        const userId = me.xameId;
+        const { contactId } = req.body || {};
+        if (!contactId || typeof contactId !== 'string' || contactId === userId)
             return res.status(400).json({ success: false, message: 'Missing fields' });
         const contact = await User.findOne({ xameId: contactId });
         if (!contact) return res.status(404).json({ success: false, message: 'Contact not found' });
