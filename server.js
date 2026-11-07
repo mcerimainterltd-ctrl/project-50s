@@ -17242,6 +17242,66 @@ app.post('/api/app/promote', async (req, res) => {
     }
 });
 
+// ── XamePay: approved-build record + download routes (injected) ─────────────
+const xamePayVersionSchema = new mongoose.Schema({
+    version:     { type: String, required: true },
+    buildNumber: { type: Number, required: true },
+    updatedAt:   { type: Date, default: Date.now },
+});
+const XamePayVersion = mongoose.models.XamePayVersion || mongoose.model('XamePayVersion', xamePayVersionSchema);
+
+const XAMEPAY_REPO = 'mcerimainterltd-ctrl/Project-50s-XamePay';
+const XAMEPAY_CACHE_MS = 10 * 60 * 1000;
+const _xpAssetCache = {};
+
+async function resolveXamePayAsset(tag, ext) {
+    const key = tag + '|' + ext;
+    const hit = _xpAssetCache[key];
+    if (hit && Date.now() - hit.at < XAMEPAY_CACHE_MS) return hit.url;
+    try {
+        const r = await fetch(`https://api.github.com/repos/${XAMEPAY_REPO}/releases/tags/${tag}`, {
+            headers: { 'User-Agent': 'XamePage-Server', 'Accept': 'application/vnd.github+json' }
+        });
+        if (!r.ok) { console.error('XamePay release lookup failed:', r.status, tag); return hit ? hit.url : ''; }
+        const rel = await r.json();
+        const asset = (rel.assets || []).find(a => a.name.toLowerCase().endsWith(ext));
+        if (!asset) return hit ? hit.url : '';
+        _xpAssetCache[key] = { url: asset.browser_download_url, at: Date.now() };
+        return asset.browser_download_url;
+    } catch (e) {
+        console.error('XamePay release lookup error:', e.message);
+        return hit ? hit.url : '';
+    }
+}
+
+app.post('/api/xamepay/approve', async (req, res) => {
+    if (!verifyAdminSecret(req, res)) return;
+    const { version, buildNumber } = req.body;
+    const build = parseInt(buildNumber, 10);
+    if (!/^\d+\.\d+\.\d+$/.test(String(version || '')) || !Number.isInteger(build) || build < 1)
+        return res.status(400).json({ success: false, message: 'valid version (x.y.z) and buildNumber required.' });
+    try {
+        await XamePayVersion.findOneAndUpdate({}, { version, buildNumber: build, updatedAt: new Date() }, { upsert: true, new: true });
+        res.json({ success: true, message: `XamePay approved: v${version} build ${build}.` });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+async function xamePayDownload(req, res, suffix, ext) {
+    try {
+        const v = await XamePayVersion.findOne().sort({ updatedAt: -1 });
+        if (!v) return res.status(404).json({ success: false, message: 'No approved XamePay build.' });
+        const url = await resolveXamePayAsset(`v${v.version}-build${v.buildNumber}${suffix}`, ext);
+        if (!url) return res.status(404).json({ success: false, message: 'Approved XamePay build file not found.' });
+        res.redirect(302, url);
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+}
+app.get('/api/xamepay/download/android', (req, res) => xamePayDownload(req, res, '', '.apk'));
+app.get('/api/xamepay/download/ios', (req, res) => xamePayDownload(req, res, '-ios', '.ipa'));
+
 app.post('/api/xamepage/announce', async (req, res) => {
     if (!verifyAdminSecret(req, res)) return;
     const { title, caption, mediaUrl, mediaType, downloadUrl, actionLabel, version, platform, ipaUrl } = req.body;
