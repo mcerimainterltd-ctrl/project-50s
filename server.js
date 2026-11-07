@@ -1293,11 +1293,6 @@ async function reloadlyRequest(method, path, body) {
 
 async function reloadlyCheckStatus(ledger) {
   if (!ledger || ledger.status === 'reserved') return ledger;
-  // XAMEPAY_RELOADLY_INTL_V1: Reloadly purchases settle via Reloadly's own status lookup.
-  if (ledger.provider === 'reloadly') {
-    return ['succeeded', 'refunded'].includes(ledger.status)
-      ? ledger : await reloadlyCheckStatus(ledger);
-  }
   const txId = String(ledger.providerReference || '').trim();
   if (!/^\d+$/.test(txId)) return ledger;
   const reload = () => WalletBillLedger.findOne({
