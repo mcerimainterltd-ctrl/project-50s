@@ -491,6 +491,8 @@ const walletSchema = new mongoose.Schema({
         ref:       { type: String },
         flwRef:    { type: String, default: '' },
         currency:  { type: String, default: '' }, // XAMEPAY_WALLET_REGION_V1: currency this entry was made in
+        sentAmount: { type: Number }, recvAmount: { type: Number }, fxRate: { type: Number },
+        sentCurrency: { type: String }, recvCurrency: { type: String }, // XAMEPAY_CROSSSEND_V1
         source:    { type: String, default: '' }, // e.g. 'client_payment' for tagged business revenue
         ts:        { type: Date, default: Date.now },
         senderName:              { type: String, default: '' },
@@ -12963,6 +12965,187 @@ app.post('/api/admin/settle-bill/:reference', async (req, res) => {
         const after = await WalletBillLedger.findOne({ userId: led.userId, reference }).lean();
         return res.json({ success: true, status: after && after.status });
     } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
+});
+
+// XAMEPAY_CROSSSEND_V1: send between XamePay wallets of different currencies. Off until
+// XAMEPAY_CROSSSEND_ENABLED=true; also needs XAMEPAY_QUOTE_SECRET and FX_MARGIN_PERCENT.
+const walletCrossSendLedgerSchema = new mongoose.Schema({
+    userId: { type: String, required: true },
+    reference: { type: String, required: true },
+    fingerprint: { type: String, required: true },
+    recipientId: { type: String, required: true },
+    fromCurrency: { type: String, required: true },
+    toCurrency: { type: String, required: true },
+    amountFrom: { type: Number, required: true },
+    fee: { type: Number, required: true },
+    totalDebit: { type: Number, required: true },
+    amountTo: { type: Number, required: true },
+    destPerSource: { type: Number, required: true },
+    marginPercent: { type: Number, required: true },
+    rateSource: { type: String, default: '' },
+    createdAt: { type: Date, default: Date.now }
+}, { versionKey: false });
+walletCrossSendLedgerSchema.index({ userId: 1, reference: 1 }, { unique: true, name: 'wallet_crosssend_user_reference_unique' });
+const WalletCrossSendLedger = mongoose.model('WalletCrossSendLedger', walletCrossSendLedgerSchema);
+
+function crossSendOn() {
+    return process.env.XAMEPAY_CROSSSEND_ENABLED === 'true' &&
+        (process.env.XAMEPAY_QUOTE_SECRET || '').length >= 24 &&
+        process.env.FX_MARGIN_PERCENT !== undefined && process.env.FX_MARGIN_PERCENT !== '';
+}
+
+async function crossSendPlan(userId, recipientId, amount) {
+    const bad = (status, code, message) => ({ status, code, message });
+    if (!recipientId || recipientId === userId) return bad(400, 'BAD_RECIPIENT', 'Choose another XamePay user.');
+    if (!Number.isFinite(amount) || amount < 1) return bad(400, 'BAD_AMOUNT', 'Invalid amount.');
+    const dflt = String(process.env.WALLET_DEFAULT_CURRENCY || 'NGN').toUpperCase();
+    const [sw, rw, ru] = await Promise.all([
+        Wallet.findOne({ xameId: userId }).lean(),
+        Wallet.findOne({ xameId: recipientId }).lean(),
+        User.findOne({ xameId: recipientId }).select('xameId').lean()
+    ]);
+    if (!sw) return bad(404, 'WALLET_NOT_FOUND', 'Wallet not found.');
+    if (!ru) return bad(404, 'RECIPIENT_NOT_FOUND', 'Recipient not found.');
+    const from = String(sw.currency || dflt).toUpperCase();
+    const to = String((rw && rw.currency) || dflt).toUpperCase();
+    if (from === to) return { same: true };
+    if (!rw || !rw.currency) return bad(409, 'RECIPIENT_NOT_READY', 'This user has not opened their XamePay wallet yet.');
+    const fee = Math.round(amount * SERVICE_FEE * 100) / 100;
+    const totalDebit = Math.round((amount + fee) * 100) / 100;
+    if (Number(sw.balance || 0) < totalDebit) return bad(402, 'INSUFFICIENT_BALANCE', 'Insufficient balance.');
+    const fx = await fxRate(from, to);
+    const margin = Math.max(0, Math.min(10, Number(process.env.FX_MARGIN_PERCENT || 0)));
+    const receive = Math.floor(amount * fx.destPerSource * (1 - margin / 100) * 100) / 100;
+    if (!(receive > 0)) return bad(400, 'AMOUNT_TOO_SMALL', 'That amount is too small to convert.');
+    return { from, to, amount, fee, totalDebit, destPerSource: fx.destPerSource,
+        marginPercent: margin, receive, rateSource: fx.source };
+}
+
+app.get('/api/wallet/p2p/quote', async (req, res) => {
+    if (!crossSendOn()) return res.json({ success: true, needed: false, enabled: false });
+    const userId = String(req.query.userId || '').trim();
+    const recipientId = String(req.query.recipientId || '').trim();
+    const amount = Number(req.query.amount);
+    try {
+        if (!(await requireWalletSessionOwner(req, res, userId))) return;
+        const p = await crossSendPlan(userId, recipientId, amount);
+        if (p.status) return res.status(p.status).json({ success: false, code: p.code, message: p.message });
+        if (p.same) return res.json({ success: true, needed: false, enabled: true });
+        return res.json({ success: true, needed: true, enabled: true, from: p.from, to: p.to,
+            amount: p.amount, fee: p.fee, totalDebit: p.totalDebit, destPerSource: p.destPerSource,
+            marginPercent: p.marginPercent, receive: p.receive, expiresInSeconds: 90,
+            token: fxSignQuote({ kind: 'p2p', userId, recipientId, from: p.from, to: p.to, amount: p.amount,
+                fee: p.fee, totalDebit: p.totalDebit, destPerSource: p.destPerSource,
+                marginPercent: p.marginPercent, receive: p.receive, rateSource: p.rateSource }) });
+    } catch (err) {
+        console.error('Cross-send quote failed:', err.message);
+        return res.status(503).json({ success: false, message: 'Exchange rate unavailable. Try again shortly.' });
+    }
+});
+
+app.post('/api/wallet/p2p/convert-send', async (req, res) => {
+    const b = req.body || {};
+    const userId = String(b.userId || '').trim();
+    const recipientId = String(b.recipientId || '').trim();
+    const reference = String(b.reference || '').trim();
+    const amount = Number(b.amount);
+    const fail = (status, code, message) => res.status(status).json({ success: false, code, message });
+    if (!crossSendOn()) return fail(403, 'CROSSSEND_DISABLED', 'Sending across currencies is not available yet.');
+    if (!/^[A-Za-z0-9._:-]{8,100}$/.test(reference) || !recipientId || !Number.isFinite(amount) || amount < 1) {
+        return fail(400, 'BAD_REQUEST', 'A valid recipient, amount and reference are required.');
+    }
+    try {
+        if (!userId || !(await requireWalletSessionOwner(req, res, userId))) return;
+        const c = require('crypto');
+        const fingerprint = c.createHash('sha256').update(JSON.stringify([userId, recipientId, amount.toFixed(2)])).digest('hex');
+        const sameResult = (l) => ({ success: true, duplicate: true, from: l.fromCurrency, to: l.toCurrency,
+            amount: l.amountFrom, fee: l.fee, totalDebit: l.totalDebit, receive: l.amountTo, reference });
+        const prior = await WalletCrossSendLedger.findOne({ userId, reference }).lean();
+        if (prior) {
+            if (prior.fingerprint !== fingerprint) return fail(409, 'REFERENCE_CONFLICT', 'This reference belongs to a different transfer.');
+            return res.json(sameResult(prior));
+        }
+        const q = fxVerifyQuote(b.token);
+        if (!q || q.kind !== 'p2p' || String(q.userId) !== userId || String(q.recipientId) !== recipientId ||
+            Math.abs(Number(q.amount) - amount) > 0.005 || !(Number(q.receive) > 0)) {
+            return fail(400, 'QUOTE_INVALID', 'This quote has expired. Please request a new one.');
+        }
+        const [w, rw, su, ru] = await Promise.all([
+            Wallet.findOne({ xameId: userId }).lean(),
+            Wallet.findOne({ xameId: recipientId }).lean(),
+            User.findOne({ xameId: userId }).select('firstName lastName').lean(),
+            User.findOne({ xameId: recipientId }).select('firstName lastName').lean()
+        ]);
+        if (!w || !rw || !ru) return fail(404, 'NOT_FOUND', 'Wallet or recipient not found.');
+        if (String(w.currency || '').toUpperCase() !== q.from || String(rw.currency || '').toUpperCase() !== q.to) {
+            return fail(409, 'CURRENCY_CHANGED', 'A wallet currency changed. Please request a new quote.');
+        }
+        const pin = await convertCheckPin(w, b.pin);
+        if (!pin.ok) return fail(pin.status, pin.code, pin.message);
+        const senderName = (su ? (String(su.firstName || '') + ' ' + String(su.lastName || '')).trim() : '') || userId;
+        const recipientName = (String(ru.firstName || '') + ' ' + String(ru.lastName || '')).trim() || recipientId;
+
+        const session = await mongoose.startSession();
+        let result = null;
+        try {
+            await session.withTransaction(async () => {
+                const now = new Date();
+                const dupe = await WalletCrossSendLedger.findOne({ userId, reference }).session(session);
+                if (dupe) { result = dupe; return; }
+                const debit = await Wallet.findOneAndUpdate(
+                    { xameId: userId, currency: q.from, balance: { $gte: q.totalDebit } },
+                    { $inc: { balance: -q.totalDebit },
+                      $push: { transactions: { $each: [{ id: reference, label: 'Sent to ' + recipientName, icon: '💸',
+                          amount: q.totalDebit, principal: q.amount, fee: q.fee, type: 'debit', status: 'Completed',
+                          ref: reference, currency: q.from, sentAmount: q.amount, sentCurrency: q.from,
+                          recvAmount: q.receive, recvCurrency: q.to, fxRate: q.destPerSource, ts: now }],
+                          $position: 0, $slice: 100 } },
+                      $set: { updatedAt: now } },
+                    { new: true, session });
+                if (!debit) { const e = new Error('Insufficient balance'); e.code = 'INSUFFICIENT'; throw e; }
+                const credit = await Wallet.findOneAndUpdate(
+                    { xameId: recipientId, currency: q.to },
+                    { $inc: { balance: q.receive },
+                      $push: { transactions: { $each: [{ id: reference, label: 'Received from ' + senderName, icon: '💰',
+                          amount: q.receive, type: 'credit', status: 'Completed', ref: reference, currency: q.to,
+                          sentAmount: q.amount, sentCurrency: q.from, recvAmount: q.receive, recvCurrency: q.to,
+                          fxRate: q.destPerSource, ts: now }], $position: 0, $slice: 100 } },
+                      $set: { updatedAt: now } },
+                    { new: true, session });
+                if (!credit) { const e = new Error('Recipient wallet changed'); e.code = 'RECIPIENT_CHANGED'; throw e; }
+                const made = await WalletCrossSendLedger.create([{ userId, reference, fingerprint, recipientId,
+                    fromCurrency: q.from, toCurrency: q.to, amountFrom: q.amount, fee: q.fee, totalDebit: q.totalDebit,
+                    amountTo: q.receive, destPerSource: q.destPerSource, marginPercent: Number(q.marginPercent),
+                    rateSource: String(q.rateSource || '') }], { session });
+                await PlatformRevenue.create([{ userId, txRef: reference, type: 'p2p_cross_currency',
+                    amount: q.amount, flwFee: 0, userFee: q.fee, ourMargin: q.fee, currency: q.from }], { session });
+                result = made[0];
+            });
+        } catch (err) {
+            if (err && err.code === 'INSUFFICIENT') return fail(402, 'INSUFFICIENT_BALANCE', 'Insufficient balance.');
+            if (err && err.code === 'RECIPIENT_CHANGED') return fail(409, 'CURRENCY_CHANGED', 'The recipient wallet changed. Please request a new quote.');
+            if (err && err.code === 11000) {
+                const winner = await WalletCrossSendLedger.findOne({ userId, reference }).lean();
+                if (winner && winner.fingerprint === fingerprint) return res.json(sameResult(winner));
+            }
+            console.error('Cross-currency send failed:', err.message);
+            return res.status(503).json({ success: false, pending: true, code: 'UNCONFIRMED',
+                message: 'The transfer could not be confirmed. Retry only with the same reference.' });
+        } finally {
+            await session.endSession();
+        }
+        try {
+            const sock = findSocketId(recipientId);
+            if (sock) io.to(sock).emit('wallet:receive', { senderId: userId, senderName,
+                amount: q.receive, currency: q.to, reference });
+        } catch (_) {}
+        console.log('[XamePay cross-send]', userId, '->', recipientId, q.from, q.amount, '->', q.to, q.receive);
+        return res.json({ success: true, duplicate: false, from: q.from, to: q.to, amount: q.amount, fee: q.fee,
+            totalDebit: q.totalDebit, receive: q.receive, destPerSource: q.destPerSource, reference });
+    } catch (err) {
+        console.error('Cross-send error:', err.message);
+        return fail(500, 'CROSSSEND_FAILED', 'Could not complete the transfer. Your balance was not changed.');
+    }
 });
 
 // XAMEPAY_LEDGER_READ_V1: read-only view of one transfer ledger entry (admin secret required).
