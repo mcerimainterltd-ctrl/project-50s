@@ -836,7 +836,7 @@ async function reserveWalletBill(input) {
               id: normalized.reference,
               ref: normalized.reference,
               label: `${normalized.serviceType} purchase`,
-              icon: normalized.serviceType,
+              icon: ({ airtime: '📱', data: '📶', bill: '🧾' })[normalized.serviceType] || '🧾', // XAMEPAY_BILL_ICON_V1
               amount: normalized.totalDebit,
               principal: normalized.principal,
               fee: normalized.fee,
@@ -976,7 +976,7 @@ async function transitionWalletBill(userId, reference, outcome, details = {}) {
                     $inc: { balance: ledger.totalDebit },
                     $push: { transactions: { $each: [{
                         id: 'refund-' + ledger.reference, ref: 'refund-' + ledger.reference,
-                        label: 'Refund: ' + ledger.serviceType + ' purchase', icon: ledger.serviceType,
+                        label: 'Refund: ' + ledger.serviceType + ' purchase', icon: ({ airtime: '📱', data: '📶', bill: '🧾' })[ledger.serviceType] || '🧾',
                         amount: ledger.totalDebit, type: 'credit', status: 'Completed',
                         source: 'wallet_bill_refund', currency: ledger.currency, ts: nowFb
                     }], $position: 0, $slice: 100 } },
