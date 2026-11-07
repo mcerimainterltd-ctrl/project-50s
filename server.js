@@ -135,6 +135,7 @@ const io = new Server(server, {
 // global JSON parser below consumes the request stream.
 app.use('/api/wallet/monnify/webhook', express.raw({ type: 'application/json' }));
 app.use('/api/wallet/squad/webhook', express.raw({ type: 'application/json' }));
+app.use('/api/reloadly/webhook', express.raw({ type: '*/*', limit: '1mb' }));
 app.use(express.json({ limit: '500mb' }));
 app.use(express.urlencoded({ limit: '500mb', extended: true }));
 app.use('/api/v3/spaces', spacesRouter);
@@ -17303,6 +17304,48 @@ async function xamePayDownload(req, res, suffix, ext) {
 }
 app.get('/api/xamepay/download/android', (req, res) => xamePayDownload(req, res, '', '.apk'));
 app.get('/api/xamepay/download/ios', (req, res) => xamePayDownload(req, res, '-ios', '.ipa'));
+
+// Reloadly webhook (injected): signature-verified, never settles from payload
+const _rlWhCrypto = require('crypto');
+app.post('/api/reloadly/webhook', async (req, res) => {
+  const secret = process.env.RELOADLY_WEBHOOK_SECRET;
+  if (!secret) return res.status(503).send('Webhook not configured');
+  const raw = Buffer.isBuffer(req.body) ? req.body : null;
+  const sig = String(req.headers['x-reloadly-signature'] || '');
+  const ts = String(req.headers['x-reloadly-request-timestamp'] || '');
+  if (!raw || !sig || !ts) return res.status(401).send('Unauthorized');
+  const want = _rlWhCrypto.createHmac('sha256', secret)
+    .update(raw.toString('utf8') + ':' + ts).digest('hex');
+  const a = Buffer.from(want), b = Buffer.from(sig);
+  if (a.length !== b.length || !_rlWhCrypto.timingSafeEqual(a, b))
+    return res.status(401).send('Unauthorized');
+  let ev;
+  try { ev = JSON.parse(raw.toString('utf8')); }
+  catch (_) { return res.status(400).send('Bad payload'); }
+  try {
+    if (!ev || ev.type !== 'airtime_transaction.status') return res.sendStatus(200);
+    if (typeof ev.liveMode === 'boolean' &&
+        ev.liveMode !== (process.env.RELOADLY_MODE === 'live')) {
+      console.log('Reloadly webhook ignored: liveMode mismatch');
+      return res.sendStatus(200);
+    }
+    const tx = ev.data && ev.data.transaction;
+    const txId = tx && tx.transactionId != null ? String(tx.transactionId) : '';
+    if (!/^\d+$/.test(txId)) {
+      console.log('Reloadly webhook: no transaction id in event');
+      return res.sendStatus(200);
+    }
+    const ledger = await WalletBillLedger.findOne(
+      { provider: 'reloadly', providerReference: txId }).lean();
+    if (!ledger || ['succeeded', 'refunded'].includes(ledger.status))
+      return res.sendStatus(200);
+    await reloadlyCheckStatus(ledger);
+    return res.sendStatus(200);
+  } catch (err) {
+    console.error('Reloadly webhook error:', err.message);
+    return res.sendStatus(500);
+  }
+});
 
 app.post('/api/xamepage/announce', async (req, res) => {
     if (!verifyAdminSecret(req, res)) return;
