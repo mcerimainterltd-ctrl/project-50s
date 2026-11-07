@@ -12988,6 +12988,13 @@ const walletCrossSendLedgerSchema = new mongoose.Schema({
 walletCrossSendLedgerSchema.index({ userId: 1, reference: 1 }, { unique: true, name: 'wallet_crosssend_user_reference_unique' });
 const WalletCrossSendLedger = mongoose.model('WalletCrossSendLedger', walletCrossSendLedgerSchema);
 
+// XAMEPAY_CROSSCUR_V1: a wallet with no stored currency counts as the default currency.
+function crossCur(w) { return String((w && w.currency) || process.env.WALLET_DEFAULT_CURRENCY || 'NGN').toUpperCase(); }
+function crossCurFilter(c) {
+    const d = String(process.env.WALLET_DEFAULT_CURRENCY || 'NGN').toUpperCase();
+    return c === d ? { $or: [{ currency: c }, { currency: { $exists: false } }, { currency: '' }] } : { currency: c };
+}
+
 function crossSendOn() {
     return process.env.XAMEPAY_CROSSSEND_ENABLED === 'true' &&
         (process.env.XAMEPAY_QUOTE_SECRET || '').length >= 24 &&
@@ -13077,7 +13084,7 @@ app.post('/api/wallet/p2p/convert-send', async (req, res) => {
             User.findOne({ xameId: recipientId }).select('firstName lastName').lean()
         ]);
         if (!w || !rw || !ru) return fail(404, 'NOT_FOUND', 'Wallet or recipient not found.');
-        if (String(w.currency || '').toUpperCase() !== q.from || String(rw.currency || '').toUpperCase() !== q.to) {
+        if (crossCur(w) !== q.from || crossCur(rw) !== q.to) {
             return fail(409, 'CURRENCY_CHANGED', 'A wallet currency changed. Please request a new quote.');
         }
         const pin = await convertCheckPin(w, b.pin);
@@ -13093,7 +13100,7 @@ app.post('/api/wallet/p2p/convert-send', async (req, res) => {
                 const dupe = await WalletCrossSendLedger.findOne({ userId, reference }).session(session);
                 if (dupe) { result = dupe; return; }
                 const debit = await Wallet.findOneAndUpdate(
-                    { xameId: userId, currency: q.from, balance: { $gte: q.totalDebit } },
+                    { xameId: userId, ...crossCurFilter(q.from), balance: { $gte: q.totalDebit } },
                     { $inc: { balance: -q.totalDebit },
                       $push: { transactions: { $each: [{ id: reference, label: 'Sent to ' + recipientName, icon: '💸',
                           amount: q.totalDebit, principal: q.amount, fee: q.fee, type: 'debit', status: 'Completed',
@@ -13104,7 +13111,7 @@ app.post('/api/wallet/p2p/convert-send', async (req, res) => {
                     { new: true, session });
                 if (!debit) { const e = new Error('Insufficient balance'); e.code = 'INSUFFICIENT'; throw e; }
                 const credit = await Wallet.findOneAndUpdate(
-                    { xameId: recipientId, currency: q.to },
+                    { xameId: recipientId, ...crossCurFilter(q.to) },
                     { $inc: { balance: q.receive },
                       $push: { transactions: { $each: [{ id: reference, label: 'Received from ' + senderName, icon: '💰',
                           amount: q.receive, type: 'credit', status: 'Completed', ref: reference, currency: q.to,
