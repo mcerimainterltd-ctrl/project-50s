@@ -13062,6 +13062,29 @@ app.get('/api/admin/bill-history-probe/:reference', async (req, res) => {
     } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
 });
 
+// XAMEPAY_NG_DETECT_PROBE_V1: admin-only, read-only. Shows what Reloadly auto-detect returns for a Nigerian number. The number is never echoed or stored.
+app.get('/api/admin/ng-detect-probe', async (req, res) => {
+    if (!xamepayAdminOk(req)) return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    try {
+        const digits = String(req.query.phone || '').replace(/\D/g, '');
+        if (digits.length < 10) return res.status(400).json({ success: false, message: 'Enter the number.' });
+        const national = digits.startsWith('234') ? '0' + digits.slice(3) : digits;
+        const intl = digits.startsWith('234') ? digits : '234' + digits.replace(/^0/, '');
+        const out = [];
+        for (const [form, num] of [['national', national], ['international', intl]]) {
+            try {
+                const d = await reloadlyRequest('GET', '/operators/auto-detect/phone/' + encodeURIComponent(num) + '/countries/NG');
+                const j = d.json || {};
+                out.push({ form, http: d.status, ok: d.ok, operatorId: j.operatorId, name: j.name, status: j.status,
+                    denominationType: j.denominationType, supportsLocalAmounts: j.supportsLocalAmounts,
+                    currency: j.destinationCurrencyCode, data: j.data, bundle: j.bundle, pin: j.pin,
+                    message: d.ok ? null : String(j.message || '').slice(0, 120) });
+            } catch (e) { out.push({ form, error: e.message }); }
+        }
+        return res.json({ success: true, results: out });
+    } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
+});
+
 // XAMEPAY_CROSSSEND_V1: send between XamePay wallets of different currencies. Off until
 // XAMEPAY_CROSSSEND_ENABLED=true; also needs XAMEPAY_QUOTE_SECRET and FX_MARGIN_PERCENT.
 const walletCrossSendLedgerSchema = new mongoose.Schema({
