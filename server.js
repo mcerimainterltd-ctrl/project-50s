@@ -12990,6 +12990,76 @@ app.post('/api/admin/settle-bill/:reference', async (req, res) => {
     } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
 });
 
+// XAMEPAY_BILL_HISTORY_RESTORE_V1: admin-only. Re-adds the history entry of a SUCCEEDED bill purchase when the wallet no longer has it. Idempotent; never touches balance.
+app.post('/api/admin/restore-bill-history/:reference', async (req, res) => {
+    if (!xamepayAdminOk(req)) return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    try {
+        const reference = String(req.params.reference || '').trim();
+        const found = await WalletBillLedger.find({ reference }).limit(2).lean();
+        if (found.length !== 1) return res.status(404).json({ success: false, message: 'Not found, or ambiguous.' });
+        const led = found[0];
+        if (led.status !== 'succeeded') return res.json({ success: false, status: led.status, message: 'Only succeeded purchases can be restored.' });
+        const entry = {
+            id: led.reference, ref: led.reference,
+            label: led.serviceType + ' purchase',
+            icon: ({ airtime: '\ud83d\udcf1', data: '\ud83d\udcf6', bill: '\ud83e\uddfe' })[led.serviceType] || '\ud83e\uddfe',
+            amount: led.totalDebit, principal: led.principal, fee: led.fee,
+            type: 'debit', status: 'Completed', source: 'wallet_bill', ts: led.createdAt
+        };
+        const r = await Wallet.updateOne(
+            { xameId: led.userId, 'transactions.ref': { $ne: led.reference } },
+            { $push: { transactions: { $each: [entry], $position: 0 } } }
+        );
+        console.log('[XamePay restore-bill-history]', reference, 'restored:', r.modifiedCount === 1);
+        return res.json({ success: true, restored: r.modifiedCount === 1, alreadyPresent: r.matchedCount === 0 });
+    } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
+});
+
+// XAMEPAY_BILL_HISTORY_PROBE_V1: admin-only, read-only. Shows which Flutterwave bills/history filter can find one bill.
+app.get('/api/admin/bill-history-probe/:reference', async (req, res) => {
+    if (!xamepayAdminOk(req)) return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    try {
+        const reference = String(req.params.reference || '').trim();
+        const found = await WalletBillLedger.find({ reference }).limit(2).lean();
+        if (found.length !== 1) return res.status(404).json({ success: false, message: 'Not found, or ambiguous.' });
+        const led = found[0];
+        const key = process.env.FLW_SECRET_KEY || process.env.FLW_SECRET || FLW_SECRET;
+        if (!key) return res.status(503).json({ success: false, message: 'Provider not configured.' });
+        const H = { Authorization: 'Bearer ' + key };
+        const sr = await fetch('https://api.flutterwave.com/v3/bills/' + encodeURIComponent(led.reference) + '?verbose=1', { headers: H, signal: AbortSignal.timeout(12000) });
+        const sj = await sr.json().catch(() => null);
+        const sd = (sj && sj.data) || {};
+        const from = new Date(new Date(led.createdAt).getTime() - 48 * 3600 * 1000).toISOString();
+        const to = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+        const variants = [
+            { name: 'noReference' },
+            { name: 'merchantRef', reference: led.reference },
+            { name: 'txRef', reference: sd.tx_ref },
+            { name: 'flwRef', reference: sd.flw_ref }
+        ];
+        const out = [];
+        for (const v of variants) {
+            if (v.name !== 'noReference' && !v.reference) { out.push({ name: v.name, skipped: 'no value' }); continue; }
+            const q = { status: 'Successful', from, to, page: '1', limit: '100' };
+            if (v.reference) q.reference = String(v.reference);
+            try {
+                const r = await fetch('https://api.flutterwave.com/v3/bills/history?' + new URLSearchParams(q).toString(), { headers: H, signal: AbortSignal.timeout(12000) });
+                const j = await r.json().catch(() => null);
+                const rows = Array.isArray(j && j.data) ? j.data : null;
+                out.push({
+                    name: v.name, http: r.status, apiStatus: j && j.status,
+                    message: String((j && j.message) || '').slice(0, 120),
+                    total: j && j.meta && j.meta.page_info ? j.meta.page_info.total : null,
+                    count: rows ? rows.length : null,
+                    matches: rows ? rows.filter(x => x && (String(x.customer_reference || '').trim() === String(led.reference) || String(x.tx_ref || '').trim() === String(sd.tx_ref || '-')))
+                        .map(x => ({ status: x.status, amount: x.amount, tx_ref: x.tx_ref, flw_ref: x.flw_ref, customer_reference: x.customer_reference })) : []
+                });
+            } catch (e) { out.push({ name: v.name, error: e.message }); }
+        }
+        return res.json({ success: true, reference, statusEndpoint: { http: sr.status, status: sd.status, tx_ref: sd.tx_ref, flw_ref: sd.flw_ref }, variants: out });
+    } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
+});
+
 // XAMEPAY_CROSSSEND_V1: send between XamePay wallets of different currencies. Off until
 // XAMEPAY_CROSSSEND_ENABLED=true; also needs XAMEPAY_QUOTE_SECRET and FX_MARGIN_PERCENT.
 const walletCrossSendLedgerSchema = new mongoose.Schema({
