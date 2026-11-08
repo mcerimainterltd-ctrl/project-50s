@@ -17259,6 +17259,33 @@ const _xpAssetCache = {};
 
 async function resolveXamePayAsset(tag, ext) {
     const key = tag + '|' + ext;
+    // XAMEPAY_DOWNLOAD_AUTH_V1: with XAMEPAY_GH_READ_TOKEN (read-only, this repo only) a private release is
+    // served through GitHub's short-lived signed link. Without the token the original lookup below is used.
+    const tok = process.env.XAMEPAY_GH_READ_TOKEN || '';
+    if (tok) {
+        const ahit = _xpAssetCache['auth|' + key];
+        if (ahit && Date.now() - ahit.at < 2 * 60 * 1000) return ahit.url;
+        try {
+            const gh = { 'User-Agent': 'XamePage-Server', Authorization: 'Bearer ' + tok };
+            const r = await fetch(`https://api.github.com/repos/${XAMEPAY_REPO}/releases/tags/${encodeURIComponent(tag)}`,
+                { headers: { ...gh, Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(10000) });
+            if (r.ok) {
+                const rel = await r.json();
+                const asset = rel && rel.draft !== true && (rel.assets || []).find(a => a.name.toLowerCase().endsWith(ext));
+                if (asset) {
+                    const a = await fetch(`https://api.github.com/repos/${XAMEPAY_REPO}/releases/assets/${asset.id}`,
+                        { headers: { ...gh, Accept: 'application/octet-stream' }, redirect: 'manual', signal: AbortSignal.timeout(10000) });
+                    const loc = a.headers.get('location');
+                    if (a.status >= 300 && a.status < 400 && loc) {
+                        _xpAssetCache['auth|' + key] = { url: loc, at: Date.now() };
+                        return loc;
+                    }
+                }
+            }
+            console.error('XamePay authenticated asset lookup failed:', tag);
+        } catch (e) { console.error('XamePay authenticated asset lookup error:', e.message); }
+        return '';
+    }
     const hit = _xpAssetCache[key];
     if (hit && Date.now() - hit.at < XAMEPAY_CACHE_MS) return hit.url;
     try {
@@ -17284,6 +17311,12 @@ app.post('/api/xamepay/approve', async (req, res) => {
     if (!/^\d+\.\d+\.\d+$/.test(String(version || '')) || !Number.isInteger(build) || build < 1)
         return res.status(400).json({ success: false, message: 'valid version (x.y.z) and buildNumber required.' });
     try {
+        // XAMEPAY_APPROVE_MONOTONIC_V1: an older build cannot replace the approved one unless force is sent.
+        const curApproved = await XamePayVersion.findOne().sort({ updatedAt: -1 }).lean();
+        if (curApproved && build < curApproved.buildNumber && req.body.force !== true) {
+            return res.status(409).json({ success: false,
+                message: `Build ${build} is older than the approved build ${curApproved.buildNumber}. Send force:true to roll back.` });
+        }
         await XamePayVersion.findOneAndUpdate({}, { version, buildNumber: build, updatedAt: new Date() }, { upsert: true, new: true });
         res.json({ success: true, message: `XamePay approved: v${version} build ${build}.` });
     } catch (err) {
