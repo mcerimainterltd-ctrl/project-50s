@@ -1166,6 +1166,19 @@ async function walletBillCheckProvider(ledger) {
       const st = await sr.json().catch(() => null);
       const sd = (st && st.data) || {};
       console.log('[bill-check] status-endpoint', ledger.reference, sr.status, st && st.status, String((st && st.message) || '').slice(0, 80), 'data.status:', sd.status, 'amount:', sd.amount, 'currency:', sd.currency, 'tx_ref:', sd.tx_ref, 'flw_ref:', sd.flw_ref, 'keys:', Object.keys(sd).join(','), 'verbose-detail:', JSON.stringify({ status: sd.status, extra: sd.extra, product_details: sd.product_details, transaction_date: sd.transaction_date, batch_id: sd.batch_id }).slice(0, 500));
+      if (sr.ok && st && String(st.status || '').trim().toLowerCase() === 'success' &&
+          String(sd.status || '').trim().toLowerCase() === 'successful' &&
+          String(sd.tx_ref || '').trim() === providerRef &&
+          Number.isFinite(Number(sd.amount)) && Number.isFinite(Number(ledger.principal)) &&
+          Math.abs(Number(sd.amount) - Number(ledger.principal)) < 0.005 &&
+          String(sd.currency || '').trim().toUpperCase() === String(ledger.currency || '').trim().toUpperCase()) {
+        // XAMEPAY_BILL_STATUS_SETTLE_V1: provider status endpoint (verbose) confirmed success.
+        await transitionWalletBill(ledger.userId, ledger.reference, 'succeeded', {
+          confirmedSuccess: true, providerChecked: true,
+          providerReference: providerRef, providerStatus: 'successful'
+        });
+        return await WalletBillLedger.findOne({ userId: ledger.userId, reference: ledger.reference }).lean();
+      }
     } catch (err) { console.log('[bill-check] status-endpoint error', err && err.message); }
     await transitionWalletBill(
       ledger.userId,
