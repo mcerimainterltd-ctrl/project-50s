@@ -1169,7 +1169,8 @@ async function walletBillCheckProvider(ledger) {
       console.log('[bill-check] settle-conditions', ledger.reference, 'ok:', sr.ok, 'apiStatus:', st && st.status, 'dataStatus:', sd.status, 'txRef:', sd.tx_ref, 'flwRef:', sd.flw_ref, 'storedRef:', providerRef, 'custRef:', sd.customer_reference, 'amount:', sd.amount, 'principal:', ledger.principal, 'cur:', sd.currency, ledger.currency);
       if (sr.ok && st && String(st.status || '').trim().toLowerCase() === 'success' &&
           String(sd.status || '').trim().toLowerCase() === 'successful' &&
-          String(sd.tx_ref || '').trim() === providerRef &&
+          String(sd.customer_reference || '').trim() === String(ledger.reference) &&
+          (providerRef === String(ledger.reference) || String(sd.tx_ref || '').trim() === providerRef) &&
           Number.isFinite(Number(sd.amount)) && Number.isFinite(Number(ledger.principal)) &&
           Math.abs(Number(sd.amount) - Number(ledger.principal)) < 0.005 &&
           String(sd.currency || '').trim().toUpperCase() === String(ledger.currency || '').trim().toUpperCase()) {
