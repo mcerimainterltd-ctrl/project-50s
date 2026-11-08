@@ -1086,9 +1086,10 @@ async function walletBillCheckProvider(ledger) {
   if (!createdAt || Number.isNaN(createdAt.getTime())) return ledger;
 
   // Include a small clock-skew margin; never use the API's old default dates.
-  const from = new Date(createdAt.getTime() - 48 * 60 * 60 * 1000)
+  // XAMEPAY_BILL_HISTORY_WINDOW_V1: no reference filter is sent (it never matches our merchant reference), so keep the window tight around the purchase.
+  const from = new Date(createdAt.getTime() - 30 * 60 * 1000)
     .toISOString();
-  const to = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  const to = new Date(Math.min(Date.now() + 5 * 60 * 1000, createdAt.getTime() + 2 * 60 * 60 * 1000)).toISOString();
 
   let matched = null;
   let lookupFailed = false;
@@ -1098,7 +1099,6 @@ async function walletBillCheckProvider(ledger) {
       status,
       from,
       to,
-      reference: ledger.reference,
       page: '1',
       limit: '100'
     });
@@ -1114,8 +1114,10 @@ async function walletBillCheckProvider(ledger) {
       );
 
       if (!response.ok) {
-        console.log('[bill-check] http', response.status, status, String(await response.text().catch(() => '')).slice(0, 160));
-        lookupFailed = true;
+        const _bt = String(await response.text().catch(() => ''));
+        console.log('[bill-check] http', response.status, status, _bt.slice(0, 160));
+        // XAMEPAY_BILL_HISTORY_EMPTY_V1: HTTP 400 "record not found" means no rows for this status in the window, not a failed lookup.
+        if (!(response.status === 400 && /record not found/i.test(_bt))) lookupFailed = true;
         continue;
       }
 
@@ -1132,7 +1134,7 @@ async function walletBillCheckProvider(ledger) {
 
       const candidates = payload.data.filter(item =>
         item &&
-        String(item.tx_ref || '').trim() === providerRef &&
+        (providerRef === String(ledger.reference) || String(item.tx_ref || '').trim() === providerRef) &&
         String(item.customer_reference || '').trim() === String(ledger.reference) &&
         String(item.status || '').trim().toLowerCase() === status.toLowerCase()
       );
