@@ -1114,11 +1114,13 @@ async function walletBillCheckProvider(ledger) {
       );
 
       if (!response.ok) {
+        console.log('[bill-check] http', response.status, status, String(await response.text().catch(() => '')).slice(0, 160));
         lookupFailed = true;
         continue;
       }
 
       const payload = await response.json();
+      console.log('[bill-check] payload', status, String(payload && payload.status), Array.isArray(payload && payload.data));
       if (
         !payload ||
         String(payload.status || '').trim().toLowerCase() !== 'success' ||
@@ -1151,7 +1153,8 @@ async function walletBillCheckProvider(ledger) {
         }
         matched = candidates[0];
       }
-    } catch (_) {
+    } catch (err) {
+      console.log('[bill-check] fetch error', status, err && err.message);
       lookupFailed = true;
     }
   }
