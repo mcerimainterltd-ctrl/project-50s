@@ -835,7 +835,7 @@ async function reserveWalletBill(input) {
         {
           $inc: { balance: -normalized.totalDebit },
           $push: {
-            transactions: {
+            transactions: { $each: [{
               id: normalized.reference,
               ref: normalized.reference,
               label: `${normalized.serviceType} purchase`,
@@ -847,7 +847,7 @@ async function reserveWalletBill(input) {
               status: 'Pending',
               source: 'wallet_bill',
               ts: new Date()
-            }
+            }], $position: 0, $slice: 100 }
           }
         },
         { new: true, session }
