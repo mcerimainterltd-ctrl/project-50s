@@ -16426,9 +16426,17 @@ async function auditXameLivePlan(
     await GoLivePlanAudit.create(audit);
 }
 
+function _adminSecretMatches(given) {
+    const expected = process.env.ADMIN_SECRET;
+    if (typeof given !== 'string' || !given || !expected) return false;
+    const c = require('crypto');
+    const a = c.createHash('sha256').update(given).digest();
+    const b = c.createHash('sha256').update(expected).digest();
+    return c.timingSafeEqual(a, b);
+}
 function verifyAdminSecret(req, res) {
-    const secret = req.body.secret || req.headers['x-admin-secret'];
-    if (!secret || secret !== process.env.ADMIN_SECRET) {
+    const secret = (req.body && req.body.secret) || req.headers['x-admin-secret'];
+    if (!_adminSecretMatches(secret)) {
         res.status(403).json({ success: false, message: 'Unauthorized.' });
         return false;
     }
