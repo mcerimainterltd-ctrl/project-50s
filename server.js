@@ -1135,6 +1135,7 @@ async function walletBillCheckProvider(ledger) {
         String(item.status || '').trim().toLowerCase() === status.toLowerCase()
       );
 
+      console.log('[bill-check]', ledger.reference, status, 'items:', payload.data.length, 'txRefMatch:', payload.data.filter(i => i && String(i.tx_ref || '').trim() === providerRef).length, 'custRefMatch:', payload.data.filter(i => i && String(i.customer_reference || '').trim() === String(ledger.reference)).length, 'candidates:', candidates.length);
       if (candidates.length > 1) {
         lookupFailed = true;
         matched = null;
@@ -1156,6 +1157,7 @@ async function walletBillCheckProvider(ledger) {
   }
 
   if (!matched || lookupFailed) {
+    console.log('[bill-check] pending', ledger.reference, 'lookupFailed:', lookupFailed, 'matched:', !!matched);
     await transitionWalletBill(
       ledger.userId,
       ledger.reference,
@@ -1188,6 +1190,7 @@ async function walletBillCheckProvider(ledger) {
 
 
   if (!identityMatches) {
+    console.log('[bill-check] details mismatch', ledger.reference, 'currency:', matched.currency, ledger.currency, 'country:', matched.country, ledger.country, 'amount:', providerAmount, ledgerAmount);
     await transitionWalletBill(
       ledger.userId,
       ledger.reference,
