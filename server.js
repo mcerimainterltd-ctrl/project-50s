@@ -1161,6 +1161,12 @@ async function walletBillCheckProvider(ledger) {
 
   if (!matched || lookupFailed) {
     console.log('[bill-check] pending', ledger.reference, 'lookupFailed:', lookupFailed, 'matched:', !!matched);
+    try {
+      const sr = await fetch('https://api.flutterwave.com/v3/bills/' + encodeURIComponent(ledger.reference), { method: 'GET', headers: { Authorization: 'Bearer ' + secret }, signal: AbortSignal.timeout(12000) });
+      const st = await sr.json().catch(() => null);
+      const sd = (st && st.data) || {};
+      console.log('[bill-check] status-endpoint', ledger.reference, sr.status, st && st.status, String((st && st.message) || '').slice(0, 80), 'data.status:', sd.status, 'amount:', sd.amount, 'currency:', sd.currency, 'tx_ref:', sd.tx_ref, 'flw_ref:', sd.flw_ref, 'keys:', Object.keys(sd).join(','));
+    } catch (err) { console.log('[bill-check] status-endpoint error', err && err.message); }
     await transitionWalletBill(
       ledger.userId,
       ledger.reference,
