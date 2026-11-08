@@ -1162,10 +1162,10 @@ async function walletBillCheckProvider(ledger) {
   if (!matched || lookupFailed) {
     console.log('[bill-check] pending', ledger.reference, 'lookupFailed:', lookupFailed, 'matched:', !!matched);
     try {
-      const sr = await fetch('https://api.flutterwave.com/v3/bills/' + encodeURIComponent(ledger.reference), { method: 'GET', headers: { Authorization: 'Bearer ' + secret }, signal: AbortSignal.timeout(12000) });
+      const sr = await fetch('https://api.flutterwave.com/v3/bills/' + encodeURIComponent(ledger.reference) + '?verbose=1', { method: 'GET', headers: { Authorization: 'Bearer ' + secret }, signal: AbortSignal.timeout(12000) });
       const st = await sr.json().catch(() => null);
       const sd = (st && st.data) || {};
-      console.log('[bill-check] status-endpoint', ledger.reference, sr.status, st && st.status, String((st && st.message) || '').slice(0, 80), 'data.status:', sd.status, 'amount:', sd.amount, 'currency:', sd.currency, 'tx_ref:', sd.tx_ref, 'flw_ref:', sd.flw_ref, 'keys:', Object.keys(sd).join(','));
+      console.log('[bill-check] status-endpoint', ledger.reference, sr.status, st && st.status, String((st && st.message) || '').slice(0, 80), 'data.status:', sd.status, 'amount:', sd.amount, 'currency:', sd.currency, 'tx_ref:', sd.tx_ref, 'flw_ref:', sd.flw_ref, 'keys:', Object.keys(sd).join(','), 'verbose-detail:', JSON.stringify({ status: sd.status, extra: sd.extra, product_details: sd.product_details, transaction_date: sd.transaction_date, batch_id: sd.batch_id }).slice(0, 500));
     } catch (err) { console.log('[bill-check] status-endpoint error', err && err.message); }
     await transitionWalletBill(
       ledger.userId,
