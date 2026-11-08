@@ -1166,6 +1166,7 @@ async function walletBillCheckProvider(ledger) {
       const st = await sr.json().catch(() => null);
       const sd = (st && st.data) || {};
       console.log('[bill-check] status-endpoint', ledger.reference, sr.status, st && st.status, String((st && st.message) || '').slice(0, 80), 'data.status:', sd.status, 'amount:', sd.amount, 'currency:', sd.currency, 'tx_ref:', sd.tx_ref, 'flw_ref:', sd.flw_ref, 'keys:', Object.keys(sd).join(','), 'verbose-detail:', JSON.stringify({ status: sd.status, extra: sd.extra, product_details: sd.product_details, transaction_date: sd.transaction_date, batch_id: sd.batch_id }).slice(0, 500));
+      console.log('[bill-check] settle-conditions', ledger.reference, 'ok:', sr.ok, 'apiStatus:', st && st.status, 'dataStatus:', sd.status, 'txRef:', sd.tx_ref, 'flwRef:', sd.flw_ref, 'storedRef:', providerRef, 'custRef:', sd.customer_reference, 'amount:', sd.amount, 'principal:', ledger.principal, 'cur:', sd.currency, ledger.currency);
       if (sr.ok && st && String(st.status || '').trim().toLowerCase() === 'success' &&
           String(sd.status || '').trim().toLowerCase() === 'successful' &&
           String(sd.tx_ref || '').trim() === providerRef &&
