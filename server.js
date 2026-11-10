@@ -12966,7 +12966,7 @@ async function xamepaySettleTransferEvent(payload) {
             String(p.currency || '').toUpperCase() === String(t.currency || '').toUpperCase() &&
             String(p.account_number || '') === String(t.accountNumber || '') &&
             String(p.bank_code || '') === String(t.accountBank || '');
-        if (!ok) return;
+        if (!ok) { console.log('[XamePay transfer settle] no match', reference, 'status:', p && p.status, 'id:', !!(p && String(p.id) === String(t.providerReference)), 'ref:', !!(p && String(p.reference || '') === reference), 'amount:', !!(p && Number(p.amount) === Number(t.principal)), 'cur:', !!(p && String(p.currency || '').toUpperCase() === String(t.currency || '').toUpperCase()), 'acct:', !!(p && String(p.account_number || '') === String(t.accountNumber || '')), 'bank:', !!(p && String(p.bank_code || '') === String(t.accountBank || ''))); return; }
         const st = String(p.status || '').toUpperCase();
         if (st === 'SUCCESSFUL') await finalizeWalletTransfer(t.userId, reference, 'succeeded');
         else if (st === 'FAILED') await finalizeWalletTransfer(t.userId, reference, 'refunded');
@@ -13237,6 +13237,39 @@ app.get('/api/admin/payout-probe', async (req, res) => {
         return res.json({ success: true, ...out });
     } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
 });
+
+// XAMEPAY_PAYOUT_TABLE_V1: international bank and mobile-money payouts. A currency or rail opens only when it has an entry here,
+// and stays closed until the user is listed in XAMEPAY_PAYOUT_TEST_USERS (comma-separated IDs) or XAMEPAY_PAYOUT_OPEN_<RAIL>=true is set.
+const XAMEPAY_PAYOUT_RAILS = {
+    GHS_MOMO: {
+        currency: 'GHS', banks: ['MTN'], minAmount: 1, maxAmount: 50,
+        // TEST ASSUMPTION: Flutterwave reports this fee as type percentage, value 0.015; read here as 1.5%.
+        // Check it against the real provider reply (logged as [XamePay payout]) before opening this rail.
+        providerFee: (amt) => amt * 0.015,
+        marginMultiplier: 1.5, feeStep: 0.5, minFee: 0.5
+    }
+};
+function xamepayPayoutPlan(walletCur, userId, bankCode, accountNumber, amount, accName) {
+    const bad = (status, code, message) => ({ ok: false, status, code, message });
+    const closed = () => bad(403, 'PAYOUT_NOT_AVAILABLE', 'Bank transfers from this wallet are not available yet.');
+    const code = String(bankCode || '').trim().toUpperCase();
+    const key = Object.keys(XAMEPAY_PAYOUT_RAILS).find(k => XAMEPAY_PAYOUT_RAILS[k].currency === walletCur && XAMEPAY_PAYOUT_RAILS[k].banks.includes(code));
+    if (!key) return closed();
+    const rail = XAMEPAY_PAYOUT_RAILS[key];
+    const testers = String(process.env.XAMEPAY_PAYOUT_TEST_USERS || '').split(',').map(x => x.trim()).filter(Boolean);
+    if (process.env['XAMEPAY_PAYOUT_OPEN_' + key] !== 'true' && !testers.includes(String(userId))) return closed();
+    if (!Number.isFinite(amount) || amount < rail.minAmount) return bad(400, 'AMOUNT_TOO_SMALL', 'The minimum is ' + rail.minAmount + ' ' + rail.currency + '.');
+    if (amount > rail.maxAmount) return bad(400, 'AMOUNT_TOO_LARGE', 'The maximum is ' + rail.maxAmount + ' ' + rail.currency + ' for now.');
+    const name = String(accName || '').trim();
+    if (name.length < 2) return bad(400, 'NAME_REQUIRED', 'Enter the recipient name.');
+    let num = String(accountNumber || '').replace(/\D/g, '');
+    if (/^0\d{9}$/.test(num)) num = '233' + num.slice(1);
+    if (!/^233\d{9}$/.test(num)) return bad(400, 'BAD_NUMBER', 'Enter a valid Ghana mobile money number.');
+    const pf = rail.providerFee(amount);
+    const fee = Math.max(rail.minFee, Math.ceil(pf * rail.marginMultiplier / rail.feeStep - 1e-9) * rail.feeStep);
+    return { ok: true, rail: key, bankCode: code, accountNumber: num, fee: Math.round(fee * 100) / 100,
+        flwFee: Math.round(pf * 10000) / 10000, extra: { beneficiary_name: name, debit_currency: 'NGN' } };
+}
 
 // XAMEPAY_CROSSSEND_V1: send between XamePay wallets of different currencies. Off until
 // XAMEPAY_CROSSSEND_ENABLED=true; also needs XAMEPAY_QUOTE_SECRET and FX_MARGIN_PERCENT.
@@ -14329,7 +14362,7 @@ app.post('/api/wallet/send-bank', async (req, res) => {
     }
 
 
-    const { userId, account_bank, account_number, amount, currency, narration, accName, bankName } = req.body;
+    let { userId, account_bank, account_number, amount, currency, narration, accName, bankName } = req.body;
     const requestedRef = String(req.body.reference || req.get('Idempotency-Key') || '').trim();
     if (!requestedRef || !/^[A-Za-z0-9._:-]{8,100}$/.test(requestedRef)) {
         return res.status(400).json({ success: false, message: 'A valid stable transfer reference is required' });
@@ -14339,6 +14372,7 @@ app.post('/api/wallet/send-bank', async (req, res) => {
     const senderFullName = senderUser ? `${senderUser.firstName} ${senderUser.lastName}`.trim() || userId : userId;
     const senderWallet = await Wallet.findOne({ xameId: userId }).lean();
     const senderVA = senderWallet?.virtualAccount || {};
+    let _rail = null; // XAMEPAY_PAYOUT_TABLE_V1
     // XAMEPAY_SENDBANK_CURRENCY_GUARD_V1: the payout currency must be the wallet's own currency;
     // never debit a balance in one currency to pay out another.
     {
@@ -14352,8 +14386,12 @@ app.post('/api/wallet/send-bank', async (req, res) => {
         // XAMEPAY_SENDBANK_NGN_ONLY_V1: the fee schedule is in naira, so bank payouts from other
         // currencies stay closed until a per-currency fee table exists.
         if (walletCur !== 'NGN') {
-            return res.status(403).json({ success: false, code: 'BANK_PAYOUT_NGN_ONLY',
-                message: 'Bank transfers from this wallet are not available yet.' });
+            // XAMEPAY_PAYOUT_TABLE_V1: a non-naira payout needs an open rail in the payout table.
+            const _p = xamepayPayoutPlan(walletCur, userId, account_bank, account_number, requestedAmount, accName);
+            if (!_p.ok) return res.status(_p.status).json({ success: false, code: _p.code, message: _p.message });
+            _rail = _p;
+            account_bank = _p.bankCode;
+            account_number = _p.accountNumber;
         }
     }
     const senderVAName = senderVA.accountName || senderFullName;
@@ -14368,6 +14406,7 @@ app.post('/api/wallet/send-bank', async (req, res) => {
         if (requestedAmount <= 5000)       { flwFee = 10; fee = 15; }
         else if (requestedAmount <= 50000) { flwFee = 25; fee = 40; }
         else                      { flwFee = 50; fee = 75; }
+        if (_rail) { flwFee = _rail.flwFee; fee = _rail.fee; } // XAMEPAY_PAYOUT_FEE_V1
         const ourMargin = fee - flwFee;
         const totalDebit = requestedAmount + fee;
         txRef = requestedRef;
@@ -14405,10 +14444,11 @@ app.post('/api/wallet/send-bank', async (req, res) => {
                 method: 'POST',
                 signal: AbortSignal.timeout(20000), // XAMEPAY_SENDBANK_TIMEOUT_V1
                 headers: { Authorization: `Bearer ${FLW_SECRET}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ account_bank, account_number, amount: requestedAmount, currency: currency || 'NGN', narration: `XamePay|${senderFullName}`, reference: txRef })
+                body: JSON.stringify({ account_bank, account_number, amount: requestedAmount, currency: currency || 'NGN', narration: `XamePay|${senderFullName}`, reference: txRef, ...(_rail ? _rail.extra : {}) })
             });
             const data = await r.json();
             const providerId = data && data.data && data.data.id;
+            if (_rail) console.log('[XamePay payout]', _rail.rail, 'http', r.status, data && data.status, 'fee:', data && data.data && data.data.fee, 'status:', data && data.data && data.data.status, 'id:', providerId, 'msg:', String((data && data.message) || '').slice(0, 120));
             if (r.ok && data.status === 'success' && /^\d+$/.test(String(providerId || ''))) {
                 await transitionWalletTransfer(userId, txRef, ['reserved'], {
                     status: 'submitted',
