@@ -13361,6 +13361,29 @@ app.get('/api/admin/payout-branch-probe', async (req, res) => {
     } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
 });
 
+// XAMEPAY_PAYOUT_RECORD_V1: admin-only, read-only. Shows Flutterwave's own record (fee, currencies, status) for one outgoing transfer. Account number and name are left out.
+app.get('/api/admin/payout-record/:reference', async (req, res) => {
+    if (!xamepayAdminOk(req)) return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    try {
+        const reference = String(req.params.reference || '').trim();
+        const found = await WalletTransferLedger.find({ reference }).limit(2).lean();
+        if (found.length !== 1) return res.status(404).json({ success: false, message: 'Not found, or ambiguous.' });
+        const t = found[0];
+        const key = process.env.FLW_SECRET_KEY || process.env.FLW_SECRET || FLW_SECRET;
+        if (!key) return res.status(503).json({ success: false, message: 'Provider not configured.' });
+        const ledger = { status: t.status, currency: t.currency, principal: t.principal, fee: t.fee, totalDebit: t.totalDebit, accountBank: t.accountBank };
+        if (!/^\d+$/.test(String(t.providerReference || ''))) return res.json({ success: false, message: 'No provider transfer id on this record.', ledger });
+        const r = await fetch('https://api.flutterwave.com/v3/transfers/' + encodeURIComponent(String(t.providerReference)), {
+            headers: { Authorization: 'Bearer ' + key, Accept: 'application/json' }, signal: AbortSignal.timeout(12000) });
+        const j = await r.json().catch(() => null);
+        const p = (j && j.data) || {};
+        return res.json({ success: true, http: r.status, ledger,
+            provider: { status: p.status, currency: p.currency, debit_currency: p.debit_currency, amount: p.amount, fee: p.fee,
+                bank_code: p.bank_code, bank_name: p.bank_name, is_approved: p.is_approved, created_at: p.created_at,
+                complete_message: String(p.complete_message || '').slice(0, 120) } });
+    } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
+});
+
 // XAMEPAY_CROSSSEND_V1: send between XamePay wallets of different currencies. Off until
 // XAMEPAY_CROSSSEND_ENABLED=true; also needs XAMEPAY_QUOTE_SECRET and FX_MARGIN_PERCENT.
 const walletCrossSendLedgerSchema = new mongoose.Schema({
