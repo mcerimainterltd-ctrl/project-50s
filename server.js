@@ -13271,6 +13271,25 @@ function xamepayPayoutPlan(walletCur, userId, bankCode, accountNumber, amount, a
         flwFee: Math.round(pf * 10000) / 10000, extra: { beneficiary_name: name, debit_currency: 'NGN' } };
 }
 
+// XAMEPAY_PAYOUT_QUOTE_V1: fee quote for a non-naira bank or mobile-money payout. Read-only; uses the same table as send-bank.
+app.get('/api/wallet/payout/quote', async (req, res) => {
+    const userId = String(req.query.userId || '').trim();
+    const bank = String(req.query.bank || '').trim();
+    const amount = Number(req.query.amount);
+    try {
+        if (!userId || !(await requireWalletSessionOwner(req, res, userId))) return;
+        const w = await Wallet.findOne({ xameId: userId }).select('currency').lean();
+        const dflt = String(process.env.WALLET_DEFAULT_CURRENCY || 'NGN').toUpperCase();
+        const cur = String((w && w.currency) || dflt).toUpperCase();
+        if (cur === 'NGN') return res.json({ success: true, needed: false });
+        // The recipient name and number are not known yet at quote time, so placeholders pass those checks.
+        const p = xamepayPayoutPlan(cur, userId, bank, '233000000000', amount, 'Quote Check');
+        if (!p.ok) return res.status(p.status).json({ success: false, code: p.code, message: p.message });
+        return res.json({ success: true, needed: true, currency: cur, amount, fee: p.fee,
+            totalDebit: Math.round((amount + p.fee) * 100) / 100 });
+    } catch (e) { return res.status(500).json({ success: false, message: 'Could not get a fee quote.' }); }
+});
+
 // XAMEPAY_CROSSSEND_V1: send between XamePay wallets of different currencies. Off until
 // XAMEPAY_CROSSSEND_ENABLED=true; also needs XAMEPAY_QUOTE_SECRET and FX_MARGIN_PERCENT.
 const walletCrossSendLedgerSchema = new mongoose.Schema({
