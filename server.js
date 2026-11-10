@@ -2311,10 +2311,43 @@ const liveSessionSchema = new mongoose.Schema({
     createdAt: {
         type: Date,
         default: Date.now
+    },
+    // LIVE_AUDIENCE_V1: who may find and watch this live
+    audience: {
+        type: String,
+        enum: ['everyone', 'contacts', 'selected'],
+        default: 'everyone',
+        index: true
+    },
+    allowedViewers: {
+        type: [String],
+        default: []
     }
 });
 
 const LiveSession = mongoose.model('LiveSession', liveSessionSchema);
+
+// LIVE_AUDIENCE_V1: single access rule used everywhere a live is listed, announced or joined.
+// 'contacts' means people in the broadcaster's own contact list.
+async function canViewLive(session, viewerXameId) {
+    if (!session) return false;
+    const audience = session.audience || 'everyone';
+    if (audience === 'everyone') return true;
+    if (!viewerXameId) return false;
+    if (viewerXameId === session.broadcasterXameId) return true;
+    if (audience === 'selected') {
+        return (session.allowedViewers || []).includes(viewerXameId);
+    }
+    if (audience === 'contacts') {
+        const [owner, viewer] = await Promise.all([
+            User.findOne({ xameId: session.broadcasterXameId }).select('contacts').lean(),
+            User.findOne({ xameId: viewerXameId }).select('_id').lean()
+        ]);
+        if (!owner || !viewer) return false;
+        return (owner.contacts || []).some(c => String(c.contactId) === String(viewer._id));
+    }
+    return false;
+}
 
 
 // ── XameLive usage accounting ───────────────────────────────────────────────
@@ -3003,7 +3036,28 @@ async function refreshLiveSessionStatus(session) {
 
             await session.save();
 
-            io.emit('live:started', liveSessionPublicData(session));
+            // LIVE_AUDIENCE_ANNOUNCE_V1: announce only to people allowed to see this live
+            {
+                const pub = liveSessionPublicData(session);
+                const aud = session.audience || 'everyone';
+                if (aud === 'everyone') {
+                    io.emit('live:started', pub);
+                } else {
+                    let ids = [session.broadcasterXameId];
+                    if (aud === 'selected') {
+                        ids = ids.concat(session.allowedViewers || []);
+                    } else if (aud === 'contacts') {
+                        const owner = await User.findOne({ xameId: session.broadcasterXameId })
+                            .populate('contacts.contactId', 'xameId').lean();
+                        ids = ids.concat((owner?.contacts || [])
+                            .map(c => c.contactId && c.contactId.xameId).filter(Boolean));
+                    }
+                    for (const id of new Set(ids)) {
+                        const sid = findSocketId(id);
+                        if (sid) io.to(sid).emit('live:started', pub);
+                    }
+                }
+            }
         } else if (
             (
                 cloudStatus === 'client_disconnect' ||
@@ -4045,6 +4099,26 @@ app.post('/api/live/start', async (req, res) => {
             });
         }
 
+        // LIVE_AUDIENCE_START_V1: the author's audience choice
+        const audienceRaw = typeof req.body?.audience === 'string' ? req.body.audience : 'everyone';
+        const audience = ['everyone', 'contacts', 'selected'].includes(audienceRaw) ? audienceRaw : null;
+        if (!audience) {
+            return res.status(400).json({ success: false, message: 'Invalid audience.' });
+        }
+        let allowedViewers = [];
+        if (audience === 'selected') {
+            const requested = Array.isArray(req.body?.allowedViewers)
+                ? [...new Set(req.body.allowedViewers.filter(v => typeof v === 'string' && v.length <= 64))].slice(0, 200)
+                : [];
+            const found = requested.length
+                ? await User.find({ xameId: { $in: requested } }).select('xameId').lean()
+                : [];
+            allowedViewers = found.map(u => u.xameId).filter(id => id !== authUser.xameId);
+            if (!allowedViewers.length) {
+                return res.status(400).json({ success: false, message: 'Choose at least one person for a selected audience.' });
+            }
+        }
+
         // Prevent double-tap/retry creating two sessions at once.
         const startLockKey = String(authUser.xameId);
 
@@ -4118,7 +4192,9 @@ app.post('/api/live/start', async (req, res) => {
             entitlementId: entitlement._id,
             allowedMinutes: 0,
             usageCutoffAt: null,
-            usageRecorded: false
+            usageRecorded: false,
+            audience,
+            allowedViewers
         });
 
         return res.json({
@@ -4258,12 +4334,15 @@ app.get('/api/live/active', async (req, res) => {
             .sort({ startedAt: -1, createdAt: -1 })
             .limit(50);
 
+        // LIVE_AUDIENCE_LIST_V1: only lives this viewer may see
+        const viewer = await getAuthenticatedUserFromSession(req);
+        const viewerId = viewer ? viewer.xameId : null;
         const result = [];
 
         for (const session of sessions) {
             await refreshLiveSessionStatus(session);
 
-            if (session.status !== 'ENDED') {
+            if (session.status !== 'ENDED' && await canViewLive(session, viewerId)) {
                 result.push(liveSessionPublicData(session));
             }
         }
@@ -4298,6 +4377,17 @@ app.get('/api/live/:sessionId', async (req, res) => {
         }
 
         await refreshLiveSessionStatus(session);
+
+        // LIVE_AUDIENCE_DETAIL_V1
+        {
+            const viewer = await getAuthenticatedUserFromSession(req);
+            if (!await canViewLive(session, viewer ? viewer.xameId : null)) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Live session not found.'
+                });
+            }
+        }
 
         return res.json({
             success: true,
@@ -4347,6 +4437,14 @@ app.get('/api/live/:sessionId/watch', async (req, res) => {
             });
         }
 
+        // LIVE_AUDIENCE_WATCH_V1
+        if (!await canViewLive(session, authUser.xameId)) {
+            return res.status(404).json({
+                success: false,
+                message: 'Live session not found.'
+            });
+        }
+
         return res.json({
             success: true,
             session: liveSessionPublicData(session)
@@ -4391,6 +4489,14 @@ app.post('/api/live/:sessionId/join', async (req, res) => {
             return res.status(409).json({
                 success: false,
                 message: 'This live broadcast is not currently live.'
+            });
+        }
+
+        // LIVE_AUDIENCE_JOIN_V1
+        if (!await canViewLive(session, authUser.xameId)) {
+            return res.status(404).json({
+                success: false,
+                message: 'Live session not found.'
             });
         }
 
@@ -6513,6 +6619,18 @@ io.on('connection', (socket) => {
                     broadcaster: true
                 });
 
+                return;
+            }
+
+            // LIVE_AUDIENCE_SOCKET_V1: same rule as the HTTP routes
+            if (!await canViewLive(session, userId)) {
+                const error = {
+                    success: false,
+                    message: 'Live session not found.'
+                };
+
+                socket.emit('live:error', error);
+                reply(error);
                 return;
             }
 
