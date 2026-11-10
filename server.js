@@ -14868,6 +14868,17 @@ app.post('/api/wallet/transfer', async (req, res) => {
 
   const { account_bank, account_number, amount, currency, narration, reference, userId } = req.body;
   if (!account_bank || !account_number || !amount || !userId) return res.json({ success: false, message: 'Missing fields' });
+  // XAMEPAY_TRANSFER_CURRENCY_GUARD_V1: same rules as send-bank: the payout currency must be the wallet's own currency, and bank payouts stay NGN-only until the payout table opens a currency.
+  try {
+    const _gw = await Wallet.findOne({ xameId: userId }).select('currency').lean();
+    const _dc = String(process.env.WALLET_DEFAULT_CURRENCY || 'NGN').toUpperCase();
+    const _wc = String((_gw && _gw.currency) || _dc).toUpperCase();
+    const _rc = String(currency || 'NGN').trim().toUpperCase();
+    if (_rc !== _wc) return res.status(400).json({ success: false, code: 'CURRENCY_MISMATCH', message: 'The transfer currency must match your wallet currency.' });
+    if (_wc !== 'NGN') return res.status(403).json({ success: false, code: 'BANK_PAYOUT_NGN_ONLY', message: 'Bank transfers from this wallet are not available yet.' });
+  } catch (_) {
+    return res.status(503).json({ success: false, message: 'Wallet could not be checked.' });
+  }
 
   let txRef = null;
   let debited = false;
