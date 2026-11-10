@@ -13290,6 +13290,39 @@ app.get('/api/wallet/payout/quote', async (req, res) => {
     } catch (e) { return res.status(500).json({ success: false, message: 'Could not get a fee quote.' }); }
 });
 
+// XAMEPAY_BRANCH_PROBE_V1: admin-only, read-only. Shows Flutterwave's bank ids and branch codes for a bank (needed for Ghana bank payouts). Moves no money.
+app.get('/api/admin/payout-branch-probe', async (req, res) => {
+    if (!xamepayAdminOk(req)) return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    try {
+        const key = process.env.FLW_SECRET_KEY || process.env.FLW_SECRET || FLW_SECRET;
+        if (!key) return res.status(503).json({ success: false, message: 'Provider not configured.' });
+        const q = String(req.query.q || '').trim().toLowerCase();
+        const cc = String(req.query.cc || 'GH').trim().toUpperCase();
+        if (!q) return res.status(400).json({ success: false, message: 'Give a bank name fragment as q.' });
+        const H = { Authorization: 'Bearer ' + key };
+        const get = async (url) => {
+            try {
+                const r = await fetch(url, { headers: H, signal: AbortSignal.timeout(12000) });
+                const j = await r.json().catch(() => null);
+                return { http: r.status, j };
+            } catch (e) { return { error: e.message }; }
+        };
+        const b = await get('https://api.flutterwave.com/v3/banks/' + encodeURIComponent(cc));
+        const list = b.j && Array.isArray(b.j.data) ? b.j.data : [];
+        const hits = list.filter(x => x && String(x.name || '').toLowerCase().includes(q)).slice(0, 4);
+        const out = [];
+        for (const h of hits) {
+            const r = await get('https://api.flutterwave.com/v3/banks/' + encodeURIComponent(h.id) + '/branches');
+            const rows = r.j && Array.isArray(r.j.data) ? r.j.data : null;
+            out.push({ fields: Object.keys(h).join(','), id: h.id, code: h.code, name: h.name,
+                branchesHttp: r.http, branchCount: rows ? rows.length : null,
+                branches: rows ? rows.slice(0, 10).map(x => ({ id: x.id, branch_code: x.branch_code, branch_name: x.branch_name, bank_id: x.bank_id })) : null,
+                message: String((r.j && r.j.message) || '').slice(0, 100), error: r.error });
+        }
+        return res.json({ success: true, cc, bankHttp: b.http, totalBanks: list.length, matches: out });
+    } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
+});
+
 // XAMEPAY_CROSSSEND_V1: send between XamePay wallets of different currencies. Off until
 // XAMEPAY_CROSSSEND_ENABLED=true; also needs XAMEPAY_QUOTE_SECRET and FX_MARGIN_PERCENT.
 const walletCrossSendLedgerSchema = new mongoose.Schema({
