@@ -16644,12 +16644,23 @@ app.get('/api/app/download', async (req, res) => {
   <a href="javascript:history.back()" style="display:inline-flex;align-items:center;gap:6px;color:#6B7280;font-size:13px;text-decoration:none;margin-bottom:24px">‹ Back</a>
   <h1>Download XamePage</h1>
   <p>Choose your platform to download the latest version.</p>
+  <!-- PLAYSTORE_CARD_V1 -->
+  <a href="https://play.google.com/store/apps/details?id=com.xamepage.app" target="_blank" rel="noopener" class="btn">
+    <div class="btn-left">
+      <span class="btn-icon">▶️</span>
+      <div>
+        <div class="btn-title">Google Play</div>
+        <div class="btn-sub">Recommended · automatic updates</div>
+      </div>
+    </div>
+    <span class="btn-arrow">›</span>
+  </a>
   <a href="/api/app/download?platform=apk" class="btn">
     <div class="btn-left">
       <span class="btn-icon">🤖</span>
       <div>
         <div class="btn-title">Android APK</div>
-        <div class="btn-sub">For Android devices</div>
+        <div class="btn-sub">Direct download (latest build)</div>
       </div>
     </div>
     <span class="btn-arrow">›</span>
