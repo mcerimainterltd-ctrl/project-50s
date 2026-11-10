@@ -13203,6 +13203,41 @@ app.get('/api/admin/ng-detect-probe', async (req, res) => {
     } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
 });
 
+// XAMEPAY_PAYOUT_PROBE_V1: admin-only, read-only. Shows Flutterwave's live transfer fees, bank lists and balances for Ghana and Kenya payouts. Moves no money.
+app.get('/api/admin/payout-probe', async (req, res) => {
+    if (!xamepayAdminOk(req)) return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    try {
+        const key = process.env.FLW_SECRET_KEY || process.env.FLW_SECRET || FLW_SECRET;
+        if (!key) return res.status(503).json({ success: false, message: 'Provider not configured.' });
+        const H = { Authorization: 'Bearer ' + key };
+        const get = async (url) => {
+            try {
+                const r = await fetch(url, { headers: H, signal: AbortSignal.timeout(12000) });
+                const j = await r.json().catch(() => null);
+                return { http: r.status, j };
+            } catch (e) { return { error: e.message }; }
+        };
+        const out = { fees: [], banks: [], balances: [] };
+        for (const [cur, cc] of [['GHS', 'GH'], ['KES', 'KE']]) {
+            for (const type of ['account', 'mobilemoney']) {
+                for (const amt of [100, 1000, 10000]) {
+                    const r = await get('https://api.flutterwave.com/v3/transfers/fee?' + new URLSearchParams({ amount: String(amt), currency: cur, type }).toString());
+                    out.fees.push({ cur, type, amt, http: r.http, status: r.j && r.j.status,
+                        message: String((r.j && r.j.message) || '').slice(0, 100), data: r.j && r.j.data, error: r.error });
+                }
+            }
+            const b = await get('https://api.flutterwave.com/v3/banks/' + cc);
+            const list = b.j && Array.isArray(b.j.data) ? b.j.data : null;
+            out.banks.push({ cc, http: b.http, count: list ? list.length : null,
+                codes: list ? list.slice(0, 120).map(x => x.code + ':' + x.name) : null, error: b.error });
+            const bal = await get('https://api.flutterwave.com/v3/balances/' + cur);
+            out.balances.push({ cur, http: bal.http, status: bal.j && bal.j.status,
+                message: String((bal.j && bal.j.message) || '').slice(0, 100), data: bal.j && bal.j.data, error: bal.error });
+        }
+        return res.json({ success: true, ...out });
+    } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
+});
+
 // XAMEPAY_CROSSSEND_V1: send between XamePay wallets of different currencies. Off until
 // XAMEPAY_CROSSSEND_ENABLED=true; also needs XAMEPAY_QUOTE_SECRET and FX_MARGIN_PERCENT.
 const walletCrossSendLedgerSchema = new mongoose.Schema({
