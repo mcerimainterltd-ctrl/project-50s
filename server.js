@@ -13238,14 +13238,48 @@ app.get('/api/admin/payout-probe', async (req, res) => {
     } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
 });
 
+// XAMEPAY_PAYOUT_BRANCH_V1: Ghana bank payouts need a branch code. Find the bank by its code, then use the requested branch if it exists, or the first listed one.
+const _xpBranchCache = {};
+async function xamepayGhBranch(bankCode, wanted) {
+    const key = process.env.FLW_SECRET_KEY || process.env.FLW_SECRET || FLW_SECRET;
+    if (!key) return { ok: false, message: 'Provider not configured.' };
+    const H = { Authorization: 'Bearer ' + key };
+    try {
+        let hit = _xpBranchCache[bankCode];
+        if (!hit || Date.now() - hit.at > 60 * 60 * 1000) {
+            const b = await fetch('https://api.flutterwave.com/v3/banks/GH', { headers: H, signal: AbortSignal.timeout(12000) });
+            const bj = await b.json().catch(() => null);
+            const bank = bj && Array.isArray(bj.data) ? bj.data.find(x => x && String(x.code) === String(bankCode)) : null;
+            if (!bank) return { ok: false, message: 'This bank is not available.' };
+            const r = await fetch('https://api.flutterwave.com/v3/banks/' + encodeURIComponent(bank.id) + '/branches', { headers: H, signal: AbortSignal.timeout(12000) });
+            const rj = await r.json().catch(() => null);
+            const rows = rj && Array.isArray(rj.data) ? rj.data.map(x => String(x.branch_code || '')).filter(Boolean) : [];
+            if (!rows.length) return { ok: false, message: 'No branch is available for this bank.' };
+            hit = { at: Date.now(), rows };
+            _xpBranchCache[bankCode] = hit;
+        }
+        const w = String(wanted || '').trim();
+        if (w) return hit.rows.includes(w) ? { ok: true, code: w } : { ok: false, message: 'Choose a valid branch.' };
+        return { ok: true, code: hit.rows[0], defaulted: true };
+    } catch (e) { return { ok: false, message: 'Branch lookup unavailable. Try again shortly.' }; }
+}
+
 // XAMEPAY_PAYOUT_TABLE_V1: international bank and mobile-money payouts. A currency or rail opens only when it has an entry here,
 // and stays closed until the user is listed in XAMEPAY_PAYOUT_TEST_USERS (comma-separated IDs) or XAMEPAY_PAYOUT_OPEN_<RAIL>=true is set.
 const XAMEPAY_PAYOUT_RAILS = {
     GHS_MOMO: {
-        currency: 'GHS', banks: ['MTN'], minAmount: 1, maxAmount: 50,
+        currency: 'GHS', kind: 'momo', banks: ['MTN'], minAmount: 1, maxAmount: 50,
         // TEST ASSUMPTION: Flutterwave reports this fee as type percentage, value 0.015; read here as 1.5%.
         // Check it against the real provider reply (logged as [XamePay payout]) before opening this rail.
         providerFee: (amt) => amt * 0.015,
+        marginMultiplier: 1.5, feeStep: 0.5, minFee: 0.5
+    },
+    GHS_BANK: {
+        currency: 'GHS', kind: 'bank', banks: null,
+        matches: (c) => !['MTN', 'TELECEL', 'VODAFONE', 'AIRTELTIGO'].includes(c),
+        minAmount: 5, maxAmount: 100,
+        // Flutterwave's live fee for a GHS bank payout was a flat GHS 10 at the amounts sampled (100, 1000, 10000).
+        providerFee: () => 10,
         marginMultiplier: 1.5, feeStep: 0.5, minFee: 0.5
     }
 };
@@ -13253,7 +13287,7 @@ function xamepayPayoutPlan(walletCur, userId, bankCode, accountNumber, amount, a
     const bad = (status, code, message) => ({ ok: false, status, code, message });
     const closed = () => bad(403, 'PAYOUT_NOT_AVAILABLE', 'Bank transfers from this wallet are not available yet.');
     const code = String(bankCode || '').trim().toUpperCase();
-    const key = Object.keys(XAMEPAY_PAYOUT_RAILS).find(k => XAMEPAY_PAYOUT_RAILS[k].currency === walletCur && XAMEPAY_PAYOUT_RAILS[k].banks.includes(code));
+    const key = Object.keys(XAMEPAY_PAYOUT_RAILS).find(k => XAMEPAY_PAYOUT_RAILS[k].currency === walletCur && (XAMEPAY_PAYOUT_RAILS[k].banks ? XAMEPAY_PAYOUT_RAILS[k].banks.includes(code) : XAMEPAY_PAYOUT_RAILS[k].matches(code)));
     if (!key) return closed();
     const rail = XAMEPAY_PAYOUT_RAILS[key];
     const testers = String(process.env.XAMEPAY_PAYOUT_TEST_USERS || '').split(',').map(x => x.trim()).filter(Boolean);
@@ -13263,11 +13297,15 @@ function xamepayPayoutPlan(walletCur, userId, bankCode, accountNumber, amount, a
     const name = String(accName || '').trim();
     if (name.length < 2) return bad(400, 'NAME_REQUIRED', 'Enter the recipient name.');
     let num = String(accountNumber || '').replace(/\D/g, '');
-    if (/^0\d{9}$/.test(num)) num = '233' + num.slice(1);
-    if (!/^233\d{9}$/.test(num)) return bad(400, 'BAD_NUMBER', 'Enter a valid Ghana mobile money number.');
+    if (rail.kind === 'bank') {
+        if (!/^\d{8,18}$/.test(num)) return bad(400, 'BAD_NUMBER', 'Enter a valid bank account number.');
+    } else {
+        if (/^0\d{9}$/.test(num)) num = '233' + num.slice(1);
+        if (!/^233\d{9}$/.test(num)) return bad(400, 'BAD_NUMBER', 'Enter a valid Ghana mobile money number.');
+    }
     const pf = rail.providerFee(amount);
     const fee = Math.max(rail.minFee, Math.ceil(pf * rail.marginMultiplier / rail.feeStep - 1e-9) * rail.feeStep);
-    return { ok: true, rail: key, bankCode: code, accountNumber: num, fee: Math.round(fee * 100) / 100,
+    return { ok: true, rail: key, kind: rail.kind, bankCode: code, accountNumber: num, fee: Math.round(fee * 100) / 100,
         flwFee: Math.round(pf * 10000) / 10000, extra: { beneficiary_name: name, debit_currency: 'NGN' } };
 }
 
@@ -14442,6 +14480,12 @@ app.post('/api/wallet/send-bank', async (req, res) => {
             const _p = xamepayPayoutPlan(walletCur, userId, account_bank, account_number, requestedAmount, accName);
             if (!_p.ok) return res.status(_p.status).json({ success: false, code: _p.code, message: _p.message });
             _rail = _p;
+            if (_p.kind === 'bank') {
+                const _b = await xamepayGhBranch(_p.bankCode, req.body && req.body.branch_code);
+                if (!_b.ok) return res.status(400).json({ success: false, code: 'BRANCH_UNAVAILABLE', message: _b.message });
+                _rail.extra = { ..._rail.extra, destination_branch_code: _b.code };
+                if (_b.defaulted) console.log('[XamePay payout] branch defaulted for', _p.rail);
+            }
             account_bank = _p.bankCode;
             account_number = _p.accountNumber;
         }
