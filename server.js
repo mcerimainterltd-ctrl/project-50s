@@ -14630,6 +14630,18 @@ app.post('/api/wallet/send-bank', async (req, res) => {
 
             }
             console.error('[XamePay send-bank provider reply] XAMEPAY_SENDBANK_DIAG_V1', r.status, data && data.status, String((data && data.message) || '').slice(0, 200));
+            // XAMEPAY_PAYOUT_REJECT_REFUND_V1: a clear provider rejection of a non-naira payout means no transfer exists, so refund at once.
+            // Timeouts, 5xx answers and anything ambiguous stay unconfirmed and are never refunded here.
+            if (_rail && (r.status === 400 || r.status === 422) && data && data.status === 'error' && !(data.data && data.data.id) &&
+                !/reference|duplicate|exist/i.test(String(data.message || ''))) {
+                try {
+                    const _fin = await finalizeWalletTransfer(userId, txRef, 'refunded');
+                    if (_fin && _fin.status === 'refunded') {
+                        console.log('[XamePay payout] rejected and refunded', _rail.rail, r.status, String(data.message || '').slice(0, 120));
+                        return res.status(422).json({ success: false, refunded: true, txRef, message: 'The transfer was rejected by the payment provider. Your wallet has been refunded.' });
+                    }
+                } catch (_e) { console.error('[XamePay payout] auto-refund failed:', _e.message); }
+            }
             await transitionWalletTransfer(userId, txRef, ['reserved', 'submitted'], { status: 'unknown' });
             return res.status(202).json({ success: false, pending: true, txRef, message: 'Transfer outcome is unconfirmed; funds remain reserved while it is checked.' });
         }
