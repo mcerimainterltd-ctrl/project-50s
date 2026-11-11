@@ -13264,6 +13264,34 @@ async function xamepayGhBranch(bankCode, wanted) {
     } catch (e) { return { ok: false, message: 'Branch lookup unavailable. Try again shortly.' }; }
 }
 
+// XAMEPAY_PAYOUT_FUNDING_V1: before a non-naira payout, check that the Flutterwave naira balance (which funds it through debit_currency NGN) covers the estimated cost. Fails closed.
+let _xpPayoutInflight = [];
+async function xamepayPayoutFunding(cur, amount, providerFee, reserve) {
+    const unavailable = { ok: false, message: 'This transfer type is temporarily unavailable. Please try again later.' };
+    try {
+        const key = process.env.FLW_SECRET_KEY || process.env.FLW_SECRET || FLW_SECRET;
+        if (!key) return unavailable;
+        const fx = await fxRate('NGN', cur);
+        const needNgn = ((amount + providerFee) / fx.destPerSource) * 1.05;
+        const r = await fetch('https://api.flutterwave.com/v3/balances/NGN', { headers: { Authorization: 'Bearer ' + key }, signal: AbortSignal.timeout(12000) });
+        const j = await r.json().catch(() => null);
+        const bal = Number(j && j.data && j.data.available_balance);
+        if (!r.ok || !Number.isFinite(bal) || !Number.isFinite(needNgn)) return unavailable;
+        const now = Date.now();
+        _xpPayoutInflight = _xpPayoutInflight.filter(x => now - x.at < 10 * 60 * 1000);
+        const held = _xpPayoutInflight.reduce((a, x) => a + x.ngn, 0);
+        if (bal - held < needNgn) {
+            console.log('[XamePay payout] funding low: need about', Math.ceil(needNgn), 'NGN, balance', Math.floor(bal), 'NGN, in flight', Math.ceil(held));
+            return unavailable;
+        }
+        if (reserve) _xpPayoutInflight.push({ at: now, ngn: needNgn });
+        return { ok: true };
+    } catch (e) {
+        console.log('[XamePay payout] funding check failed:', e.message);
+        return unavailable;
+    }
+}
+
 // XAMEPAY_PAYOUT_TABLE_V1: international bank and mobile-money payouts. A currency or rail opens only when it has an entry here,
 // and stays closed until the user is listed in XAMEPAY_PAYOUT_TEST_USERS (comma-separated IDs) or XAMEPAY_PAYOUT_OPEN_<RAIL>=true is set.
 const XAMEPAY_PAYOUT_RAILS = {
@@ -13323,6 +13351,8 @@ app.get('/api/wallet/payout/quote', async (req, res) => {
         // The recipient name and number are not known yet at quote time, so placeholders pass those checks.
         const p = xamepayPayoutPlan(cur, userId, bank, '233000000000', amount, 'Quote Check');
         if (!p.ok) return res.status(p.status).json({ success: false, code: p.code, message: p.message });
+        const f = await xamepayPayoutFunding(cur, amount, p.flwFee, false);
+        if (!f.ok) return res.status(503).json({ success: false, code: 'PAYOUT_TEMPORARILY_UNAVAILABLE', message: f.message });
         return res.json({ success: true, needed: true, currency: cur, amount, fee: p.fee,
             totalDebit: Math.round((amount + p.fee) * 100) / 100 });
     } catch (e) { return res.status(500).json({ success: false, message: 'Could not get a fee quote.' }); }
@@ -14502,6 +14532,8 @@ app.post('/api/wallet/send-bank', async (req, res) => {
             // XAMEPAY_PAYOUT_TABLE_V1: a non-naira payout needs an open rail in the payout table.
             const _p = xamepayPayoutPlan(walletCur, userId, account_bank, account_number, requestedAmount, accName);
             if (!_p.ok) return res.status(_p.status).json({ success: false, code: _p.code, message: _p.message });
+            const _f = await xamepayPayoutFunding(walletCur, requestedAmount, _p.flwFee, true);
+            if (!_f.ok) return res.status(503).json({ success: false, code: 'PAYOUT_TEMPORARILY_UNAVAILABLE', message: _f.message });
             _rail = _p;
             if (_p.kind === 'bank') {
                 const _b = await xamepayGhBranch(_p.bankCode, req.body && req.body.branch_code);
