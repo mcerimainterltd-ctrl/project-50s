@@ -72,9 +72,13 @@ input{
 <script src="/socket.io/socket.io.js"></script>
 <script>
 const XAME_ID = location.pathname.split('/').filter(Boolean).pop();
+// WEB_GUEST_V1: connect as a web guest (the server requires webGuest=1 and a web_ id)
+const WEB_GUEST_ID = 'web_' + Array.from(crypto.getRandomValues(new Uint8Array(8)), b => b.toString(16).padStart(2, '0')).join('');
 const socket = io({
   query: {
     webCall: '1',
+    webGuest: '1',
+    userId: WEB_GUEST_ID,
     targetUserId: XAME_ID
   }
 });
@@ -477,6 +481,10 @@ socket.on('web-call:error', data => {
   status(data?.message || 'Call error');
   videoBtn.disabled = false;
   voiceBtn.disabled = false;
+});
+
+socket.on('connect_error', () => {
+  status('Could not connect. Please try again.');
 });
 
 socket.on('connect', () => {
