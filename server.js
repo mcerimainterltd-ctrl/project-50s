@@ -13309,6 +13309,13 @@ const XAMEPAY_PAYOUT_RAILS = {
         // Flutterwave's live fee for a GHS bank payout was a flat GHS 10 at the amounts sampled (100, 1000, 10000).
         providerFee: () => 10,
         marginMultiplier: 1.5, feeStep: 0.5, minFee: 0.5
+    },
+    KES_MOMO: {
+        currency: 'KES', kind: 'momo', banks: ['MPS'], minAmount: 500, maxAmount: 2000,
+        wholeAmount: true, needsSender: true,
+        // Flutterwave's live fee for a KES payout was a flat KES 100 at the amounts sampled (100, 1000, 10000).
+        providerFee: () => 100,
+        marginMultiplier: 1.5, feeStep: 1, minFee: 1
     }
 };
 function xamepayPayoutPlan(walletCur, userId, bankCode, accountNumber, amount, accName) {
@@ -13322,11 +13329,15 @@ function xamepayPayoutPlan(walletCur, userId, bankCode, accountNumber, amount, a
     if (process.env['XAMEPAY_PAYOUT_OPEN_' + key] !== 'true' && !testers.includes(String(userId))) return closed();
     if (!Number.isFinite(amount) || amount < rail.minAmount) return bad(400, 'AMOUNT_TOO_SMALL', 'The minimum is ' + rail.minAmount + ' ' + rail.currency + '.');
     if (amount > rail.maxAmount) return bad(400, 'AMOUNT_TOO_LARGE', 'The maximum is ' + rail.maxAmount + ' ' + rail.currency + ' for now.');
+    if (rail.wholeAmount && !Number.isInteger(amount)) return bad(400, 'WHOLE_AMOUNT', 'Enter a whole amount.');
     const name = String(accName || '').trim();
     if (name.length < 2) return bad(400, 'NAME_REQUIRED', 'Enter the recipient name.');
     let num = String(accountNumber || '').replace(/\D/g, '');
     if (rail.kind === 'bank') {
         if (!/^\d{8,18}$/.test(num)) return bad(400, 'BAD_NUMBER', 'Enter a valid bank account number.');
+    } else if (rail.currency === 'KES') {
+        if (/^0\d{9}$/.test(num)) num = '254' + num.slice(1);
+        if (!/^254\d{9}$/.test(num)) return bad(400, 'BAD_NUMBER', 'Enter a valid Kenya mobile number.');
     } else {
         if (/^0\d{9}$/.test(num)) num = '233' + num.slice(1);
         if (!/^233\d{9}$/.test(num)) return bad(400, 'BAD_NUMBER', 'Enter a valid Ghana mobile money number.');
@@ -13349,7 +13360,7 @@ app.get('/api/wallet/payout/quote', async (req, res) => {
         const cur = String((w && w.currency) || dflt).toUpperCase();
         if (cur === 'NGN') return res.json({ success: true, needed: false });
         // The recipient name and number are not known yet at quote time, so placeholders pass those checks.
-        const p = xamepayPayoutPlan(cur, userId, bank, '233000000000', amount, 'Quote Check');
+        const p = xamepayPayoutPlan(cur, userId, bank, cur === 'KES' ? '254700000000' : '233000000000', amount, 'Quote Check');
         if (!p.ok) return res.status(p.status).json({ success: false, code: p.code, message: p.message });
         const f = await xamepayPayoutFunding(cur, amount, p.flwFee, false);
         if (!f.ok) return res.status(503).json({ success: false, code: 'PAYOUT_TEMPORARILY_UNAVAILABLE', message: f.message });
@@ -14532,9 +14543,19 @@ app.post('/api/wallet/send-bank', async (req, res) => {
             // XAMEPAY_PAYOUT_TABLE_V1: a non-naira payout needs an open rail in the payout table.
             const _p = xamepayPayoutPlan(walletCur, userId, account_bank, account_number, requestedAmount, accName);
             if (!_p.ok) return res.status(_p.status).json({ success: false, code: _p.code, message: _p.message });
+            // XAMEPAY_PAYOUT_SENDER_V1: some rails (Kenya M-Pesa) need the sender's name, country and mobile number.
+            let _senderMeta = null;
+            if (XAMEPAY_PAYOUT_RAILS[_p.rail].needsSender) {
+                const _ph = String((senderUser && senderUser.phone) || '').replace(/\D/g, '');
+                if (!/^[1-9]\d{9,14}$/.test(_ph)) return res.status(400).json({ success: false, code: 'SENDER_PHONE_REQUIRED', message: 'Add your phone number, with country code, to your profile to send to this mobile money type.' });
+                const _sc = String((senderWallet && senderWallet.homeCountry) || '').trim().toUpperCase();
+                if (!/^[A-Z]{2}$/.test(_sc)) return res.status(400).json({ success: false, code: 'SENDER_COUNTRY_REQUIRED', message: 'Your wallet country is not set.' });
+                _senderMeta = { sender: senderFullName, sender_country: _sc, mobile_number: _ph };
+            }
             const _f = await xamepayPayoutFunding(walletCur, requestedAmount, _p.flwFee, true);
             if (!_f.ok) return res.status(503).json({ success: false, code: 'PAYOUT_TEMPORARILY_UNAVAILABLE', message: _f.message });
             _rail = _p;
+            if (_senderMeta) _rail.extra = { ..._rail.extra, meta: _senderMeta };
             if (_p.kind === 'bank') {
                 const _b = await xamepayGhBranch(_p.bankCode, req.body && req.body.branch_code);
                 if (!_b.ok) return res.status(400).json({ success: false, code: 'BRANCH_UNAVAILABLE', message: _b.message });
