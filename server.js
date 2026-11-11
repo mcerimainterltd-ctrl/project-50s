@@ -6950,6 +6950,25 @@ io.on('connection', (socket) => {
         onlineUserTimestamps.set(userId, Date.now());
         broadcastOnlineUsers();
 
+        // DELIVERED_ON_CONNECT_V1: messages that waited for this user are now delivered
+        (async () => {
+            try {
+                const pending = await Message.find({ recipientId: userId, status: 'sent' })
+                    .select('messageId senderId').limit(500).lean();
+                if (!pending.length) return;
+                await Message.updateMany(
+                    { messageId: { $in: pending.map(m => m.messageId) }, recipientId: userId, status: 'sent' },
+                    { status: 'delivered' }
+                );
+                for (const m of pending) {
+                    const sid = findSocketId(m.senderId);
+                    if (sid) io.to(sid).emit('message-status-update', {
+                        recipientId: userId, messageId: m.messageId, status: 'delivered'
+                    });
+                }
+            } catch (e) { console.warn('delivered-on-connect failed:', e.message); }
+        })();
+
         // Push any pending settings to this socket on connect
         User.findOne({ xameId: userId }).select('settings').then(user => {
             if (user?.settings && Object.keys(user.settings).length > 0) {
