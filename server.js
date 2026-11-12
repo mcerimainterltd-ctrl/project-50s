@@ -7641,7 +7641,11 @@ io.on('connection', (socket) => {
 
     socket.on('conference:join', async ({ roomId, userId: uid, displayName, isHost }) => {
         const authenticatedId = socketToUserMap.get(socket.id);
-        if (authenticatedId !== uid) return;
+        if (authenticatedId !== uid) {
+            // CONF_LOG_V1: diagnostics only (no behaviour change)
+            console.log(`[CONF] join ignored: socket=${socket.id} claimed=${uid} authenticated=${authenticatedId}`);
+            return;
+        }
 
         // Join Socket.IO room
         socket.join(`conf:${roomId}`);
@@ -7656,6 +7660,7 @@ io.on('connection', (socket) => {
 
         // Notify everyone else in the room
         socket.to(`conf:${roomId}`).emit('conference:peer-joined', { peerId: uid, displayName });
+        console.log(`[CONF] ${uid} joined ${roomId}: sockets in room=${(io.sockets.adapter.rooms.get(`conf:${roomId}`) || { size: 0 }).size}`);
 
         // Persist to MongoDB
         try {
@@ -7703,17 +7708,20 @@ io.on('connection', (socket) => {
     // WebRTC signalling within conference
     socket.on('conference:offer', ({ roomId, to, from, offer, displayName }) => {
         const toSocket = findSocketId(to);
+        console.log(`[CONF] offer ${from}->${to} delivered=${!!toSocket}`);
         if (toSocket) io.to(toSocket).emit('conference:offer', { from, displayName, offer });
     });
 
     socket.on('conference:answer', ({ roomId, to, from, answer }) => {
         const toSocket = findSocketId(to);
+        console.log(`[CONF] answer ${from}->${to} delivered=${!!toSocket}`);
         if (toSocket) io.to(toSocket).emit('conference:answer', { from, answer });
     });
 
     socket.on('conference:ice', ({ roomId, to, from, candidate }) => {
         const toSocket = findSocketId(to);
         if (toSocket) io.to(toSocket).emit('conference:ice', { from, candidate });
+        else console.log(`[CONF] ice ${from}->${to} NOT delivered (no live socket)`);
     });
 
     // Host actions
