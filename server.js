@@ -7773,10 +7773,13 @@ io.on('connection', (socket) => {
         try {
             const group = await Group.findOne({ groupId });
             if (!group) return callback?.({ success: false, message: 'Group not found' });
-            const isMember = group.members.find(m => m.userId === message.senderId);
+            // GROUPS_SERVER_V1: sender comes from the authenticated socket, not from the payload
+            const senderId = socketToUserMap.get(socket.id);
+            if (!senderId || (message && message.senderId && message.senderId !== senderId)) return callback?.({ success: false, message: 'Not authenticated' });
+            const isMember = group.members.find(m => m.userId === senderId);
             if (!isMember) return callback?.({ success: false, message: 'Not a member' });
             const saved = await GroupMessage.create({
-                groupId, senderId: message.senderId, senderName: message.senderName || isMember.name,
+                groupId, senderId, senderName: isMember.name || message.senderName,
                 text: message.text || '', file: message.file || null, replyTo: message.replyTo || null, ts: message.ts || Date.now()
             });
             group.lastMessageTs      = saved.ts;
@@ -7784,9 +7787,11 @@ io.on('connection', (socket) => {
             await group.save();
             // Broadcast to all online members
             group.members.forEach(m => {
-                if (m.userId !== message.senderId) {
+                if (m.userId !== senderId) {
                     const sid = [...socketToUserMap.entries()].find(([, uid]) => uid === m.userId)?.[0];
-                    if (sid) io.to(sid).emit('group:message', { groupId, message: saved.toObject() });
+                    for (const [sid2, uid2] of socketToUserMap.entries()) {
+                        if (uid2 === m.userId) io.to(sid2).emit('group:message', { groupId, message: { ...saved.toObject(), id: String(saved._id) } });
+                    }
                 }
             });
             callback?.({ success: true, messageId: saved._id });
@@ -8992,6 +8997,14 @@ app.post('/api/groups/create', async (req, res) => {
         const user = await User.findOne({ xameId: userId });
         members[0].name = user?.preferredName || user?.firstName || userId;
         const group = await Group.create({ groupId, name, description: description || '', createdBy: userId, members });
+        // GROUPS_SERVER_V1: tell the added people who added them (live sockets only)
+        try {
+            members.slice(1).forEach(mm => {
+                for (const [sid3, uid3] of socketToUserMap.entries()) {
+                    if (uid3 === mm.userId) io.to(sid3).emit('group:added', { group: group.toObject(), addedBy: userId, addedByName: members[0].name || userId });
+                }
+            });
+        } catch (e) { /* notification only */ }
         res.json({ success: true, group });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
@@ -9018,6 +9031,19 @@ app.get('/api/groups/messages/:groupId', async (req, res) => {
     }
 });
 
+// GROUPS_SERVER_V1: group history (the app asks /api/groups/:groupId/messages). Session token + membership required.
+app.get('/api/groups/:groupId/messages', async (req, res) => {
+    try {
+        const token = getSessionToken(req);
+        const me = token ? await User.findOne({ sessions: { $elemMatch: { token } } }).select('xameId').lean() : null;
+        if (!me) return res.status(401).json({ success: false, message: 'Not authenticated' });
+        const grp = await Group.findOne({ groupId: req.params.groupId }).lean();
+        if (!grp || !grp.members.some(m => m.userId === me.xameId)) return res.status(403).json({ success: false, message: 'Not a member' });
+        const msgs = await GroupMessage.find({ groupId: req.params.groupId }).sort({ ts: 1 }).limit(100).lean();
+        res.json({ success: true, messages: msgs.map(m => ({ ...m, id: String(m._id) })) });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
 app.post('/api/groups/add-member', async (req, res) => {
     try {
         const { groupId, requesterId, userId } = req.body;
@@ -9029,6 +9055,12 @@ app.post('/api/groups/add-member', async (req, res) => {
         const user = await User.findOne({ xameId: userId });
         group.members.push({ userId, name: user?.preferredName || user?.firstName || userId, role: 'member', joinedAt: new Date(), addedBy: requesterId });
         await group.save();
+        // GROUPS_SERVER_V1: tell the added person who added them (live sockets only)
+        try {
+            for (const [sid4, uid4] of socketToUserMap.entries()) {
+                if (uid4 === userId) io.to(sid4).emit('group:added', { group: group.toObject(), addedBy: requesterId, addedByName: requester.name || requesterId });
+            }
+        } catch (e) { /* notification only */ }
         res.json({ success: true, group });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
