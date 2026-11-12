@@ -5217,7 +5217,13 @@ async function getFullContactData(userId) {
     const partnerUsers = await User.find({ xameId: { $in: ids } });
     const partnerMap   = new Map(partnerUsers.map(p => [p.xameId, p]));
 
-    const rows = await Promise.all(ids.map(async xameId => {
+    // GHOST_ROWS_V1: web-call sockets are not contacts. Hide socket-style IDs (20 chars) that have no user and are not saved.
+    const isGhostId = xameId => !partnerMap.has(xameId)
+        && !user.contacts.some(c => c.contactId?.xameId === xameId)
+        && /^[A-Za-z0-9_-]{20}$/.test(xameId);
+    const hiddenGhosts = ids.filter(isGhostId).length;
+    if (hiddenGhosts) console.log(`[CONTACTS] hid ${hiddenGhosts} web-call ghost row(s) for ${userId}`);
+    const rows = await Promise.all(ids.filter(xameId => !isGhostId(xameId)).map(async xameId => {
         const partner      = partnerMap.get(xameId);
         const saved        = user.contacts.find(c => c.contactId?.xameId === xameId);
         const filtered     = partner ? getPrivacyFilteredContactData(partner) : null;
