@@ -6358,6 +6358,23 @@ app.post('/api/update-contact',
     }
 );
 
+// AUTH_MIGRATION_LOG_V1: measure how these endpoints are called today. Log only: never blocks, never throws.
+app.use(['/api/delete-chat-and-contact', '/api/remove-contact', '/api/clear-chat'], async (req, res, next) => {
+    try {
+        const bodyUser = String((req.body && req.body.userId) || '');
+        const token = getSessionToken(req);
+        const ua = String((req.headers && req.headers['user-agent']) || '');
+        const client = /dart/i.test(ua) ? 'app' : /mozilla/i.test(ua) ? 'web' : 'other';
+        let auth = 'no-token';
+        if (token) {
+            const me = await User.findOne({ sessions: { $elemMatch: { token } } }).select('xameId').lean();
+            auth = !me ? 'bad-token' : (me.xameId === bodyUser ? 'token-ok' : 'token-mismatch');
+        }
+        console.log(`[AUTH-MIGRATION] ${String(req.originalUrl || '').split('?')[0]} client=${client} auth=${auth}`);
+    } catch (e) { /* logging only */ }
+    next();
+});
+
 app.post('/api/delete-chat-and-contact',
     body('userId').trim().escape().notEmpty(),
     body('contactId').trim().escape().notEmpty(),
