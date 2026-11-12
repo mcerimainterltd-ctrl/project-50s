@@ -502,7 +502,7 @@ async function deleteContact(contactId) {
   try {
     const response = await fetch(`${serverURL}/api/delete-chat-and-contact`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { /* WEB_AUTH_HEADER_V1 */ 'Content-Type': 'application/json', ...(persistentStorage.get('xame:sessionToken') ? { 'Authorization': `Bearer ${persistentStorage.get('xame:sessionToken')}` } : {}) },
       body: JSON.stringify({ userId: USER.xameId, contactId }),
     });
     const data = await response.json();
