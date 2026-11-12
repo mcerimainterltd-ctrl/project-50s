@@ -17596,6 +17596,23 @@ app.get('/api/discover/:postId/commenters', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
+// AUTH_MIGRATION_LOG_FOLLOW_V1: measure how follow/unfollow are called today. Log only: never blocks, never throws.
+app.post(['/api/discover/follow/:userId', '/api/discover/unfollow/:userId'], async (req, res, next) => {
+    try {
+        const bodyUser = String((req.body && req.body.followerId) || '');
+        const token = getSessionToken(req);
+        const ua = String((req.headers && req.headers['user-agent']) || '');
+        const client = /dart/i.test(ua) ? 'app' : /mozilla/i.test(ua) ? 'web' : 'other';
+        let auth = 'no-token';
+        if (token) {
+            const me = await User.findOne({ sessions: { $elemMatch: { token } } }).select('xameId').lean();
+            auth = !me ? 'bad-token' : (me.xameId === bodyUser ? 'token-ok' : 'token-mismatch');
+        }
+        console.log(`[AUTH-MIGRATION] ${String(req.originalUrl || '').split('?')[0].replace(/\/[^/]+$/, '/:id')} client=${client} auth=${auth}`);
+    } catch (e) { /* logging only */ }
+    next();
+});
+
 // ── POST /api/discover/follow/:userId ────────────────────────────────────────
 app.post('/api/discover/follow/:userId', async (req, res) => {
     try {
