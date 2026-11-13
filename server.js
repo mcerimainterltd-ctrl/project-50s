@@ -2143,7 +2143,9 @@ const groupMessageSchema = new mongoose.Schema({
     file:      { type: Object, default: null },
     replyTo:   { type: Object, default: null },
     ts:        { type: Number, default: Date.now },
-    createdAt: { type: Date, default: Date.now }
+    createdAt: { type: Date, default: Date.now },
+    deleted:   { type: Boolean, default: false }, // GROUP_DELETE_V1
+    deletedBy: { type: String, default: '' }
 });
 
 const galleryItemSchema = new mongoose.Schema({
@@ -7795,6 +7797,50 @@ io.on('connection', (socket) => {
                 }
             });
             callback?.({ success: true, messageId: saved._id });
+        } catch (err) {
+            callback?.({ success: false, message: err.message });
+        }
+    });
+
+    // GROUP_DELETE_V1: a sender deletes their own message; the group creator or an admin can delete any.
+    // The row stays as a tombstone so history and live views agree.
+    socket.on('group:delete-message', async ({ groupId, messageId, ts } = {}, callback) => {
+        try {
+            const userId = socketToUserMap.get(socket.id);
+            if (!userId || !groupId || (!messageId && typeof ts !== 'number')) return callback?.({ success: false, message: 'Invalid request' });
+            const group = await Group.findOne({ groupId });
+            if (!group) return callback?.({ success: false, message: 'Group not found' });
+            const member = group.members.find(m => m.userId === userId);
+            if (!member) return callback?.({ success: false, message: 'Not a member' });
+            // a just-sent message only has a local id on the sender's phone, so the sender's own ts finds it
+            let msg = null;
+            if (messageId && mongoose.Types.ObjectId.isValid(messageId)) {
+                msg = await GroupMessage.findOne({ _id: messageId, groupId });
+            } else if (typeof ts === 'number') {
+                msg = await GroupMessage.findOne({ groupId, senderId: userId, ts });
+            }
+            if (!msg) return callback?.({ success: false, message: 'Message not found' });
+            const isAdmin = group.createdBy === userId || member.role === 'admin';
+            if (msg.senderId !== userId && !isAdmin) return callback?.({ success: false, message: 'Not allowed' });
+            if (!msg.deleted) {
+                msg.deleted = true;
+                msg.deletedBy = userId;
+                msg.text = '';
+                msg.file = null;
+                msg.replyTo = null;
+                await msg.save();
+                if (group.lastMessageTs === msg.ts) {
+                    group.lastMessagePreview = 'This message was deleted';
+                    await group.save();
+                }
+            }
+            const payload = { groupId, messageId: String(msg._id), deletedBy: userId };
+            group.members.forEach(mem => {
+                for (const [sid2, uid2] of socketToUserMap.entries()) {
+                    if (uid2 === mem.userId) io.to(sid2).emit('group:message-deleted', payload);
+                }
+            });
+            callback?.({ success: true });
         } catch (err) {
             callback?.({ success: false, message: err.message });
         }
