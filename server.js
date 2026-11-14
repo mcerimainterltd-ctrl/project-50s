@@ -2145,7 +2145,8 @@ const groupMessageSchema = new mongoose.Schema({
     ts:        { type: Number, default: Date.now },
     createdAt: { type: Date, default: Date.now },
     deleted:   { type: Boolean, default: false }, // GROUP_DELETE_V1
-    deletedBy: { type: String, default: '' }
+    deletedBy: { type: String, default: '' },
+    system:    { type: Boolean, default: false } // GROUPS_ADMIN_V1
 });
 
 const galleryItemSchema = new mongoose.Schema({
@@ -9090,6 +9091,53 @@ app.get('/api/groups/:groupId/messages', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
+// GROUPS_ADMIN_V1: helpers
+function groupsEmitToMembers(group, event, payload) {
+    try {
+        const ids = new Set((group.members || []).map(m => m.userId));
+        for (const [sidG, uidG] of socketToUserMap.entries()) {
+            if (ids.has(uidG)) io.to(sidG).emit(event, payload);
+        }
+    } catch (e) { /* live notification only */ }
+}
+async function groupsPostSystemMessage(group, text) {
+    try {
+        const ts = Date.now();
+        const saved = await GroupMessage.create({ groupId: group.groupId, senderId: 'system', senderName: 'XamePage', text, ts, system: true });
+        group.lastMessageTs = ts;
+        group.lastMessagePreview = text;
+        await group.save();
+        groupsEmitToMembers(group, 'group:message', { groupId: group.groupId, message: { ...saved.toObject(), id: String(saved._id) } });
+    } catch (e) { console.error('[GROUPS] system message failed:', e.message); }
+}
+
+// GROUPS_ADMIN_V1: promote / demote. Any admin can promote; only the creator can demote; the creator is always an admin.
+app.post('/api/groups/set-role', async (req, res) => {
+    try {
+        const { groupId, requesterId, userId, role } = req.body;
+        if (!groupId || !requesterId || !userId || !['admin', 'member'].includes(role))
+            return res.status(400).json({ success: false, message: 'Missing or invalid data' });
+        const group = await Group.findOne({ groupId });
+        if (!group) return res.status(404).json({ success: false, message: 'Group not found' });
+        const requester = group.members.find(m => m.userId === requesterId);
+        if (!requester || requester.role !== 'admin') return res.status(403).json({ success: false, message: 'Only admins can change roles' });
+        const target = group.members.find(m => m.userId === userId);
+        if (!target) return res.status(404).json({ success: false, message: 'Not a member' });
+        if (userId === group.createdBy) return res.status(403).json({ success: false, message: 'The group creator is always an admin' });
+        if (role === 'member' && requesterId !== group.createdBy) return res.status(403).json({ success: false, message: 'Only the creator can remove admin rights' });
+        if (target.role === role) return res.json({ success: true, group });
+        target.role = role;
+        await group.save();
+        groupsEmitToMembers(group, 'group:updated', { group: group.toObject() });
+        const who = requester.name || requesterId;
+        const whom = target.name || userId;
+        await groupsPostSystemMessage(group, role === 'admin' ? `${who} made ${whom} an admin` : `${whom} is no longer an admin`);
+        res.json({ success: true, group });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
 app.post('/api/groups/add-member', async (req, res) => {
     try {
         const { groupId, requesterId, userId } = req.body;
@@ -9107,6 +9155,9 @@ app.post('/api/groups/add-member', async (req, res) => {
                 if (uid4 === userId) io.to(sid4).emit('group:added', { group: group.toObject(), addedBy: requesterId, addedByName: requester.name || requesterId });
             }
         } catch (e) { /* notification only */ }
+        // GROUPS_ADMIN_V1: tell every member and leave a note in the chat
+        groupsEmitToMembers(group, 'group:updated', { group: group.toObject() });
+        await groupsPostSystemMessage(group, `${requester.name || requesterId} added ${user?.preferredName || user?.firstName || userId}`);
         res.json({ success: true, group });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
@@ -9120,8 +9171,16 @@ app.post('/api/groups/remove-member', async (req, res) => {
         if (!group) return res.status(404).json({ success: false, message: 'Group not found' });
         const requester = group.members.find(m => m.userId === requesterId);
         if (!requester || requester.role !== 'admin') return res.status(403).json({ success: false, message: 'Only admins can remove members' });
+        // GROUPS_ADMIN_V1: the creator can never be removed; only the creator can remove another admin
+        const removedMember = group.members.find(m => m.userId === userId);
+        if (userId === group.createdBy) return res.status(403).json({ success: false, message: 'The group creator cannot be removed' });
+        if (removedMember && removedMember.role === 'admin' && requesterId !== group.createdBy)
+            return res.status(403).json({ success: false, message: 'Only the creator can remove another admin' });
         group.members = group.members.filter(m => m.userId !== userId);
         await group.save();
+        groupsEmitToMembers({ members: [{ userId }] }, 'group:removed', { groupId, reason: 'removed' });
+        groupsEmitToMembers(group, 'group:updated', { group: group.toObject() });
+        await groupsPostSystemMessage(group, `${requester.name || requesterId} removed ${removedMember?.name || userId}`);
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
@@ -9166,8 +9225,11 @@ app.post('/api/groups/:groupId/leave', async (req, res) => {
         if (!group) return res.status(404).json({ success: false, message: 'Group not found' });
         if (group.createdBy === userId)
             return res.status(403).json({ success: false, message: 'Creator cannot leave. Delete the group instead.' });
+        const leaver = group.members.find(m => m.userId === userId); // GROUPS_ADMIN_V1
         group.members = group.members.filter(m => m.userId !== userId);
         await group.save();
+        groupsEmitToMembers(group, 'group:updated', { group: group.toObject() });
+        await groupsPostSystemMessage(group, `${leaver?.name || userId} left`);
         res.json({ success: true, message: 'Left group successfully' });
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
@@ -9181,6 +9243,7 @@ app.post('/api/groups/:groupId/delete', async (req, res) => {
         if (group.createdBy !== userId) return res.status(403).json({ success: false, message: 'Only creator can delete group' });
         await Group.deleteOne({ groupId });
         await GroupMessage.deleteMany({ groupId });
+        groupsEmitToMembers(group, 'group:removed', { groupId, reason: 'deleted' }); // GROUPS_ADMIN_V1
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
