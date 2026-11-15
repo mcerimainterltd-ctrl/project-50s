@@ -13487,14 +13487,14 @@ async function xamepayPayoutFunding(cur, amount, providerFee, reserve) {
 // and stays closed until the user is listed in XAMEPAY_PAYOUT_TEST_USERS (comma-separated IDs) or XAMEPAY_PAYOUT_OPEN_<RAIL>=true is set.
 const XAMEPAY_PAYOUT_RAILS = {
     GHS_MOMO: {
-        currency: 'GHS', kind: 'momo', banks: ['MTN'], minAmount: 1, maxAmount: 50,
+        currency: 'GHS', country: 'GH', kind: 'momo', banks: ['MTN'], minAmount: 1, maxAmount: 50,
         // TEST ASSUMPTION: Flutterwave reports this fee as type percentage, value 0.015; read here as 1.5%.
         // Check it against the real provider reply (logged as [XamePay payout]) before opening this rail.
         providerFee: (amt) => amt * 0.015,
         marginMultiplier: 1.5, feeStep: 0.5, minFee: 0.5
     },
     GHS_BANK: {
-        currency: 'GHS', kind: 'bank', banks: null,
+        currency: 'GHS', country: 'GH', kind: 'bank', banks: null,
         matches: (c) => !['MTN', 'TELECEL', 'VODAFONE', 'AIRTELTIGO'].includes(c),
         minAmount: 5, maxAmount: 100,
         // Flutterwave's live fee for a GHS bank payout was a flat GHS 10 at the amounts sampled (100, 1000, 10000).
@@ -13502,7 +13502,7 @@ const XAMEPAY_PAYOUT_RAILS = {
         marginMultiplier: 1.5, feeStep: 0.5, minFee: 0.5
     },
     KES_MOMO: {
-        currency: 'KES', kind: 'momo', banks: ['MPS'], minAmount: 500, maxAmount: 2000,
+        currency: 'KES', country: 'KE', kind: 'momo', banks: ['MPS'], minAmount: 500, maxAmount: 2000,
         wholeAmount: true, needsSender: true,
         // Flutterwave's live fee for a KES payout was a flat KES 100 at the amounts sampled (100, 1000, 10000).
         providerFee: () => 100,
@@ -13803,6 +13803,60 @@ app.post('/api/wallet/abroad/send', async (req, res) => {
         console.error('[XamePay abroad] error:', err.message);
         return fail(500, 'ABROAD_FAILED', 'Could not start this transfer. Please check your balance before retrying.');
     }
+});
+
+// XAMEPAY_ABROAD_LISTS_V1: the app learns destinations and bank lists from the server. Bank and mobile-money names and codes come live from Flutterwave.
+function xamepayOpenRails(userId, country) {
+    const testers = String(process.env.XAMEPAY_PAYOUT_TEST_USERS || '').split(',').map(x => x.trim()).filter(Boolean);
+    return Object.keys(XAMEPAY_PAYOUT_RAILS).filter(k => {
+        const r = XAMEPAY_PAYOUT_RAILS[k];
+        if (country && r.country !== country) return false;
+        return process.env['XAMEPAY_PAYOUT_OPEN_' + k] === 'true' || testers.includes(String(userId));
+    }).map(k => ({ key: k, ...XAMEPAY_PAYOUT_RAILS[k] }));
+}
+const _xpBankListCache = {};
+app.get('/api/wallet/abroad/destinations', async (req, res) => {
+    const userId = String(req.query.userId || '').trim();
+    try {
+        if (!xamepayAbroadOn() || !xamepayAbroadAllowed(userId)) return res.json({ success: true, enabled: false, destinations: [] });
+        if (!userId || !(await requireWalletSessionOwner(req, res, userId))) return;
+        const regions = require('./xamepay-regions');
+        const by = {};
+        for (const r of xamepayOpenRails(userId)) {
+            const reg = regions.regionFor(r.country);
+            if (!reg || !reg.enabled) continue;
+            const d = by[r.country] || (by[r.country] = { country: r.country, name: reg.name, currency: reg.currency, types: {} });
+            d.types[r.kind] = { min: r.minAmount, max: r.maxAmount, wholeAmount: !!r.wholeAmount };
+        }
+        return res.json({ success: true, enabled: true, destinations: Object.values(by) });
+    } catch (e) { return res.status(500).json({ success: false, message: 'Could not load destinations.' }); }
+});
+app.get('/api/wallet/abroad/banks', async (req, res) => {
+    const userId = String(req.query.userId || '').trim();
+    const country = String(req.query.country || '').trim().toUpperCase();
+    try {
+        if (!xamepayAbroadOn() || !xamepayAbroadAllowed(userId)) return res.status(403).json({ success: false, code: 'ABROAD_DISABLED', message: 'Sending abroad is not available yet.' });
+        if (!userId || !(await requireWalletSessionOwner(req, res, userId))) return;
+        if (!/^[A-Z]{2}$/.test(country)) return res.status(400).json({ success: false, message: 'Choose a country.' });
+        const rails = xamepayOpenRails(userId, country);
+        if (!rails.length) return res.json({ success: true, banks: [] });
+        const key = process.env.FLW_SECRET_KEY || process.env.FLW_SECRET || FLW_SECRET;
+        if (!key) return res.status(503).json({ success: false, message: 'Provider not configured.' });
+        let hit = _xpBankListCache[country];
+        if (!hit || Date.now() - hit.at > 10 * 60 * 1000) {
+            const r = await fetch('https://api.flutterwave.com/v3/banks/' + encodeURIComponent(country), { headers: { Authorization: 'Bearer ' + key }, signal: AbortSignal.timeout(12000) });
+            const j = await r.json().catch(() => null);
+            if (!r.ok || !j || !Array.isArray(j.data)) return res.status(503).json({ success: false, message: 'Could not load the bank list. Try again shortly.' });
+            hit = { at: Date.now(), list: j.data.map(x => ({ name: String(x.name || ''), code: String(x.code || '') })).filter(x => x.name && x.code) };
+            _xpBankListCache[country] = hit;
+        }
+        const out = [];
+        for (const b of hit.list) {
+            const rail = rails.find(r => r.banks ? r.banks.includes(b.code.toUpperCase()) : r.matches(b.code.toUpperCase()));
+            if (rail) out.push({ name: b.name, code: b.code, type: rail.kind });
+        }
+        return res.json({ success: true, banks: out });
+    } catch (e) { return res.status(503).json({ success: false, message: 'Could not load the bank list. Try again shortly.' }); }
 });
 
 // XAMEPAY_CROSSSEND_V1: send between XamePay wallets of different currencies. Off until
