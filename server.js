@@ -13616,6 +13616,23 @@ app.get('/api/admin/payout-record/:reference', async (req, res) => {
     } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
 });
 
+// XAMEPAY_FX_PAIR_PROBE_V1: admin-only, read-only. Shows which currency pairs the FX layer can price directly. Moves no money.
+app.get('/api/admin/fx-pair-probe', async (req, res) => {
+    if (!xamepayAdminOk(req)) return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    const pairs = String(req.query.pairs || 'NGN-GHS,GHS-KES,KES-GHS,GHS-NGN,KES-NGN,NGN-KES')
+        .split(',').map(x => x.trim().toUpperCase().split('-'))
+        .filter(x => x.length === 2 && /^[A-Z]{3}$/.test(x[0]) && /^[A-Z]{3}$/.test(x[1])).slice(0, 12);
+    const out = [];
+    for (const [from, to] of pairs) {
+        const row = { pair: from + '-' + to };
+        try { row.raw = (await fxRateRaw(from, to)).rate; } catch (e) { row.rawError = e.message; }
+        try { row.reference = await fxReference(from, to); } catch (e) { row.refError = e.message; }
+        try { const fx = await fxRate(from, to); row.destPerSource = fx.destPerSource; row.orientation = fx.orientation; } catch (e) { row.fxError = e.message; }
+        out.push(row);
+    }
+    return res.json({ success: true, results: out });
+});
+
 // XAMEPAY_CROSSSEND_V1: send between XamePay wallets of different currencies. Off until
 // XAMEPAY_CROSSSEND_ENABLED=true; also needs XAMEPAY_QUOTE_SECRET and FX_MARGIN_PERCENT.
 const walletCrossSendLedgerSchema = new mongoose.Schema({
