@@ -13633,6 +13633,178 @@ app.get('/api/admin/fx-pair-probe', async (req, res) => {
     return res.json({ success: true, results: out });
 });
 
+// XAMEPAY_ABROAD_V1: send from a wallet to a bank or mobile-money account in another currency. The user enters what the recipient receives;
+// the cost is quoted in the wallet's own currency and priced through naira, the Flutterwave balance that funds every payout.
+function xamepayAbroadOn() {
+    return (process.env.XAMEPAY_QUOTE_SECRET || '').length >= 24 &&
+        process.env.FX_MARGIN_PERCENT !== undefined && process.env.FX_MARGIN_PERCENT !== '';
+}
+function xamepayAbroadAllowed(userId) {
+    if (process.env.XAMEPAY_ABROAD_OPEN === 'true') return true;
+    return String(process.env.XAMEPAY_PAYOUT_TEST_USERS || '').split(',').map(x => x.trim()).filter(Boolean).includes(String(userId));
+}
+async function xamepayAbroadCost(walletCur, destCur, destTotal) {
+    const margin = Math.max(0, Math.min(10, Number(process.env.FX_MARGIN_PERCENT || 0)));
+    const toDest = await fxRate('NGN', destCur);
+    const toWallet = await fxRate('NGN', walletCur);
+    const ngn = destTotal / toDest.destPerSource;
+    const cost = Math.ceil((ngn * toWallet.destPerSource / (1 - margin / 100)) * 100 - 1e-9) / 100;
+    return { cost, margin };
+}
+function xamepaySenderMeta(user, fullName) {
+    const ph = String((user && user.phone) || '').replace(/\D/g, '');
+    if (!/^[1-9]\d{9,14}$/.test(ph)) return { ok: false, code: 'SENDER_PHONE_REQUIRED', message: 'Add your phone number, with country code, to your profile to send to this mobile money type.' };
+    const sc = ({ '233': 'GH', '234': 'NG', '254': 'KE' })[ph.slice(0, 3)] || '';
+    if (!sc) return { ok: false, code: 'SENDER_COUNTRY_REQUIRED', message: 'Your phone number country is not supported for this transfer type yet.' };
+    return { ok: true, meta: { sender: fullName, sender_country: sc, mobile_number: ph } };
+}
+
+app.get('/api/wallet/abroad/quote', async (req, res) => {
+    const userId = String(req.query.userId || '').trim();
+    const country = String(req.query.country || '').trim().toUpperCase();
+    const bank = String(req.query.bank || '').trim();
+    const amount = Number(req.query.amount);
+    try {
+        if (!xamepayAbroadOn() || !xamepayAbroadAllowed(userId)) return res.status(403).json({ success: false, code: 'ABROAD_DISABLED', message: 'Sending abroad is not available yet.' });
+        if (!userId || !(await requireWalletSessionOwner(req, res, userId))) return;
+        const region = require('./xamepay-regions').regionFor(country);
+        if (!region || !region.enabled) return res.status(400).json({ success: false, code: 'COUNTRY_NOT_SUPPORTED', message: 'XamePay is not open in that country yet.' });
+        const w = await Wallet.findOne({ xameId: userId }).select('currency').lean();
+        const from = crossCur(w);
+        const to = region.currency;
+        if (from === to) return res.json({ success: true, needed: false, from, to });
+        const p = xamepayPayoutPlan(to, userId, bank, to === 'KES' ? '254700000000' : '233000000000', amount, 'Quote Check');
+        if (!p.ok) return res.status(p.status).json({ success: false, code: p.code, message: p.message });
+        const f = await xamepayPayoutFunding(to, amount, p.flwFee, false);
+        if (!f.ok) return res.status(503).json({ success: false, code: 'PAYOUT_TEMPORARILY_UNAVAILABLE', message: f.message });
+        const c = await xamepayAbroadCost(from, to, amount + p.fee);
+        if (!(c.cost > 0)) return res.status(503).json({ success: false, message: 'Exchange rate unavailable. Try again shortly.' });
+        const token = fxSignQuote({ kind: 'abroad', userId, from, to, country: region.code, bank: p.bankCode,
+            amount, feeDest: p.fee, cost: c.cost, marginPercent: c.margin });
+        if (!token) return res.status(503).json({ success: false, message: 'Quotes are not available right now.' });
+        return res.json({ success: true, needed: true, from, to, country: region.code, receive: amount, fee: p.fee,
+            cost: c.cost, marginPercent: c.margin, expiresInSeconds: 90, token });
+    } catch (e) {
+        console.error('Abroad quote failed:', e.message);
+        return res.status(503).json({ success: false, message: 'Exchange rate unavailable. Try again shortly.' });
+    }
+});
+
+app.post('/api/wallet/abroad/send', async (req, res) => {
+    const b = req.body || {};
+    const userId = String(b.userId || '').trim();
+    const reference = String(b.reference || '').trim();
+    const fail = (status, code, message) => res.status(status).json({ success: false, code, message });
+    try {
+        if (!xamepayAbroadOn() || !xamepayAbroadAllowed(userId)) return fail(403, 'ABROAD_DISABLED', 'Sending abroad is not available yet.');
+        if (!userId || !(await requireWalletSessionOwner(req, res, userId))) return;
+        if (!/^[A-Za-z0-9._:-]{8,100}$/.test(reference)) return fail(400, 'BAD_REFERENCE', 'A valid stable transfer reference is required.');
+        const q = fxVerifyQuote(b.token);
+        if (!q || q.kind !== 'abroad' || String(q.userId) !== userId) return fail(400, 'QUOTE_INVALID', 'This quote has expired. Please request a new one.');
+        const [w, u] = await Promise.all([
+            Wallet.findOne({ xameId: userId }).lean(),
+            User.findOne({ xameId: userId }).select('firstName lastName phone').lean()
+        ]);
+        if (!w) return fail(404, 'WALLET_NOT_FOUND', 'Wallet not found.');
+        const from = crossCur(w);
+        if (from !== q.from) return fail(409, 'CURRENCY_CHANGED', 'Your wallet currency changed. Please request a new quote.');
+        const accName = String(b.accName || '').trim();
+        const plan = xamepayPayoutPlan(q.to, userId, q.bank, b.account_number, Number(q.amount), accName);
+        if (!plan.ok) return fail(plan.status, plan.code, plan.message);
+        if (plan.bankCode !== q.bank || Math.abs(plan.fee - Number(q.feeDest)) > 0.005) return fail(409, 'QUOTE_INVALID', 'The fee changed. Please request a new quote.');
+        const fingerprint = require('crypto').createHash('sha256')
+            .update(JSON.stringify([userId, plan.bankCode, plan.accountNumber, Number(q.amount), q.to, from, accName])).digest('hex');
+        const prior = await WalletTransferLedger.findOne({ userId, reference }).select('requestFingerprint status').lean();
+        if (prior) {
+            if (prior.requestFingerprint !== fingerprint) return fail(409, 'REFERENCE_CONFLICT', 'This reference belongs to a different transfer.');
+            return res.status(202).json({ success: prior.status === 'succeeded', pending: !['succeeded', 'failed', 'refunded'].includes(prior.status),
+                txRef: reference, status: prior.status, message: 'This reference already has a transfer record. No new provider request was submitted.' });
+        }
+        const pin = await convertCheckPin(w, b.pin);
+        if (!pin.ok) return fail(pin.status, pin.code, pin.message);
+        const senderFullName = ((u ? (String(u.firstName || '') + ' ' + String(u.lastName || '')).trim() : '') || userId);
+        let meta = null;
+        if (XAMEPAY_PAYOUT_RAILS[plan.rail].needsSender) {
+            const m = xamepaySenderMeta(u, senderFullName);
+            if (!m.ok) return fail(400, m.code, m.message);
+            meta = m.meta;
+        }
+        const fund = await xamepayPayoutFunding(q.to, Number(q.amount), plan.flwFee, true);
+        if (!fund.ok) return fail(503, 'PAYOUT_TEMPORARILY_UNAVAILABLE', fund.message);
+        const extra = { ...plan.extra };
+        if (meta) extra.meta = meta;
+        if (plan.kind === 'bank') {
+            const br = await xamepayGhBranch(plan.bankCode, b.branch_code);
+            if (!br.ok) return fail(400, 'BRANCH_UNAVAILABLE', br.message);
+            extra.destination_branch_code = br.code;
+        }
+        const cost = Number(q.cost);
+        const feeW = Math.round(Number(q.feeDest) * (cost / (Number(q.amount) + Number(q.feeDest))) * 100) / 100;
+        const principalW = Math.round((cost - feeW) * 100) / 100;
+        const bankName = String(b.bankName || '').trim();
+        let reservation;
+        try {
+            reservation = await reserveWalletTransfer({
+                userId, reference, requestFingerprint: fingerprint, principal: Number(q.amount), fee: feeW, totalDebit: cost,
+                currency: q.to, accountBank: plan.bankCode, accountNumber: plan.accountNumber, recipientName: accName,
+                label: 'Transfer to ' + accName + (bankName ? ' (' + bankName + ')' : '')
+            });
+        } catch (err) {
+            if (err && err.code === 'INSUFFICIENT_WALLET_BALANCE') return fail(402, 'INSUFFICIENT_BALANCE', 'Insufficient balance.');
+            if (err && err.code === 'TRANSFER_REFERENCE_CONFLICT') return fail(409, 'REFERENCE_CONFLICT', 'This reference belongs to a different transfer.');
+            console.error('[XamePay abroad] reserve failed:', err.message);
+            return fail(503, 'RESERVE_FAILED', 'Could not start this transfer. Your balance was not changed.');
+        }
+        if (!reservation.created) {
+            return res.status(202).json({ success: reservation.transfer.status === 'succeeded', pending: !['succeeded', 'failed', 'refunded'].includes(reservation.transfer.status),
+                txRef: reference, status: reservation.transfer.status, message: 'This reference already has a transfer record. No new provider request was submitted.' });
+        }
+        // Show wallet-currency figures plus sent and received amounts on the history row.
+        await Wallet.updateOne({ xameId: userId, 'transactions.ref': reference }, { $set: {
+            'transactions.$[tx].principal': principalW, 'transactions.$[tx].fee': feeW,
+            'transactions.$[tx].sentAmount': cost, 'transactions.$[tx].sentCurrency': from,
+            'transactions.$[tx].recvAmount': Number(q.amount), 'transactions.$[tx].recvCurrency': q.to,
+            'transactions.$[tx].bankName': bankName } }, { arrayFilters: [{ 'tx.ref': reference }] }).catch(() => {});
+        const key = process.env.FLW_SECRET_KEY || process.env.FLW_SECRET || FLW_SECRET;
+        let r, data;
+        try {
+            r = await fetch('https://api.flutterwave.com/v3/transfers', {
+                method: 'POST', signal: AbortSignal.timeout(20000),
+                headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ account_bank: plan.bankCode, account_number: plan.accountNumber, amount: Number(q.amount), currency: q.to,
+                    narration: 'XamePay|' + senderFullName, reference, ...extra })
+            });
+            data = await r.json().catch(() => null);
+        } catch (err) {
+            console.error('[XamePay abroad] provider call failed:', err.message);
+            await transitionWalletTransfer(userId, reference, ['reserved', 'submitted'], { status: 'unknown' });
+            return res.status(202).json({ success: false, pending: true, txRef: reference, message: 'Transfer outcome is unconfirmed; funds remain reserved while it is checked.' });
+        }
+        const providerId = data && data.data && data.data.id;
+        console.log('[XamePay abroad]', plan.rail, 'http', r.status, data && data.status, 'fee:', data && data.data && data.data.fee, 'status:', data && data.data && data.data.status, 'id:', providerId, 'msg:', String((data && data.message) || '').slice(0, 120));
+        if (r.ok && data && data.status === 'success' && /^\d+$/.test(String(providerId || ''))) {
+            await transitionWalletTransfer(userId, reference, ['reserved'], { status: 'submitted', providerReference: String(providerId) });
+            return res.status(202).json({ success: true, pending: true, txRef: reference, from, to: q.to, receive: Number(q.amount),
+                fee: feeW, principal: principalW, totalDebit: cost, recipientName: accName, bankName, accountNumber: plan.accountNumber,
+                message: 'Transfer accepted by provider; awaiting final confirmation.' });
+        }
+        if ((r.status === 400 || r.status === 422) && data && data.status === 'error' && !(data.data && data.data.id) &&
+            !/reference|duplicate|exist/i.test(String(data.message || ''))) {
+            try {
+                const fin = await finalizeWalletTransfer(userId, reference, 'refunded');
+                if (fin && fin.status === 'refunded') {
+                    return res.status(422).json({ success: false, refunded: true, txRef: reference, message: 'The transfer was rejected by the payment provider. Your wallet has been refunded.' });
+                }
+            } catch (err) { console.error('[XamePay abroad] auto-refund failed:', err.message); }
+        }
+        await transitionWalletTransfer(userId, reference, ['reserved', 'submitted'], { status: 'unknown' });
+        return res.status(202).json({ success: false, pending: true, txRef: reference, message: 'Transfer outcome is unconfirmed; funds remain reserved while it is checked.' });
+    } catch (err) {
+        console.error('[XamePay abroad] error:', err.message);
+        return fail(500, 'ABROAD_FAILED', 'Could not start this transfer. Please check your balance before retrying.');
+    }
+});
+
 // XAMEPAY_CROSSSEND_V1: send between XamePay wallets of different currencies. Off until
 // XAMEPAY_CROSSSEND_ENABLED=true; also needs XAMEPAY_QUOTE_SECRET and FX_MARGIN_PERCENT.
 const walletCrossSendLedgerSchema = new mongoose.Schema({
