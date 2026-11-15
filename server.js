@@ -14739,8 +14739,9 @@ app.post('/api/wallet/send-bank', async (req, res) => {
             if (XAMEPAY_PAYOUT_RAILS[_p.rail].needsSender) {
                 const _ph = String((senderUser && senderUser.phone) || '').replace(/\D/g, '');
                 if (!/^[1-9]\d{9,14}$/.test(_ph)) return res.status(400).json({ success: false, code: 'SENDER_PHONE_REQUIRED', message: 'Add your phone number, with country code, to your profile to send to this mobile money type.' });
-                const _sc = String((senderWallet && senderWallet.homeCountry) || '').trim().toUpperCase();
-                if (!/^[A-Z]{2}$/.test(_sc)) return res.status(400).json({ success: false, code: 'SENDER_COUNTRY_REQUIRED', message: 'Your wallet country is not set.' });
+                // XAMEPAY_PAYOUT_SENDER_COUNTRY_V2: the sender's country comes from the sender's own phone number, not from the wallet.
+                const _sc = ({ '233': 'GH', '234': 'NG', '254': 'KE' })[_ph.slice(0, 3)] || '';
+                if (!_sc) return res.status(400).json({ success: false, code: 'SENDER_COUNTRY_REQUIRED', message: 'Your phone number country is not supported for this transfer type yet.' });
                 _senderMeta = { sender: senderFullName, sender_country: _sc, mobile_number: _ph };
             }
             const _f = await xamepayPayoutFunding(walletCur, requestedAmount, _p.flwFee, true);
