@@ -16096,12 +16096,40 @@ app.get('/api/discover/people', async (req, res) => {
         myContactIds.push(userId); // exclude self
 
         const skip  = (parseInt(page) - 1) * parseInt(limit);
-        const total = await User.countDocuments({ xameId: { $nin: myContactIds } });
 
-        // Find users not in contacts
-        const suggestions = await User.find({
-            xameId: { $nin: myContactIds }
-        }).skip(skip).limit(parseInt(limit)).lean();
+        // DISCOVER_SEARCH_V1: optional name search (every word must match first, last or preferred name)
+        const filter = { xameId: { $nin: myContactIds } };
+        const qRaw = String(req.query.q || '').trim().slice(0, 60);
+        if (qRaw) {
+            const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const tokens = qRaw.split(/\s+/).filter(Boolean).slice(0, 5);
+            filter.$and = tokens.map(t => {
+                const rx = new RegExp(esc(t), 'i');
+                return { $or: [{ preferredName: rx }, { firstName: rx }, { lastName: rx }] };
+            });
+        }
+        const total = await User.countDocuments(filter);
+
+        // Find users not in contacts (stable order so paging never skips or repeats people)
+        // DISCOVER_SORT_V1: ?sort=name returns A-Z by the name the app shows (preferred name, else first + last);
+        // people without any name go last. Without it the order stays as before (the carousel keeps its variety).
+        let suggestions;
+        if (String(req.query.sort || '') === 'name') {
+            suggestions = await User.aggregate([
+                { $match: filter },
+                { $addFields: { _sortName: { $toLower: { $trim: { input: { $cond: [
+                    { $gt: [{ $strLenCP: { $ifNull: ['$preferredName', ''] } }, 0] },
+                    '$preferredName',
+                    { $concat: [{ $ifNull: ['$firstName', ''] }, ' ', { $ifNull: ['$lastName', ''] }] }
+                ] } } } } } },
+                { $addFields: { _noName: { $cond: [{ $eq: ['$_sortName', ''] }, 1, 0] } } },
+                { $sort: { _noName: 1, _sortName: 1, _id: 1 } },
+                { $skip: skip },
+                { $limit: parseInt(limit) }
+            ]).collation({ locale: 'en', strength: 1 });
+        } else {
+            suggestions = await User.find(filter).sort({ _id: 1 }).skip(skip).limit(parseInt(limit)).lean();
+        }
 
         // Calculate mutual contacts
         const result = await Promise.all(suggestions.map(async (u) => {
