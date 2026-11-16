@@ -13507,6 +13507,14 @@ const XAMEPAY_PAYOUT_RAILS = {
         // Flutterwave's live fee for a KES payout was a flat KES 100 at the amounts sampled (100, 1000, 10000).
         providerFee: () => 100,
         marginMultiplier: 1.5, feeStep: 1, minFee: 1
+    },
+    KES_BANK: {
+        currency: 'KES', country: 'KE', kind: 'bank', banks: null,
+        matches: (c) => !['MPS', 'SAFARICOM', 'AIRTEL'].includes(c),
+        minAmount: 500, maxAmount: 2000, wholeAmount: true, needsSender: true, senderTopLevel: true,
+        // Flutterwave's live fee for a KES bank payout was a flat KES 100 at the amounts sampled (100, 1000, 10000).
+        providerFee: () => 100,
+        marginMultiplier: 1.5, feeStep: 1, minFee: 1
     }
 };
 function xamepayPayoutPlan(walletCur, userId, bankCode, accountNumber, amount, accName) {
@@ -13732,8 +13740,8 @@ app.post('/api/wallet/abroad/send', async (req, res) => {
         const fund = await xamepayPayoutFunding(q.to, Number(q.amount), plan.flwFee, true);
         if (!fund.ok) return fail(503, 'PAYOUT_TEMPORARILY_UNAVAILABLE', fund.message);
         const extra = { ...plan.extra };
-        if (meta) extra.meta = meta;
-        if (plan.kind === 'bank') {
+        if (meta) { if (XAMEPAY_PAYOUT_RAILS[plan.rail].senderTopLevel) Object.assign(extra, meta, { mobile_number: '+' + meta.mobile_number }); else extra.meta = meta; }
+        if (plan.kind === 'bank' && XAMEPAY_PAYOUT_RAILS[plan.rail].country === 'GH') {
             const br = await xamepayGhBranch(plan.bankCode, b.branch_code);
             if (!br.ok) return fail(400, 'BRANCH_UNAVAILABLE', br.message);
             extra.destination_branch_code = br.code;
@@ -14990,8 +14998,8 @@ app.post('/api/wallet/send-bank', async (req, res) => {
             const _f = await xamepayPayoutFunding(walletCur, requestedAmount, _p.flwFee, true);
             if (!_f.ok) return res.status(503).json({ success: false, code: 'PAYOUT_TEMPORARILY_UNAVAILABLE', message: _f.message });
             _rail = _p;
-            if (_senderMeta) _rail.extra = { ..._rail.extra, meta: _senderMeta };
-            if (_p.kind === 'bank') {
+            if (_senderMeta) _rail.extra = XAMEPAY_PAYOUT_RAILS[_p.rail].senderTopLevel ? { ..._rail.extra, ..._senderMeta, mobile_number: '+' + _senderMeta.mobile_number } : { ..._rail.extra, meta: _senderMeta };
+            if (_p.kind === 'bank' && XAMEPAY_PAYOUT_RAILS[_p.rail].country === 'GH') {
                 const _b = await xamepayGhBranch(_p.bankCode, req.body && req.body.branch_code);
                 if (!_b.ok) return res.status(400).json({ success: false, code: 'BRANCH_UNAVAILABLE', message: _b.message });
                 _rail.extra = { ..._rail.extra, destination_branch_code: _b.code };
