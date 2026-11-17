@@ -13553,7 +13553,7 @@ function xamepayPayoutPlan(walletCur, userId, bankCode, accountNumber, amount, a
     const pf = rail.providerFee(amount);
     const fee = Math.max(rail.minFee, Math.ceil(pf * rail.marginMultiplier / rail.feeStep - 1e-9) * rail.feeStep);
     return { ok: true, rail: key, kind: rail.kind, bankCode: code, accountNumber: num, fee: Math.round(fee * 100) / 100,
-        flwFee: Math.round(pf * 10000) / 10000, extra: { beneficiary_name: name, debit_currency: 'NGN' } };
+        flwFee: Math.round(pf * 10000) / 10000, extra: rail.currency === 'NGN' ? {} : { beneficiary_name: name, debit_currency: 'NGN' } };
 }
 
 // XAMEPAY_PAYOUT_QUOTE_V1: fee quote for a non-naira bank or mobile-money payout. Read-only; uses the same table as send-bank.
