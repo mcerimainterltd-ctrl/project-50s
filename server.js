@@ -13523,6 +13523,34 @@ const XAMEPAY_PAYOUT_RAILS = {
         // Same Flutterwave fee tiers as the existing naira payouts (10 / 25 / 50); margin 1.5 with step 5 gives user fees 15 / 40 / 75.
         providerFee: (amt) => amt <= 5000 ? 10 : (amt <= 50000 ? 25 : 50),
         marginMultiplier: 1.5, feeStep: 5, minFee: 15
+    },
+    UGX_MOMO: {
+        currency: 'UGX', country: 'UG', kind: 'momo', banks: ['MPS'], dial: '256',
+        minAmount: 5000, maxAmount: 50000, wholeAmount: true,
+        // Flutterwave quoted a flat UGX 1000 for mobile money (probe 2026-11-17).
+        providerFee: () => 1000,
+        marginMultiplier: 1.5, feeStep: 100, minFee: 100
+    },
+    RWF_MOMO: {
+        currency: 'RWF', country: 'RW', kind: 'momo', banks: ['MPS'], dial: '250',
+        minAmount: 1500, maxAmount: 15000, wholeAmount: true,
+        // Flutterwave quoted a flat RWF 500 for mobile money (probe 2026-11-17).
+        providerFee: () => 500,
+        marginMultiplier: 1.5, feeStep: 50, minFee: 50
+    },
+    TZS_MOMO: {
+        currency: 'TZS', country: 'TZ', kind: 'momo', banks: ['MPS'], dial: '255',
+        minAmount: 2500, maxAmount: 25000, wholeAmount: true,
+        // Flutterwave quoted a flat TZS 500 for mobile money (probe 2026-11-17).
+        providerFee: () => 500,
+        marginMultiplier: 1.5, feeStep: 50, minFee: 50
+    },
+    ZMW_MOMO: {
+        currency: 'ZMW', country: 'ZM', kind: 'momo', banks: ['MPS'], dial: '260',
+        minAmount: 10, maxAmount: 100,
+        // Flutterwave quoted a percentage fee of 0.02 for mobile money, read as 2% like Ghana's 0.015 (1.5%).
+        providerFee: (amt) => amt * 0.02,
+        marginMultiplier: 1.5, feeStep: 0.5, minFee: 0.5
     }
 };
 function xamepayPayoutPlan(walletCur, userId, bankCode, accountNumber, amount, accName) {
@@ -13532,6 +13560,7 @@ function xamepayPayoutPlan(walletCur, userId, bankCode, accountNumber, amount, a
     const key = Object.keys(XAMEPAY_PAYOUT_RAILS).find(k => XAMEPAY_PAYOUT_RAILS[k].currency === walletCur && (XAMEPAY_PAYOUT_RAILS[k].banks ? XAMEPAY_PAYOUT_RAILS[k].banks.includes(code) : XAMEPAY_PAYOUT_RAILS[k].matches(code)));
     if (!key) return closed();
     const rail = XAMEPAY_PAYOUT_RAILS[key];
+    if (accountNumber === '__QUOTE__') accountNumber = rail.kind === 'bank' ? '0'.repeat(rail.accountLength || 10) : (rail.dial || (rail.currency === 'KES' ? '254' : '233')) + '700000000';
     const testers = String(process.env.XAMEPAY_PAYOUT_TEST_USERS || '').split(',').map(x => x.trim()).filter(Boolean);
     if (process.env['XAMEPAY_PAYOUT_OPEN_' + key] !== 'true' && !testers.includes(String(userId))) return closed();
     if (!Number.isFinite(amount) || amount < rail.minAmount) return bad(400, 'AMOUNT_TOO_SMALL', 'The minimum is ' + rail.minAmount + ' ' + rail.currency + '.');
@@ -13543,6 +13572,9 @@ function xamepayPayoutPlan(walletCur, userId, bankCode, accountNumber, amount, a
     if (rail.kind === 'bank') {
         if (!/^\d{8,18}$/.test(num)) return bad(400, 'BAD_NUMBER', 'Enter a valid bank account number.');
         if (rail.accountLength && num.length !== rail.accountLength) return bad(400, 'BAD_NUMBER', 'Enter a valid ' + rail.accountLength + '-digit account number.');
+    } else if (rail.dial) {
+        if (/^0\d{9}$/.test(num)) num = rail.dial + num.slice(1);
+        if (num.length !== rail.dial.length + 9 || !num.startsWith(rail.dial)) return bad(400, 'BAD_NUMBER', 'Enter a valid mobile number.');
     } else if (rail.currency === 'KES') {
         if (/^0\d{9}$/.test(num)) num = '254' + num.slice(1);
         if (!/^254\d{9}$/.test(num)) return bad(400, 'BAD_NUMBER', 'Enter a valid Kenya mobile number.');
@@ -13568,7 +13600,7 @@ app.get('/api/wallet/payout/quote', async (req, res) => {
         const cur = String((w && w.currency) || dflt).toUpperCase();
         if (cur === 'NGN') return res.json({ success: true, needed: false });
         // The recipient name and number are not known yet at quote time, so placeholders pass those checks.
-        const p = xamepayPayoutPlan(cur, userId, bank, cur === 'KES' ? '254700000000' : cur === 'NGN' ? '0123456789' : '233000000000', amount, 'Quote Check');
+        const p = xamepayPayoutPlan(cur, userId, bank, '__QUOTE__', amount, 'Quote Check');
         if (!p.ok) return res.status(p.status).json({ success: false, code: p.code, message: p.message });
         const f = await xamepayPayoutFunding(cur, amount, p.flwFee, false);
         if (!f.ok) return res.status(503).json({ success: false, code: 'PAYOUT_TEMPORARILY_UNAVAILABLE', message: f.message });
@@ -13685,12 +13717,12 @@ app.get('/api/wallet/abroad/quote', async (req, res) => {
         if (!xamepayAbroadOn() || !xamepayAbroadAllowed(userId)) return res.status(403).json({ success: false, code: 'ABROAD_DISABLED', message: 'Sending abroad is not available yet.' });
         if (!userId || !(await requireWalletSessionOwner(req, res, userId))) return;
         const region = require('./xamepay-regions').regionFor(country);
-        if (!region || !region.enabled) return res.status(400).json({ success: false, code: 'COUNTRY_NOT_SUPPORTED', message: 'XamePay is not open in that country yet.' });
+        if (!region) return res.status(400).json({ success: false, code: 'COUNTRY_NOT_SUPPORTED', message: 'XamePay is not open in that country yet.' });
         const w = await Wallet.findOne({ xameId: userId }).select('currency').lean();
         const from = crossCur(w);
         const to = region.currency;
         if (from === to) return res.json({ success: true, needed: false, from, to });
-        const p = xamepayPayoutPlan(to, userId, bank, to === 'KES' ? '254700000000' : to === 'NGN' ? '0123456789' : '233000000000', amount, 'Quote Check');
+        const p = xamepayPayoutPlan(to, userId, bank, '__QUOTE__', amount, 'Quote Check');
         if (!p.ok) return res.status(p.status).json({ success: false, code: p.code, message: p.message });
         const f = await xamepayPayoutFunding(to, amount, p.flwFee, false);
         if (!f.ok) return res.status(503).json({ success: false, code: 'PAYOUT_TEMPORARILY_UNAVAILABLE', message: f.message });
@@ -13841,7 +13873,7 @@ app.get('/api/wallet/abroad/destinations', async (req, res) => {
         const by = {};
         for (const r of xamepayOpenRails(userId)) {
             const reg = regions.regionFor(r.country);
-            if (!reg || !reg.enabled) continue;
+            if (!reg) continue; // payout destinations depend on the rail table, not on the wallet-region flag
             const d = by[r.country] || (by[r.country] = { country: r.country, name: reg.name, currency: reg.currency, types: {} });
             d.types[r.kind] = { min: r.minAmount, max: r.maxAmount, wholeAmount: !!r.wholeAmount, lookup: !!r.lookup };
         }
