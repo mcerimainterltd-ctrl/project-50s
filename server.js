@@ -13876,6 +13876,42 @@ app.get('/api/wallet/abroad/banks', async (req, res) => {
     } catch (e) { return res.status(503).json({ success: false, message: 'Could not load the bank list. Try again shortly.' }); }
 });
 
+// XAMEPAY_CURRENCY_PROBE_V1: admin-only, read-only. For each CUR:CC pair, shows Flutterwave's live transfer fee, bank list size, mobile-money-like entries and the NGN rate. Moves no money.
+app.get('/api/admin/payout-currency-probe', async (req, res) => {
+    if (!xamepayAdminOk(req)) return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    try {
+        const key = process.env.FLW_SECRET_KEY || process.env.FLW_SECRET || FLW_SECRET;
+        if (!key) return res.status(503).json({ success: false, message: 'Provider not configured.' });
+        const H = { Authorization: 'Bearer ' + key };
+        const get = async (url) => {
+            try {
+                const r = await fetch(url, { headers: H, signal: AbortSignal.timeout(12000) });
+                const j = await r.json().catch(() => null);
+                return { http: r.status, j };
+            } catch (e) { return { error: e.message }; }
+        };
+        const list = String(req.query.list || 'XOF:BJ,UGX:UG,TZS:TZ,RWF:RW,ZMW:ZM,ZAR:ZA,XOF:SN,XOF:CI,XAF:CM,EGP:EG,GBP:GB,EUR:DE,USD:US').split(',').slice(0, 14);
+        const out = [];
+        for (const item of list) {
+            const parts = item.trim().toUpperCase().split(':');
+            const cur = parts[0], cc = parts[1];
+            if (!/^[A-Z]{3}$/.test(cur || '') || !/^[A-Z]{2}$/.test(cc || '')) continue;
+            const row = { cur, cc };
+            for (const type of ['account', 'mobilemoney']) {
+                const r = await get('https://api.flutterwave.com/v3/transfers/fee?' + new URLSearchParams({ amount: '1000', currency: cur, type }).toString());
+                row[type] = r.error ? r.error : (r.j && r.j.status === 'success' ? r.j.data : String((r.j && r.j.message) || r.http).slice(0, 80));
+            }
+            const b = await get('https://api.flutterwave.com/v3/banks/' + cc);
+            const banks = b.j && Array.isArray(b.j.data) ? b.j.data : null;
+            row.banks = banks ? banks.length : (b.error || String((b.j && b.j.message) || b.http).slice(0, 80));
+            row.momoLike = banks ? banks.filter(x => /mtn|vodafone|telecel|airtel|orange|moov|mpesa|m-pesa|tigo|wave|momo|mobile|mps|free|ecocash/i.test(String(x.code) + ' ' + String(x.name))).slice(0, 8).map(x => x.code + ':' + x.name) : null;
+            try { row.ngnRate = (await fxRate('NGN', cur)).destPerSource; } catch (e) { row.ngnRateError = e.message; }
+            out.push(row);
+        }
+        return res.json({ success: true, results: out });
+    } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
+});
+
 // XAMEPAY_CROSSSEND_V1: send between XamePay wallets of different currencies. Off until
 // XAMEPAY_CROSSSEND_ENABLED=true; also needs XAMEPAY_QUOTE_SECRET and FX_MARGIN_PERCENT.
 const walletCrossSendLedgerSchema = new mongoose.Schema({
