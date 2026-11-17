@@ -13515,6 +13515,14 @@ const XAMEPAY_PAYOUT_RAILS = {
         // Flutterwave's live fee for a KES bank payout was a flat KES 100 at the amounts sampled (100, 1000, 10000).
         providerFee: () => 100,
         marginMultiplier: 1.5, feeStep: 1, minFee: 1
+    },
+    NGN_BANK: {
+        currency: 'NGN', country: 'NG', kind: 'bank', banks: null, lookup: true, accountLength: 10,
+        matches: () => true,
+        minAmount: 100, maxAmount: 50000,
+        // Same Flutterwave fee tiers as the existing naira payouts (10 / 25 / 50); margin 1.5 with step 5 gives user fees 15 / 40 / 75.
+        providerFee: (amt) => amt <= 5000 ? 10 : (amt <= 50000 ? 25 : 50),
+        marginMultiplier: 1.5, feeStep: 5, minFee: 15
     }
 };
 function xamepayPayoutPlan(walletCur, userId, bankCode, accountNumber, amount, accName) {
@@ -13534,6 +13542,7 @@ function xamepayPayoutPlan(walletCur, userId, bankCode, accountNumber, amount, a
     let num = String(accountNumber || '').replace(/\D/g, '');
     if (rail.kind === 'bank') {
         if (!/^\d{8,18}$/.test(num)) return bad(400, 'BAD_NUMBER', 'Enter a valid bank account number.');
+        if (rail.accountLength && num.length !== rail.accountLength) return bad(400, 'BAD_NUMBER', 'Enter a valid ' + rail.accountLength + '-digit account number.');
     } else if (rail.currency === 'KES') {
         if (/^0\d{9}$/.test(num)) num = '254' + num.slice(1);
         if (!/^254\d{9}$/.test(num)) return bad(400, 'BAD_NUMBER', 'Enter a valid Kenya mobile number.');
@@ -13559,7 +13568,7 @@ app.get('/api/wallet/payout/quote', async (req, res) => {
         const cur = String((w && w.currency) || dflt).toUpperCase();
         if (cur === 'NGN') return res.json({ success: true, needed: false });
         // The recipient name and number are not known yet at quote time, so placeholders pass those checks.
-        const p = xamepayPayoutPlan(cur, userId, bank, cur === 'KES' ? '254700000000' : '233000000000', amount, 'Quote Check');
+        const p = xamepayPayoutPlan(cur, userId, bank, cur === 'KES' ? '254700000000' : cur === 'NGN' ? '0123456789' : '233000000000', amount, 'Quote Check');
         if (!p.ok) return res.status(p.status).json({ success: false, code: p.code, message: p.message });
         const f = await xamepayPayoutFunding(cur, amount, p.flwFee, false);
         if (!f.ok) return res.status(503).json({ success: false, code: 'PAYOUT_TEMPORARILY_UNAVAILABLE', message: f.message });
@@ -13681,7 +13690,7 @@ app.get('/api/wallet/abroad/quote', async (req, res) => {
         const from = crossCur(w);
         const to = region.currency;
         if (from === to) return res.json({ success: true, needed: false, from, to });
-        const p = xamepayPayoutPlan(to, userId, bank, to === 'KES' ? '254700000000' : '233000000000', amount, 'Quote Check');
+        const p = xamepayPayoutPlan(to, userId, bank, to === 'KES' ? '254700000000' : to === 'NGN' ? '0123456789' : '233000000000', amount, 'Quote Check');
         if (!p.ok) return res.status(p.status).json({ success: false, code: p.code, message: p.message });
         const f = await xamepayPayoutFunding(to, amount, p.flwFee, false);
         if (!f.ok) return res.status(503).json({ success: false, code: 'PAYOUT_TEMPORARILY_UNAVAILABLE', message: f.message });
@@ -13834,7 +13843,7 @@ app.get('/api/wallet/abroad/destinations', async (req, res) => {
             const reg = regions.regionFor(r.country);
             if (!reg || !reg.enabled) continue;
             const d = by[r.country] || (by[r.country] = { country: r.country, name: reg.name, currency: reg.currency, types: {} });
-            d.types[r.kind] = { min: r.minAmount, max: r.maxAmount, wholeAmount: !!r.wholeAmount };
+            d.types[r.kind] = { min: r.minAmount, max: r.maxAmount, wholeAmount: !!r.wholeAmount, lookup: !!r.lookup };
         }
         return res.json({ success: true, enabled: true, destinations: Object.values(by) });
     } catch (e) { return res.status(500).json({ success: false, message: 'Could not load destinations.' }); }
