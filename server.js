@@ -13704,9 +13704,9 @@ function xamepayAbroadAllowed(userId) {
 async function xamepayAbroadCost(walletCur, destCur, destTotal) {
     const margin = Math.max(0, Math.min(10, Number(process.env.FX_MARGIN_PERCENT || 0)));
     const toDest = await fxRate('NGN', destCur);
-    const toWallet = await fxRate('NGN', walletCur);
+    const fromWallet = await fxRate(walletCur, 'NGN'); // XAMEPAY_ABROAD_COST_V2: the wallet sells its own currency for naira, so use that direction
     const ngn = destTotal / toDest.destPerSource;
-    const cost = Math.ceil((ngn * toWallet.destPerSource / (1 - margin / 100)) * 100 - 1e-9) / 100;
+    const cost = Math.ceil((ngn / fromWallet.destPerSource / (1 - margin / 100)) * 100 - 1e-9) / 100;
     return { cost, margin };
 }
 function xamepaySenderMeta(user, fullName) {
