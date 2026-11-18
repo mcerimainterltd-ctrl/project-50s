@@ -13431,14 +13431,15 @@ app.get('/api/admin/payout-probe', async (req, res) => {
 
 // XAMEPAY_PAYOUT_BRANCH_V1: Ghana bank payouts need a branch code. Find the bank by its code, then use the requested branch if it exists, or the first listed one.
 const _xpBranchCache = {};
-async function xamepayGhBranch(bankCode, wanted) {
+async function xamepayGhBranch(bankCode, wanted, cc) {
+    const _cc = String(cc || 'GH').toUpperCase();
     const key = process.env.FLW_SECRET_KEY || process.env.FLW_SECRET || FLW_SECRET;
     if (!key) return { ok: false, message: 'Provider not configured.' };
     const H = { Authorization: 'Bearer ' + key };
     try {
-        let hit = _xpBranchCache[bankCode];
+        let hit = _xpBranchCache[_cc + ':' + bankCode];
         if (!hit || Date.now() - hit.at > 60 * 60 * 1000) {
-            const b = await fetch('https://api.flutterwave.com/v3/banks/GH', { headers: H, signal: AbortSignal.timeout(12000) });
+            const b = await fetch('https://api.flutterwave.com/v3/banks/' + encodeURIComponent(_cc), { headers: H, signal: AbortSignal.timeout(12000) });
             const bj = await b.json().catch(() => null);
             const bank = bj && Array.isArray(bj.data) ? bj.data.find(x => x && String(x.code) === String(bankCode)) : null;
             if (!bank) return { ok: false, message: 'This bank is not available.' };
@@ -13447,7 +13448,7 @@ async function xamepayGhBranch(bankCode, wanted) {
             const rows = rj && Array.isArray(rj.data) ? rj.data.map(x => String(x.branch_code || '')).filter(Boolean) : [];
             if (!rows.length) return { ok: false, message: 'No branch is available for this bank.' };
             hit = { at: Date.now(), rows };
-            _xpBranchCache[bankCode] = hit;
+            _xpBranchCache[_cc + ':' + bankCode] = hit;
         }
         const w = String(wanted || '').trim();
         if (w) return hit.rows.includes(w) ? { ok: true, code: w } : { ok: false, message: 'Choose a valid branch.' };
@@ -13494,7 +13495,7 @@ const XAMEPAY_PAYOUT_RAILS = {
         marginMultiplier: 1.5, feeStep: 0.5, minFee: 0.5
     },
     GHS_BANK: {
-        currency: 'GHS', country: 'GH', kind: 'bank', banks: null,
+        currency: 'GHS', country: 'GH', kind: 'bank', banks: null, branch: true,
         matches: (c) => !['MTN', 'TELECEL', 'VODAFONE', 'AIRTELTIGO'].includes(c),
         minAmount: 5, maxAmount: 100,
         // Flutterwave's live fee for a GHS bank payout was a flat GHS 10 at the amounts sampled (100, 1000, 10000).
@@ -13551,6 +13552,14 @@ const XAMEPAY_PAYOUT_RAILS = {
         // Flutterwave quoted a percentage fee of 0.02 for mobile money, read as 2% like Ghana's 0.015 (1.5%).
         providerFee: (amt) => amt * 0.02,
         marginMultiplier: 1.5, feeStep: 0.5, minFee: 0.5
+    },
+    UGX_BANK: {
+        currency: 'UGX', country: 'UG', kind: 'bank', banks: null, branch: true,
+        matches: (c) => !['MPS', 'MTN', 'AIRTEL'].includes(c),
+        minAmount: 20000, maxAmount: 100000, wholeAmount: true,
+        // Flutterwave quoted a flat UGX 5000 for bank payouts (probe 2026-11-17).
+        providerFee: () => 5000,
+        marginMultiplier: 1.5, feeStep: 500, minFee: 500
     }
 };
 function xamepayPayoutPlan(walletCur, userId, bankCode, accountNumber, amount, accName) {
@@ -13782,8 +13791,8 @@ app.post('/api/wallet/abroad/send', async (req, res) => {
         if (!fund.ok) return fail(503, 'PAYOUT_TEMPORARILY_UNAVAILABLE', fund.message);
         const extra = { ...plan.extra };
         if (meta) { if (XAMEPAY_PAYOUT_RAILS[plan.rail].senderTopLevel) Object.assign(extra, meta, { mobile_number: '+' + meta.mobile_number }); else extra.meta = meta; }
-        if (plan.kind === 'bank' && XAMEPAY_PAYOUT_RAILS[plan.rail].country === 'GH') {
-            const br = await xamepayGhBranch(plan.bankCode, b.branch_code);
+        if (plan.kind === 'bank' && XAMEPAY_PAYOUT_RAILS[plan.rail].branch) {
+            const br = await xamepayGhBranch(plan.bankCode, b.branch_code, XAMEPAY_PAYOUT_RAILS[plan.rail].country);
             if (!br.ok) return fail(400, 'BRANCH_UNAVAILABLE', br.message);
             extra.destination_branch_code = br.code;
         }
@@ -15076,8 +15085,8 @@ app.post('/api/wallet/send-bank', async (req, res) => {
             if (!_f.ok) return res.status(503).json({ success: false, code: 'PAYOUT_TEMPORARILY_UNAVAILABLE', message: _f.message });
             _rail = _p;
             if (_senderMeta) _rail.extra = XAMEPAY_PAYOUT_RAILS[_p.rail].senderTopLevel ? { ..._rail.extra, ..._senderMeta, mobile_number: '+' + _senderMeta.mobile_number } : { ..._rail.extra, meta: _senderMeta };
-            if (_p.kind === 'bank' && XAMEPAY_PAYOUT_RAILS[_p.rail].country === 'GH') {
-                const _b = await xamepayGhBranch(_p.bankCode, req.body && req.body.branch_code);
+            if (_p.kind === 'bank' && XAMEPAY_PAYOUT_RAILS[_p.rail].branch) {
+                const _b = await xamepayGhBranch(_p.bankCode, req.body && req.body.branch_code, XAMEPAY_PAYOUT_RAILS[_p.rail].country);
                 if (!_b.ok) return res.status(400).json({ success: false, code: 'BRANCH_UNAVAILABLE', message: _b.message });
                 _rail.extra = { ..._rail.extra, destination_branch_code: _b.code };
                 if (_b.defaulted) console.log('[XamePay payout] branch defaulted for', _p.rail);
