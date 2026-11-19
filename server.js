@@ -13464,6 +13464,30 @@ app.get('/api/admin/intl-probe', async (req, res) => {
     } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
 });
 
+// XAMELIVE_ENTITLEMENT_CHECK_V1: admin-only, read-only. Shows the Go Live plans and one user's entitlements, and whether they pass the join gate. Writes nothing.
+app.get('/api/admin/xamelive/entitlement-check', async (req, res) => {
+    if (!xamepayAdminOk(req)) return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    try {
+        const now = new Date();
+        const xameId = String(req.query.xameId || '').trim();
+        const out = { success: true, now: now.toISOString() };
+        out.plans = await GoLivePlan.find({}).select('planId name trial active durationDays includedMinutes').lean();
+        out.trialClaims = await GoLiveEntitlement.countDocuments({ trial: true });
+        if (xameId) {
+            const rows = await GoLiveEntitlement.find({ xameId }).select('-providerPurchaseToken').lean();
+            out.entitlements = rows.map(r => ({
+                planId: r.planId, provider: r.provider, status: r.status, trial: r.trial,
+                startedAt: r.startedAt, expiresAt: r.expiresAt,
+                includedMinutes: r.includedMinutes, usedMinutes: r.usedMinutes,
+                passesJoinGate: r.status === 'ACTIVE' && new Date(r.expiresAt) > now &&
+                    (Number(r.includedMinutes || 0) - Number(r.usedMinutes || 0)) > 0
+            }));
+            out.canJoin = out.entitlements.some(e => e.passesJoinGate);
+        }
+        return res.json(out);
+    } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
+});
+
 // XAMEPAY_PAYOUT_BRANCH_V1: Ghana bank payouts need a branch code. Find the bank by its code, then use the requested branch if it exists, or the first listed one.
 const _xpBranchCache = {};
 async function xamepayGhBranch(bankCode, wanted, cc) {
