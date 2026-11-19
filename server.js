@@ -13429,6 +13429,41 @@ app.get('/api/admin/payout-probe', async (req, res) => {
     } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
 });
 
+// XAMEPAY_INTL_PROBE_V1: admin-only, read-only. Shows whether Flutterwave can pay out in USD, GBP, EUR, ILS and other listed currencies: live fees, bank lists and balances. Moves no money.
+app.get('/api/admin/intl-probe', async (req, res) => {
+    if (!xamepayAdminOk(req)) return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    try {
+        const key = process.env.FLW_SECRET_KEY || process.env.FLW_SECRET || FLW_SECRET;
+        if (!key) return res.status(503).json({ success: false, message: 'Provider not configured.' });
+        const H = { Authorization: 'Bearer ' + key };
+        const get = async (url) => {
+            try {
+                const r = await fetch(url, { headers: H, signal: AbortSignal.timeout(12000) });
+                const j = await r.json().catch(() => null);
+                return { http: r.status, j };
+            } catch (e) { return { error: e.message }; }
+        };
+        const out = { fees: [], banks: [], balances: [] };
+        for (const cur of ['USD', 'GBP', 'EUR', 'ILS', 'CAD', 'AUD', 'AED', 'INR', 'ZAR']) {
+            for (const amt of [100, 1000]) {
+                const r = await get('https://api.flutterwave.com/v3/transfers/fee?' + new URLSearchParams({ amount: String(amt), currency: cur, type: 'account' }).toString());
+                out.fees.push({ cur, amt, http: r.http, status: r.j && r.j.status,
+                    message: String((r.j && r.j.message) || '').slice(0, 100), data: r.j && r.j.data, error: r.error });
+            }
+            const bal = await get('https://api.flutterwave.com/v3/balances/' + cur);
+            out.balances.push({ cur, http: bal.http, status: bal.j && bal.j.status,
+                message: String((bal.j && bal.j.message) || '').slice(0, 100), data: bal.j && bal.j.data, error: bal.error });
+        }
+        for (const cc of ['US', 'GB', 'DE', 'IL', 'ZA']) {
+            const b = await get('https://api.flutterwave.com/v3/banks/' + cc);
+            const list = b.j && Array.isArray(b.j.data) ? b.j.data : null;
+            out.banks.push({ cc, http: b.http, message: String((b.j && b.j.message) || '').slice(0, 100),
+                count: list ? list.length : null, codes: list ? list.slice(0, 30).map(x => x.code + ':' + x.name) : null, error: b.error });
+        }
+        return res.json({ success: true, ...out });
+    } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
+});
+
 // XAMEPAY_PAYOUT_BRANCH_V1: Ghana bank payouts need a branch code. Find the bank by its code, then use the requested branch if it exists, or the first listed one.
 const _xpBranchCache = {};
 async function xamepayGhBranch(bankCode, wanted, cc) {
