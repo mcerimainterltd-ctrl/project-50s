@@ -6855,6 +6855,42 @@ io.on('connection', (socket) => {
         }
     });
 
+    // XAMELIVE_WATCH_V1: receive-only membership of a session's live room, so everyone watching sees comments and reactions. It never sets socket.liveSessionId, so a watcher still cannot send. Joining to participate stays behind the Go Live entitlement in live:join.
+    socket.on('live:watch', async ({ sessionId } = {}, ack) => {
+        const reply = (payload) => {
+            if (typeof ack === 'function') ack(payload);
+        };
+        try {
+            const userId = socket.authenticatedUserId;
+            if (!userId || typeof sessionId !== 'string' || !sessionId) {
+                return reply({ success: false });
+            }
+            const session = await LiveSession.findOne({ sessionId });
+            if (!session || session.status === 'ENDED') {
+                return reply({ success: false });
+            }
+            if (!await canViewLive(session, userId)) {
+                return reply({ success: false });
+            }
+            socket.join(`live:${sessionId}`);
+            return reply({ success: true });
+        } catch (err) {
+            console.error('[XAMELIVE] socket watch failed:', err.message);
+            return reply({ success: false });
+        }
+    });
+
+    socket.on('live:unwatch', ({ sessionId } = {}) => {
+        try {
+            if (typeof sessionId !== 'string' || !sessionId) return;
+            // A joined participant leaves through live:leave.
+            if (socket.liveSessionId === sessionId) return;
+            socket.leave(`live:${sessionId}`);
+        } catch (err) {
+            console.error('[XAMELIVE] socket unwatch failed:', err.message);
+        }
+    });
+
     socket.on('live:comment', async ({ sessionId, text } = {}) => {
         try {
             const userId = socket.authenticatedUserId;
@@ -6885,10 +6921,17 @@ io.on('connection', (socket) => {
                 text: cleanText
             });
 
+            let _xlName = '';
+            try {
+                const _xlUser = await User.findOne({ xameId: userId })
+                    .select('preferredName firstName').lean();
+                _xlName = String((_xlUser && (_xlUser.preferredName || _xlUser.firstName)) || '').slice(0, 40);
+            } catch (_) { /* the name is optional */ }
+
             io.to(`live:${sessionId}`).emit('live:comment', {
                 sessionId,
                 comment: {
-                    id: String(comment._id),
+                    id: String(comment._id), name: _xlName,
                     userId,
                     text: cleanText,
                     createdAt: comment.createdAt
