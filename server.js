@@ -13507,6 +13507,246 @@ app.get('/api/admin/intl-probe', async (req, res) => {
     } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
 });
 
+// XAMELIVE_GUESTS_V1: lets a joined user go on camera in a live, with the broadcaster's approval. Each guest publishes to their own Cloudflare Stream live input, the same way the host does. New collection and routes only; no existing route is changed.
+const XL_GUEST_MAX = 2;
+const XL_GUEST_STALE_MS = 45000;
+const XL_GUEST_OPEN = ['REQUESTED', 'APPROVED', 'PUBLISHING'];
+
+const liveGuestSchema = new mongoose.Schema({
+    sessionId: { type: String, required: true, index: true },
+    guestXameId: { type: String, required: true, index: true },
+    guestName: { type: String, default: '' },
+    status: { type: String, enum: ['REQUESTED', 'APPROVED', 'PUBLISHING', 'ENDED'], default: 'REQUESTED', index: true },
+    cloudflareLiveInputId: { type: String, default: '' },
+    publishUrl: { type: String, default: '' },
+    playbackUrl: { type: String, default: '' },
+    endReason: { type: String, default: '' },
+    lastSeenAt: { type: Date, default: Date.now },
+    createdAt: { type: Date, default: Date.now },
+    endedAt: { type: Date, default: null }
+});
+const LiveGuest = mongoose.models.LiveGuest || mongoose.model('LiveGuest', liveGuestSchema);
+
+function xlGuestPublic(g) {
+    return {
+        guestXameId: g.guestXameId,
+        guestName: g.guestName || '',
+        status: g.status,
+        reason: g.endReason || '',
+        playbackUrl: g.status === 'PUBLISHING' ? (g.playbackUrl || '') : ''
+    };
+}
+
+async function xlGuestDeleteInput(g) {
+    if (!g || !g.cloudflareLiveInputId) return;
+    try {
+        const r = await fetch(
+            `${CLOUDFLARE_STREAM_API_BASE}/accounts/${encodeURIComponent(CLOUDFLARE_ACCOUNT_ID)}/stream/live_inputs/${encodeURIComponent(g.cloudflareLiveInputId)}`,
+            { method: 'DELETE', headers: { Authorization: `Bearer ${CLOUDFLARE_STREAM_API_TOKEN}` } }
+        );
+        if (!r.ok && r.status !== 404) console.error('[XAMELIVE] guest input delete HTTP', r.status);
+    } catch (e) {
+        console.error('[XAMELIVE] guest input delete failed:', e.message);
+    }
+}
+
+async function xlGuestEnd(g, reason) {
+    if (!g || g.status === 'ENDED') return;
+    await xlGuestDeleteInput(g);
+    g.status = 'ENDED';
+    g.endReason = reason || '';
+    g.endedAt = new Date();
+    g.publishUrl = '';
+    await g.save();
+    io.to(`live:${g.sessionId}`).emit('live:guest-update', { sessionId: g.sessionId, guest: xlGuestPublic(g) });
+}
+
+async function xlGuestLoad(req, res, refresh) {
+    const authUser = await getAuthenticatedUserFromSession(req);
+    if (!authUser) { res.status(401).json({ success: false, message: 'Unauthorized.' }); return null; }
+    const session = await LiveSession.findOne({ sessionId: req.params.sessionId });
+    if (!session) { res.status(404).json({ success: false, message: 'Live session not found.' }); return null; }
+    if (refresh) await refreshLiveSessionStatus(session);
+    if (session.status === 'ENDED') { res.status(409).json({ success: false, message: 'This live broadcast is not currently live.' }); return null; }
+    if (!await canViewLive(session, authUser.xameId)) { res.status(404).json({ success: false, message: 'Live session not found.' }); return null; }
+    return { authUser, session };
+}
+
+// Guest asks to go on camera.
+app.post('/api/live/:sessionId/guest/request', async (req, res) => {
+    try {
+        const ctx = await xlGuestLoad(req, res, true);
+        if (!ctx) return;
+        const { authUser, session } = ctx;
+        if (session.status !== 'LIVE') return res.status(409).json({ success: false, message: 'This live broadcast is not currently live.' });
+        if (session.broadcasterXameId === authUser.xameId) return res.status(400).json({ success: false, message: 'The broadcaster is already on camera.' });
+        const ent = await getActiveGoLiveAccessEntitlement(authUser.xameId);
+        if (!ent) return res.status(402).json({ success: false, code: 'GO_LIVE_SUBSCRIPTION_REQUIRED', message: 'An active XameLive subscription is required to go on camera.' });
+        let g = await LiveGuest.findOne({ sessionId: session.sessionId, guestXameId: authUser.xameId, status: { $in: XL_GUEST_OPEN } });
+        if (!g) {
+            const u = await User.findOne({ xameId: authUser.xameId }).select('preferredName firstName').lean();
+            g = await LiveGuest.create({ sessionId: session.sessionId, guestXameId: authUser.xameId, guestName: liveHostDisplayName(u) || 'Guest', status: 'REQUESTED' });
+            io.to(`live:${session.sessionId}`).emit('live:guest-update', { sessionId: session.sessionId, guest: xlGuestPublic(g) });
+        } else {
+            await LiveGuest.updateOne({ _id: g._id }, { $set: { lastSeenAt: new Date() } });
+        }
+        return res.json({ success: true, guest: xlGuestPublic(g) });
+    } catch (err) {
+        console.error('[XAMELIVE] guest request failed:', err);
+        return res.status(500).json({ success: false, message: 'Unable to request to go on camera.' });
+    }
+});
+
+// Guest reads its own state (also its heartbeat) and, once approved, its private publish URL.
+app.get('/api/live/:sessionId/guest/me', async (req, res) => {
+    try {
+        const ctx = await xlGuestLoad(req, res, false);
+        if (!ctx) return;
+        const { authUser, session } = ctx;
+        const g = await LiveGuest.findOne({ sessionId: session.sessionId, guestXameId: authUser.xameId, status: { $in: XL_GUEST_OPEN } });
+        if (!g) {
+            const last = await LiveGuest.findOne({ sessionId: session.sessionId, guestXameId: authUser.xameId }).sort({ createdAt: -1 });
+            if (last && last.status === 'ENDED' && last.endedAt && Date.now() - new Date(last.endedAt).getTime() < 120000) {
+                return res.json({ success: true, max: XL_GUEST_MAX, guest: xlGuestPublic(last) });
+            }
+            return res.json({ success: true, max: XL_GUEST_MAX, guest: null });
+        }
+        g.lastSeenAt = new Date();
+        await g.save();
+        const canPublish = g.status === 'APPROVED' || g.status === 'PUBLISHING';
+        return res.json({ success: true, max: XL_GUEST_MAX, guest: Object.assign(xlGuestPublic(g), { publishUrl: canPublish ? g.publishUrl : '' }) });
+    } catch (err) {
+        console.error('[XAMELIVE] guest me failed:', err);
+        return res.status(500).json({ success: false, message: 'Unable to load guest status.' });
+    }
+});
+
+// Guest reports that its stream is publishing; everyone is told to start playing it.
+app.post('/api/live/:sessionId/guest/me/started', async (req, res) => {
+    try {
+        const ctx = await xlGuestLoad(req, res, false);
+        if (!ctx) return;
+        const { authUser, session } = ctx;
+        const g = await LiveGuest.findOne({ sessionId: session.sessionId, guestXameId: authUser.xameId, status: { $in: ['APPROVED', 'PUBLISHING'] } });
+        if (!g) return res.status(409).json({ success: false, message: 'No approved guest slot.' });
+        if (g.status !== 'PUBLISHING') {
+            g.status = 'PUBLISHING';
+            g.lastSeenAt = new Date();
+            await g.save();
+            io.to(`live:${session.sessionId}`).emit('live:guest-update', { sessionId: session.sessionId, guest: xlGuestPublic(g) });
+        }
+        return res.json({ success: true, guest: xlGuestPublic(g) });
+    } catch (err) {
+        console.error('[XAMELIVE] guest started failed:', err);
+        return res.status(500).json({ success: false, message: 'Unable to start guest stream.' });
+    }
+});
+
+// Guest leaves (or cancels a request).
+app.post('/api/live/:sessionId/guest/me/leave', async (req, res) => {
+    try {
+        const ctx = await xlGuestLoad(req, res, false);
+        if (!ctx) return;
+        const { authUser, session } = ctx;
+        const g = await LiveGuest.findOne({ sessionId: session.sessionId, guestXameId: authUser.xameId, status: { $in: XL_GUEST_OPEN } });
+        if (g) await xlGuestEnd(g, 'left');
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('[XAMELIVE] guest leave failed:', err);
+        return res.status(500).json({ success: false, message: 'Unable to leave.' });
+    }
+});
+
+// Host approves a request: creates the guest's own Cloudflare input.
+app.post('/api/live/:sessionId/guest/:guestXameId/approve', async (req, res) => {
+    let claimed = null;
+    try {
+        const ctx = await xlGuestLoad(req, res, false);
+        if (!ctx) return;
+        const { authUser, session } = ctx;
+        if (session.broadcasterXameId !== authUser.xameId) return res.status(403).json({ success: false, message: 'Only the broadcaster can approve guests.' });
+        const gid = String(req.params.guestXameId || '').slice(0, 64);
+        claimed = await LiveGuest.findOneAndUpdate(
+            { sessionId: session.sessionId, guestXameId: gid, status: 'REQUESTED' },
+            { $set: { status: 'APPROVED', lastSeenAt: new Date() } },
+            { new: true }
+        );
+        if (!claimed) return res.status(404).json({ success: false, message: 'No pending request from this user.' });
+        const active = await LiveGuest.countDocuments({ sessionId: session.sessionId, status: { $in: ['APPROVED', 'PUBLISHING'] } });
+        if (active > XL_GUEST_MAX) {
+            await LiveGuest.updateOne({ _id: claimed._id }, { $set: { status: 'REQUESTED' } });
+            claimed = null;
+            return res.status(409).json({ success: false, message: 'The guest limit has been reached.' });
+        }
+        const input = await cloudflareStreamRequest('/stream/live_inputs', {
+            method: 'POST',
+            headers: { 'Idempotency-Key': `guest_${claimed._id}` },
+            body: JSON.stringify({ meta: { sessionId: session.sessionId, guestXameId: gid, kind: 'guest' }, recording: { mode: 'off' } })
+        });
+        if (!input?.uid || !input?.webRTC?.url || !input?.webRTCPlayback?.url) throw new Error('Cloudflare returned an incomplete live input.');
+        claimed.cloudflareLiveInputId = input.uid;
+        claimed.publishUrl = input.webRTC.url;
+        claimed.playbackUrl = input.webRTCPlayback.url;
+        await claimed.save();
+        io.to(`live:${session.sessionId}`).emit('live:guest-update', { sessionId: session.sessionId, guest: xlGuestPublic(claimed) });
+        return res.json({ success: true, guest: xlGuestPublic(claimed) });
+    } catch (err) {
+        console.error('[XAMELIVE] guest approve failed:', err);
+        if (claimed) { try { await LiveGuest.updateOne({ _id: claimed._id }, { $set: { status: 'REQUESTED' } }); } catch (_) { /* ignore */ } }
+        return res.status(500).json({ success: false, message: 'Unable to approve guest.' });
+    }
+});
+
+// Host declines a request or removes a guest.
+app.post('/api/live/:sessionId/guest/:guestXameId/remove', async (req, res) => {
+    try {
+        const ctx = await xlGuestLoad(req, res, false);
+        if (!ctx) return;
+        const { authUser, session } = ctx;
+        if (session.broadcasterXameId !== authUser.xameId) return res.status(403).json({ success: false, message: 'Only the broadcaster can remove guests.' });
+        const gid = String(req.params.guestXameId || '').slice(0, 64);
+        const g = await LiveGuest.findOne({ sessionId: session.sessionId, guestXameId: gid, status: { $in: XL_GUEST_OPEN } });
+        if (!g) return res.status(404).json({ success: false, message: 'Guest not found.' });
+        await xlGuestEnd(g, g.status === 'REQUESTED' ? 'declined' : 'removed');
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('[XAMELIVE] guest remove failed:', err);
+        return res.status(500).json({ success: false, message: 'Unable to remove guest.' });
+    }
+});
+
+// Guest list. The host sees pending requests; everyone else sees only guests who are on camera.
+app.get('/api/live/:sessionId/guests', async (req, res) => {
+    try {
+        const ctx = await xlGuestLoad(req, res, false);
+        if (!ctx) return;
+        const { authUser, session } = ctx;
+        const isHost = session.broadcasterXameId === authUser.xameId;
+        const rows = await LiveGuest.find({ sessionId: session.sessionId, status: { $in: XL_GUEST_OPEN } }).sort({ createdAt: 1 }).lean();
+        const guests = rows.filter(g => isHost || g.status === 'PUBLISHING').map(xlGuestPublic);
+        return res.json({ success: true, max: XL_GUEST_MAX, guests });
+    } catch (err) {
+        console.error('[XAMELIVE] guest list failed:', err);
+        return res.status(500).json({ success: false, message: 'Unable to load guests.' });
+    }
+});
+
+// Cleanup: ends guests whose live ended or whose app stopped checking in, and deletes their inputs.
+setInterval(async () => {
+    try {
+        if (mongoose.connection.readyState !== 1) return;
+        const open = await LiveGuest.find({ status: { $in: XL_GUEST_OPEN } }).limit(200);
+        for (const g of open) {
+            const s = await LiveSession.findOne({ sessionId: g.sessionId }).select('status').lean();
+            if (!s || s.status === 'ENDED') { await xlGuestEnd(g, 'session_ended'); continue; }
+            if (Date.now() - new Date(g.lastSeenAt).getTime() > XL_GUEST_STALE_MS) await xlGuestEnd(g, 'abandoned');
+        }
+    } catch (e) {
+        console.error('[XAMELIVE] guest cleanup failed:', e.message);
+    }
+}, 20000);
+
+
 // XAMELIVE_STAGE_POC_V1: proof of concept. Gives an entitled XameLive user a RealtimeKit participant token for one shared test meeting. A presenter token can publish; a viewer token can watch and request to join the stage. Live sessions and existing routes are not touched.
 let _xlPocAppId = null;
 let _xlPocMeetingId = null;
