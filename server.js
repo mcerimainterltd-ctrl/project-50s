@@ -13507,6 +13507,79 @@ app.get('/api/admin/intl-probe', async (req, res) => {
     } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
 });
 
+// XAMELIVE_STAGE_POC_V1: proof of concept. Gives an entitled XameLive user a RealtimeKit participant token for one shared test meeting. A presenter token can publish; a viewer token can watch and request to join the stage. Live sessions and existing routes are not touched.
+let _xlPocAppId = null;
+let _xlPocMeetingId = null;
+let _xlPocInit = null;
+app.post('/api/live/stage-poc/token', async (req, res) => {
+    try {
+        const authUser = await getAuthenticatedUserFromSession(req);
+        if (!authUser) return res.status(401).json({ success: false, message: 'Unauthorized.' });
+        if (!CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_STREAM_API_TOKEN) {
+            return res.status(503).json({ success: false, message: 'Cloudflare is not configured.' });
+        }
+        const entitlement = await getActiveGoLiveAccessEntitlement(authUser.xameId);
+        if (!entitlement) {
+            return res.status(402).json({
+                success: false,
+                code: 'GO_LIVE_SUBSCRIPTION_REQUIRED',
+                message: 'An active XameLive subscription is required.'
+            });
+        }
+        const role = req.body && req.body.role === 'presenter' ? 'presenter' : 'viewer';
+        const base = 'https://api.cloudflare.com/client/v4/accounts/' + encodeURIComponent(CLOUDFLARE_ACCOUNT_ID) + '/realtime/kit';
+        const call = async (path, method, body) => {
+            const r = await fetch(base + path, {
+                method,
+                headers: { Authorization: 'Bearer ' + CLOUDFLARE_STREAM_API_TOKEN, 'Content-Type': 'application/json' },
+                body: body ? JSON.stringify(body) : undefined,
+                signal: AbortSignal.timeout(15000)
+            });
+            const t = await r.text();
+            let j = null;
+            try { j = JSON.parse(t); } catch (_) { /* not JSON */ }
+            return { http: r.status, j };
+        };
+        const listOf = (j) => {
+            const b = j || {};
+            return Array.isArray(b.data) ? b.data
+                : (b.result && Array.isArray(b.result.data)) ? b.result.data
+                : Array.isArray(b.result) ? b.result : [];
+        };
+        if (!_xlPocMeetingId) {
+            if (!_xlPocInit) {
+                _xlPocInit = (async () => {
+                    const apps = await call('/apps', 'GET');
+                    const found = listOf(apps.j).find(a => a && a.name === 'xamelive');
+                    if (!found) throw new Error('RealtimeKit app not found');
+                    const m = await call('/' + found.id + '/meetings', 'POST', { title: 'xamelive-poc' });
+                    const mid = m.j && m.j.data && m.j.data.id;
+                    if (!mid) throw new Error('Could not create the test meeting');
+                    _xlPocAppId = found.id;
+                    _xlPocMeetingId = mid;
+                })().finally(() => { _xlPocInit = null; });
+            }
+            await _xlPocInit;
+        }
+        const u = await User.findOne({ xameId: authUser.xameId }).select('preferredName firstName').lean();
+        const name = String((u && (u.preferredName || u.firstName)) || 'XameLive user').slice(0, 40);
+        const preset = role === 'presenter' ? 'webinar_presenter' : 'webinar_viewer';
+        const p = await call('/' + _xlPocAppId + '/meetings/' + _xlPocMeetingId + '/participants', 'POST', {
+            name,
+            preset_name: preset,
+            custom_participant_id: String(authUser.xameId) + '-' + role
+        });
+        const d = p.j && p.j.data;
+        if (!d || !d.token) {
+            return res.status(502).json({ success: false, message: 'Could not add the participant.', http: p.http });
+        }
+        return res.json({ success: true, authToken: d.token, participantId: d.id, preset, meetingId: _xlPocMeetingId });
+    } catch (e) {
+        console.error('[XAMELIVE] stage poc failed:', e.message);
+        return res.status(500).json({ success: false, message: 'Unable to prepare the stage.' });
+    }
+});
+
 // XAMELIVE_RTK_PRESETS_V1: admin-only, read-only. Lists the RealtimeKit app's presets (names and ids), or one preset's settings with ?name=. Changes nothing.
 app.get('/api/admin/xamelive/rtk-presets', async (req, res) => {
     if (!xamepayAdminOk(req)) return res.status(401).json({ success: false, message: 'Unauthorized.' });
