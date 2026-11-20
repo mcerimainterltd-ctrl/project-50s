@@ -13507,6 +13507,33 @@ app.get('/api/admin/intl-probe', async (req, res) => {
     } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
 });
 
+// XAMELIVE_RTK_PROBE_V1: admin-only, read-only. Asks Cloudflare whether the existing API token may list RealtimeKit apps, and lists them. Shows status and app names only, never the token. Changes nothing.
+app.get('/api/admin/xamelive/rtk-probe', async (req, res) => {
+    if (!xamepayAdminOk(req)) return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    try {
+        if (!CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_STREAM_API_TOKEN) {
+            return res.status(503).json({ success: false, message: 'Cloudflare is not configured.' });
+        }
+        const r = await fetch(
+            'https://api.cloudflare.com/client/v4/accounts/' + encodeURIComponent(CLOUDFLARE_ACCOUNT_ID) + '/realtime/kit/apps',
+            { headers: { Authorization: 'Bearer ' + CLOUDFLARE_STREAM_API_TOKEN }, signal: AbortSignal.timeout(12000) }
+        );
+        const text = await r.text();
+        let j = null;
+        try { j = JSON.parse(text); } catch (_) { /* not JSON */ }
+        const pick = (v) => (Array.isArray(v) ? v : null);
+        const list = j ? (pick(j.data) || pick(j.result) || (j.result && pick(j.result.data))) : null;
+        return res.json({
+            success: true,
+            http: r.status,
+            cloudflareSuccess: j ? j.success : null,
+            errors: j && Array.isArray(j.errors) ? j.errors.slice(0, 5).map(e => ({ code: e.code, message: String(e.message || '').slice(0, 160) })) : null,
+            apps: list ? list.map(a => ({ id: a.id, name: a.name, created_at: a.created_at })) : null,
+            snippet: list ? undefined : text.slice(0, 300)
+        });
+    } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
+});
+
 // XAMELIVE_ENTITLEMENT_CHECK_V1: admin-only, read-only. Shows the Go Live plans and one user's entitlements, and whether they pass the join gate. Writes nothing.
 app.get('/api/admin/xamelive/entitlement-check', async (req, res) => {
     if (!xamepayAdminOk(req)) return res.status(401).json({ success: false, message: 'Unauthorized.' });
