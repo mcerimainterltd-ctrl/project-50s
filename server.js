@@ -13507,6 +13507,47 @@ app.get('/api/admin/intl-probe', async (req, res) => {
     } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
 });
 
+// XAMELIVE_RTK_PRESETS_V1: admin-only, read-only. Lists the RealtimeKit app's presets (names and ids), or one preset's settings with ?name=. Changes nothing.
+app.get('/api/admin/xamelive/rtk-presets', async (req, res) => {
+    if (!xamepayAdminOk(req)) return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    try {
+        if (!CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_STREAM_API_TOKEN) {
+            return res.status(503).json({ success: false, message: 'Cloudflare is not configured.' });
+        }
+        const appId = String(req.query.appId || '').trim();
+        if (!/^[0-9a-f-]{36}$/i.test(appId)) return res.status(400).json({ success: false, message: 'appId required.' });
+        const base = 'https://api.cloudflare.com/client/v4/accounts/' + encodeURIComponent(CLOUDFLARE_ACCOUNT_ID) + '/realtime/kit/' + appId + '/presets';
+        const H = { Authorization: 'Bearer ' + CLOUDFLARE_STREAM_API_TOKEN };
+        const get = async (url) => {
+            const r = await fetch(url, { headers: H, signal: AbortSignal.timeout(12000) });
+            const t = await r.text();
+            let j = null;
+            try { j = JSON.parse(t); } catch (_) { /* not JSON */ }
+            return { http: r.status, j, t };
+        };
+        const list = await get(base);
+        const body = list.j || {};
+        const rows = Array.isArray(body.data) ? body.data
+            : (body.result && Array.isArray(body.result.data)) ? body.result.data
+            : Array.isArray(body.result) ? body.result : null;
+        const out = {
+            success: true,
+            http: list.http,
+            presets: rows ? rows.map(p => ({ id: p.id, name: p.name })) : null,
+            snippet: rows ? undefined : list.t.slice(0, 300)
+        };
+        const want = String(req.query.name || '').trim();
+        if (want && rows) {
+            const hit = rows.find(p => p.name === want);
+            if (hit) {
+                const one = await get(base + '/' + encodeURIComponent(hit.id));
+                out.presetText = JSON.stringify(one.j || one.t).slice(0, 5000);
+            }
+        }
+        return res.json(out);
+    } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
+});
+
 // XAMELIVE_RTK_PROBE_V1: admin-only, read-only. Asks Cloudflare whether the existing API token may list RealtimeKit apps, and lists them. Shows status and app names only, never the token. Changes nothing.
 app.get('/api/admin/xamelive/rtk-probe', async (req, res) => {
     if (!xamepayAdminOk(req)) return res.status(401).json({ success: false, message: 'Unauthorized.' });
