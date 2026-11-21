@@ -6855,6 +6855,81 @@ io.on('connection', (socket) => {
         }
     });
 
+    // XAMELIVE_VIEWERCOUNT_V1: watch-only viewers join the same unique-viewer count as joined participants. Extra listeners only; the existing watch, unwatch, join, leave and disconnect handlers are unchanged. The broadcaster is never counted.
+    socket.xlWatched = new Set();
+
+    const xlViewerRecount = async (sid, n) => {
+        await LiveSession.updateOne(
+            { sessionId: sid, status: { $ne: 'ENDED' } },
+            { $set: { viewerCount: n } }
+        );
+        io.to(`live:${sid}`).emit('live:viewer-count', { sessionId: sid, viewerCount: n });
+    };
+
+    const xlViewerDrop = async (sid) => {
+        const userId = socket.authenticatedUserId;
+        const viewers = liveViewerSockets.get(sid);
+        if (!viewers || !userId) return;
+        const before = viewers.size;
+        const socks = viewers.get(userId);
+        if (socks) {
+            socks.delete(socket.id);
+            if (socks.size === 0) viewers.delete(userId);
+        }
+        const after = viewers.size;
+        if (after === 0) liveViewerSockets.delete(sid);
+        if (after !== before) await xlViewerRecount(sid, after);
+    };
+
+    socket.on('live:watch', async ({ sessionId } = {}) => {
+        try {
+            const userId = socket.authenticatedUserId;
+            if (!userId || typeof sessionId !== 'string' || !sessionId) return;
+            const session = await LiveSession.findOne({ sessionId });
+            if (!session || session.status === 'ENDED') return;
+            if (session.broadcasterXameId === userId) return;
+            if (!await canViewLive(session, userId)) return;
+            if (socket.disconnected) return;
+            let viewers = liveViewerSockets.get(sessionId);
+            if (!viewers) {
+                viewers = new Map();
+                liveViewerSockets.set(sessionId, viewers);
+            }
+            const before = viewers.size;
+            let socks = viewers.get(userId);
+            if (!socks) {
+                socks = new Set();
+                viewers.set(userId, socks);
+            }
+            socks.add(socket.id);
+            socket.xlWatched.add(sessionId);
+            if (viewers.size !== before) await xlViewerRecount(sessionId, viewers.size);
+        } catch (err) {
+            console.error('[XAMELIVE] viewer count watch failed:', err.message);
+        }
+    });
+
+    socket.on('live:unwatch', async ({ sessionId } = {}) => {
+        try {
+            if (typeof sessionId !== 'string' || !sessionId) return;
+            if (socket.liveSessionId === sessionId) return;
+            if (!socket.xlWatched.delete(sessionId)) return;
+            await xlViewerDrop(sessionId);
+        } catch (err) {
+            console.error('[XAMELIVE] viewer count unwatch failed:', err.message);
+        }
+    });
+
+    socket.on('disconnect', async () => {
+        try {
+            const ids = Array.from(socket.xlWatched);
+            socket.xlWatched.clear();
+            for (const sid of ids) await xlViewerDrop(sid);
+        } catch (err) {
+            console.error('[XAMELIVE] viewer count disconnect failed:', err.message);
+        }
+    });
+
     // XAMELIVE_WATCH_V1: receive-only membership of a session's live room, so everyone watching sees comments and reactions. It never sets socket.liveSessionId, so a watcher still cannot send. Joining to participate stays behind the Go Live entitlement in live:join.
     socket.on('live:watch', async ({ sessionId } = {}, ack) => {
         const reply = (payload) => {
@@ -14455,6 +14530,73 @@ app.post('/api/admin/settle-transfer/:reference', async (req, res) => {
         console.log('[XamePay settle-transfer]', reference, v, fin && fin.status);
         const after = await WalletTransferLedger.findOne({ userId: t.userId, reference }).select('status').lean();
         return res.json({ success: true, status: after && after.status });
+    } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
+});
+
+// XAMEPAY_PAYOUT_SELFTEST_V1: admin-only, read-only. Dry-runs every payout rail without moving money: rule checks, live fee match, live bank list, float preview.
+app.get('/api/admin/payout-selftest', async (req, res) => {
+    if (!xamepayAdminOk(req)) return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    try {
+        const key = process.env.FLW_SECRET_KEY || process.env.FLW_SECRET || FLW_SECRET;
+        if (!key) return res.status(503).json({ success: false, message: 'Provider not configured.' });
+        const uid = String(process.env.XAMEPAY_PAYOUT_TEST_USERS || '').split(',').map(x => x.trim()).filter(Boolean)[0];
+        if (!uid) return res.status(400).json({ success: false, message: 'Add a test user to XAMEPAY_PAYOUT_TEST_USERS first.' });
+        const full = req.query.full === '1';
+        const H = { Authorization: 'Bearer ' + key };
+        const get = async (url) => {
+            try {
+                const r = await fetch(url, { headers: H, signal: AbortSignal.timeout(12000) });
+                const j = await r.json().catch(() => null);
+                return { http: r.status, j };
+            } catch (e) { return { error: e.message }; }
+        };
+        const results = [];
+        let totalFailed = 0;
+        const tok = fxSignQuote({ kind: 'selftest' });
+        results.push({ rail: 'quote signing', passed: (tok && fxVerifyQuote(tok)) ? 1 : 0, failed: (tok && fxVerifyQuote(tok)) ? 0 : 1, failures: [] });
+        if (!(tok && fxVerifyQuote(tok))) totalFailed++;
+        for (const k of Object.keys(XAMEPAY_PAYOUT_RAILS)) {
+            const r = XAMEPAY_PAYOUT_RAILS[k];
+            const checks = [];
+            const ok = (name, pass, note) => checks.push({ name, pass: !!pass, note: note === undefined ? '' : String(note) });
+            const bl = await get('https://api.flutterwave.com/v3/banks/' + encodeURIComponent(r.country));
+            const list = bl.j && Array.isArray(bl.j.data) ? bl.j.data : [];
+            const codes = list.map(x => String(x.code || '').toUpperCase());
+            const usable = codes.filter(c => r.banks ? r.banks.includes(c) : r.matches(c));
+            ok('live list has a usable entry', usable.length > 0, usable.length + ' of ' + codes.length);
+            const bank = usable[0] || (r.banks ? r.banks[0] : '01');
+            const num = r.kind === 'bank' ? '0'.repeat(r.accountLength || 10) : '0712345678';
+            const plan = (amount, name, number) => xamepayPayoutPlan(r.currency, uid, bank, number === undefined ? num : number, amount, name === undefined ? 'Test Name' : name);
+            const lo = plan(r.minAmount);
+            ok('accepts the minimum amount', lo.ok, lo.ok ? 'fee ' + lo.fee : lo.message);
+            ok('resolves to its own rail', lo.ok && lo.rail === k, lo.ok ? lo.rail : '');
+            ok('user fee covers the provider fee', lo.ok && lo.fee >= lo.flwFee, lo.ok ? lo.fee + ' vs ' + lo.flwFee : '');
+            const hi = plan(r.maxAmount);
+            ok('accepts the maximum amount', hi.ok, hi.ok ? 'fee ' + hi.fee : hi.message);
+            ok('refuses below the minimum', !plan(r.minAmount / 2).ok);
+            ok('refuses above the maximum', !plan(r.maxAmount + 1).ok);
+            if (r.wholeAmount) ok('refuses a fractional amount', !plan(r.minAmount + 0.5).ok);
+            ok('refuses a missing name', !plan(r.minAmount, '').ok);
+            ok('refuses a bad number', !plan(r.minAmount, 'Test Name', '12').ok);
+            const type = r.kind === 'bank' ? 'account' : 'mobilemoney';
+            const fr = await get('https://api.flutterwave.com/v3/transfers/fee?' + new URLSearchParams({ amount: String(r.minAmount), currency: r.currency, type }).toString());
+            const fd = fr.j && fr.j.status === 'success' && Array.isArray(fr.j.data) ? fr.j.data : null;
+            if (!fd) {
+                ok('live provider fee readable', false, fr.error || (fr.j && fr.j.message) || fr.http);
+            } else {
+                const expected = r.providerFee(r.minAmount);
+                const live = fd.map(x => x.fee_type === 'percentage' ? r.minAmount * Number(x.fee) : Number(x.fee));
+                ok('table fee matches the live provider fee', live.some(v => Math.abs(v - expected) <= Math.max(0.01, expected * 0.01)), 'table ' + expected + ', live ' + live.join('/'));
+            }
+            if (lo.ok) {
+                const f = await xamepayPayoutFunding(r.currency, r.minAmount, lo.flwFee, false);
+                ok('float covers the minimum payout', f.ok, f.ok ? '' : 'refused: float too low or rate unavailable');
+            }
+            const failed = checks.filter(c => !c.pass);
+            totalFailed += failed.length;
+            results.push({ rail: k, passed: checks.length - failed.length, failed: failed.length, failures: failed, checks: full ? checks : undefined });
+        }
+        return res.json({ success: true, allPassed: totalFailed === 0, totalFailed, results });
     } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
 });
 
