@@ -14436,6 +14436,28 @@ app.get('/api/admin/payout-currency-probe', async (req, res) => {
     } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
 });
 
+// XAMEPAY_SETTLE_TRANSFER_V1: admin tool for one stuck outgoing transfer (admin secret required). Check the Flutterwave dashboard first.
+app.post('/api/admin/settle-transfer/:reference', async (req, res) => {
+    if (!xamepayAdminOk(req)) return res.status(401).json({ success: false, message: 'Unauthorized.' });
+    try {
+        const reference = String(req.params.reference || '').trim();
+        const v = String((req.body && req.body.verifiedOutcome) || '');
+        if (v !== 'paid' && v !== 'never_sent') {
+            return res.status(400).json({ success: false, message: 'Check the Flutterwave dashboard, then send verifiedOutcome as paid or never_sent.' });
+        }
+        const found = await WalletTransferLedger.find({ reference }).limit(2).lean();
+        if (found.length !== 1) return res.status(404).json({ success: false, message: 'Not found, or ambiguous.' });
+        const t = found[0];
+        if (!['reserved', 'submitted', 'unknown'].includes(t.status)) {
+            return res.json({ success: false, status: t.status, message: 'Already settled.' });
+        }
+        const fin = await finalizeWalletTransfer(t.userId, reference, v === 'paid' ? 'succeeded' : 'refunded');
+        console.log('[XamePay settle-transfer]', reference, v, fin && fin.status);
+        const after = await WalletTransferLedger.findOne({ userId: t.userId, reference }).select('status').lean();
+        return res.json({ success: true, status: after && after.status });
+    } catch (e) { return res.status(500).json({ success: false, message: e.message }); }
+});
+
 // XAMEPAY_CROSSSEND_V1: send between XamePay wallets of different currencies. Off until
 // XAMEPAY_CROSSSEND_ENABLED=true; also needs XAMEPAY_QUOTE_SECRET and FX_MARGIN_PERCENT.
 const walletCrossSendLedgerSchema = new mongoose.Schema({
