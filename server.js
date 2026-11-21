@@ -13822,6 +13822,147 @@ setInterval(async () => {
 }, 20000);
 
 
+// XAMELIVE_MEDIA_V1: the broadcaster can put a photo or video (uploaded or linked) full screen for everyone in a live. State is kept in memory per session. New routes only; no existing route is changed.
+const XL_MEDIA_MAX_BYTES = 60 * 1024 * 1024;
+const XL_MEDIA_TYPES = { 'image/jpeg': 'image', 'image/png': 'image', 'image/webp': 'image', 'image/gif': 'image', 'video/mp4': 'video', 'video/webm': 'video', 'video/quicktime': 'video' };
+const XL_MEDIA_EXT = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime' };
+const xlMediaState = new Map();
+const xlMediaUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: XL_MEDIA_MAX_BYTES, files: 1 } });
+
+function xlMediaPublic(s) {
+    if (!s) return null;
+    const pos = s.playing ? s.positionMs + (Date.now() - s.updatedAt) : s.positionMs;
+    return { mediaId: s.mediaId, url: s.url, kind: s.kind, mode: s.mode, playing: !!s.playing, positionMs: Math.max(0, Math.round(pos)), seq: s.seq };
+}
+
+function xlMediaPush(sessionId) {
+    io.to(`live:${sessionId}`).emit('live:media', { sessionId, media: xlMediaPublic(xlMediaState.get(sessionId)) });
+}
+
+async function xlMediaHost(req, res) {
+    const ctx = await xlGuestLoad(req, res, false);
+    if (!ctx) return null;
+    if (ctx.session.broadcasterXameId !== ctx.authUser.xameId) {
+        res.status(403).json({ success: false, message: 'Only the broadcaster can control the media.' });
+        return null;
+    }
+    return ctx;
+}
+
+// Everyone allowed to watch can read what is on screen.
+app.get('/api/live/:sessionId/media', async (req, res) => {
+    try {
+        const ctx = await xlGuestLoad(req, res, false);
+        if (!ctx) return;
+        return res.json({ success: true, media: xlMediaPublic(xlMediaState.get(ctx.session.sessionId)) });
+    } catch (err) {
+        console.error('[XAMELIVE] media read failed:', err);
+        return res.status(500).json({ success: false, message: 'Unable to load media.' });
+    }
+});
+
+// Host uploads a photo or video from the device; the app then calls /media/show with the returned url.
+app.post('/api/live/:sessionId/media/upload', async (req, res) => {
+    let ctx = null;
+    try {
+        ctx = await xlMediaHost(req, res);
+    } catch (err) {
+        console.error('[XAMELIVE] media upload auth failed:', err);
+        return res.status(500).json({ success: false, message: 'Unable to upload media.' });
+    }
+    if (!ctx) return;
+    xlMediaUpload.single('file')(req, res, async (mErr) => {
+        try {
+            if (mErr) {
+                const tooBig = mErr.code === 'LIMIT_FILE_SIZE';
+                return res.status(tooBig ? 413 : 400).json({ success: false, message: tooBig ? 'That file is too large (60 MB maximum).' : 'Upload failed.' });
+            }
+            if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded.' });
+            const rawMime = String(req.file.mimetype || '').toLowerCase();
+            const ext = String(req.file.originalname || '').toLowerCase().split('.').pop();
+            const mime = XL_MEDIA_TYPES[rawMime] ? rawMime : (XL_MEDIA_EXT[ext] || '');
+            const kind = XL_MEDIA_TYPES[mime];
+            if (!kind) return res.status(415).json({ success: false, message: 'Use a JPG, PNG, WEBP, GIF, MP4, WEBM or MOV file.' });
+            const url = await uploadToMediaWorker(req.file.buffer, `live_${ctx.session.sessionId}_${req.file.originalname || 'media'}`, 'live_media', mime);
+            return res.json({ success: true, url, kind });
+        } catch (err) {
+            console.error('[XAMELIVE] media upload failed:', err);
+            return res.status(500).json({ success: false, message: 'Unable to upload media.' });
+        }
+    });
+});
+
+// Host puts an uploaded file or a pasted https link on screen.
+app.post('/api/live/:sessionId/media/show', async (req, res) => {
+    try {
+        const ctx = await xlMediaHost(req, res);
+        if (!ctx) return;
+        const kind = req.body && req.body.kind;
+        const raw = String((req.body && req.body.url) || '').trim();
+        if (kind !== 'image' && kind !== 'video') return res.status(400).json({ success: false, message: 'Choose photo or video.' });
+        let u = null;
+        try { u = new URL(raw); } catch (_) { u = null; }
+        if (!u || u.protocol !== 'https:' || u.username || u.password || raw.length > 2000) {
+            return res.status(400).json({ success: false, message: 'Use a direct https link to a photo or video file.' });
+        }
+        const id = ctx.session.sessionId;
+        const prev = xlMediaState.get(id);
+        const s = { mediaId: uuidv4(), url: u.toString(), kind, mode: 'media', playing: kind === 'video', positionMs: 0, updatedAt: Date.now(), seq: ((prev && prev.seq) || 0) + 1 };
+        xlMediaState.set(id, s);
+        xlMediaPush(id);
+        return res.json({ success: true, media: xlMediaPublic(s) });
+    } catch (err) {
+        console.error('[XAMELIVE] media show failed:', err);
+        return res.status(500).json({ success: false, message: 'Unable to show media.' });
+    }
+});
+
+// Host controls: play, pause, seek, camera, media, stop.
+app.post('/api/live/:sessionId/media/control', async (req, res) => {
+    try {
+        const ctx = await xlMediaHost(req, res);
+        if (!ctx) return;
+        const id = ctx.session.sessionId;
+        const action = String((req.body && req.body.action) || '');
+        const s = xlMediaState.get(id);
+        if (!s) return res.status(404).json({ success: false, message: 'Nothing is on screen.' });
+        if (action === 'stop') {
+            xlMediaState.delete(id);
+            xlMediaPush(id);
+            return res.json({ success: true, media: null });
+        }
+        const cur = xlMediaPublic(s).positionMs;
+        const given = Number(req.body && req.body.positionMs);
+        const pos = Number.isFinite(given) && given >= 0 && given <= 86400000 ? Math.round(given) : cur;
+        if (action === 'camera') { s.positionMs = cur; s.playing = false; s.mode = 'camera'; }
+        else if (action === 'media') { s.mode = 'media'; }
+        else if (action === 'play' && s.kind === 'video') { s.playing = true; s.positionMs = pos; }
+        else if (action === 'pause' && s.kind === 'video') { s.playing = false; s.positionMs = pos; }
+        else if (action === 'seek' && s.kind === 'video') { s.positionMs = pos; }
+        else return res.status(400).json({ success: false, message: 'Unknown action.' });
+        s.updatedAt = Date.now();
+        s.seq += 1;
+        xlMediaPush(id);
+        return res.json({ success: true, media: xlMediaPublic(s) });
+    } catch (err) {
+        console.error('[XAMELIVE] media control failed:', err);
+        return res.status(500).json({ success: false, message: 'Unable to control media.' });
+    }
+});
+
+// Cleanup: forget media for lives that have ended.
+setInterval(async () => {
+    try {
+        const ids = Array.from(xlMediaState.keys());
+        if (!ids.length || mongoose.connection.readyState !== 1) return;
+        const rows = await LiveSession.find({ sessionId: { $in: ids }, status: { $ne: 'ENDED' } }).select('sessionId').lean();
+        const alive = new Set(rows.map(x => x.sessionId));
+        for (const id of ids) if (!alive.has(id)) xlMediaState.delete(id);
+    } catch (e) {
+        console.error('[XAMELIVE] media cleanup failed:', e.message);
+    }
+}, 60000);
+
 // XAMELIVE_STAGE_POC_V1: proof of concept. Gives an entitled XameLive user a RealtimeKit participant token for one shared test meeting. A presenter token can publish; a viewer token can watch and request to join the stage. Live sessions and existing routes are not touched.
 let _xlPocAppId = null;
 let _xlPocMeetingId = null;
