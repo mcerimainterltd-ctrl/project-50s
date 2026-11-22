@@ -523,6 +523,8 @@
       </div>
       <div class="field"><label class="label">MEDIA URL (optional)</label>
         <input type="text" id="official-media-url" class="input" placeholder="https://ik.imagekit.io/...">
+        <div style="margin-top:8px"><label class="btn btn-ghost" style="cursor:pointer;display:inline-block">📎 Upload photo from device<input type="file" id="official-media-file" accept="image/jpeg,image/png,image/webp,image/gif" style="display:none" onchange="obUploadMedia(this)"></label>
+        <div id="official-media-status" style="font-size:11px;color:#6B7280;margin-top:4px"></div></div>
       </div>
       <button class="btn btn-primary btn-full" onclick="broadcastOfficialMessage()" id="broadcast-btn">📢 Broadcast to All Users</button>
       <div id="broadcast-msg"></div>
@@ -1839,6 +1841,56 @@ async function handleOfficialPicUpload(input) {
   }
 }
 
+// OB_UPLOAD_V1: upload a local photo for the broadcast through the server relay
+var OB_CHUNK = 8 * 1024 * 1024;
+var OB_IMG = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+async function obUploadMedia(input) {
+  var file = input.files[0];
+  if (!file) return;
+  var st = document.getElementById('official-media-status');
+  var secret = document.getElementById('official-secret').value.trim();
+  if (!secret) { st.textContent = '❌ Enter admin secret first'; input.value = ''; return; }
+  var mime = (file.type || '').toLowerCase();
+  if (OB_IMG.indexOf(mime) < 0) { st.textContent = '❌ Use a JPG, PNG, WEBP or GIF image'; input.value = ''; return; }
+  if (file.size > 100 * 1024 * 1024) { st.textContent = '❌ File too large (max 100MB)'; input.value = ''; return; }
+  var key = null, uploadId = null, cap = null;
+  var jh = { 'Content-Type': 'application/json', 'x-admin-secret': secret };
+  try {
+    st.textContent = '⬆️ Starting upload...';
+    var r = await fetch(SERVER + '/api/admin/broadcast-media/init', { method: 'POST', headers: jh, body: JSON.stringify({ fileName: file.name, contentType: mime, size: file.size }) });
+    var d = await r.json();
+    if (!d.success) throw new Error(d.message || 'Could not start upload');
+    key = d.key; uploadId = d.uploadId; cap = d.capability;
+    var total = Math.ceil(file.size / OB_CHUNK), parts = [];
+    for (var n = 1; n <= total; n++) {
+      var blob = file.slice((n - 1) * OB_CHUNK, Math.min(n * OB_CHUNK, file.size));
+      var etag = null;
+      for (var a = 1; a <= 3 && !etag; a++) {
+        try {
+          var pr = await fetch(SERVER + '/api/admin/broadcast-media/part?key=' + encodeURIComponent(key) + '&uploadId=' + encodeURIComponent(uploadId) + '&partNumber=' + n, { method: 'PUT', headers: { 'x-admin-secret': secret, 'x-upload-capability': cap, 'Content-Type': 'application/octet-stream' }, body: blob });
+          var pd = await pr.json();
+          if (pd.success && pd.etag) etag = pd.etag;
+        } catch (e) {}
+        if (!etag && a < 3) await new Promise(function (ok) { setTimeout(ok, a * 1000); });
+      }
+      if (!etag) throw new Error('Part ' + n + ' failed');
+      parts.push({ partNumber: n, etag: etag });
+      st.textContent = '⬆️ Uploading... ' + Math.round(n * 100 / total) + '%';
+    }
+    var cr = await fetch(SERVER + '/api/admin/broadcast-media/complete', { method: 'POST', headers: jh, body: JSON.stringify({ key: key, uploadId: uploadId, capability: cap, parts: parts }) });
+    var cd = await cr.json();
+    if (!cd.success || !cd.url) throw new Error(cd.message || 'Upload could not finish');
+    document.getElementById('official-media-url').value = cd.url;
+    window._obUploadedUrl = cd.url;
+    window._obUploadedMime = mime;
+    st.textContent = '✅ Uploaded: ' + file.name;
+  } catch (e) {
+    st.textContent = '❌ ' + e.message;
+    if (key && uploadId && cap) { try { await fetch(SERVER + '/api/admin/broadcast-media/abort', { method: 'POST', headers: jh, body: JSON.stringify({ key: key, uploadId: uploadId, capability: cap }) }); } catch (x) {} }
+  }
+  input.value = '';
+}
+
 async function broadcastOfficialMessage() {
   const secret = document.getElementById('official-secret').value.trim();
   const msg    = document.getElementById('official-msg').value.trim();
@@ -1850,7 +1902,7 @@ async function broadcastOfficialMessage() {
   const r = await fetch(SERVER + '/api/admin/official-account/broadcast', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
-    body: JSON.stringify({ message: msg, mediaUrl: media || null })
+    body: JSON.stringify({ message: msg, mediaUrl: media || null, mediaMime: (media && media === window._obUploadedUrl) ? window._obUploadedMime : undefined })
   });
   const d = await r.json();
   const el = document.getElementById('broadcast-msg');

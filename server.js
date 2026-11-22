@@ -20243,6 +20243,7 @@ app.post('/api/admin/official-account/broadcast', async (req, res) => {
     const secret = req.body.secret || req.headers['x-admin-secret'];
     if (secret !== process.env.ADMIN_SECRET) return res.json({ success: false, message: 'Unauthorized' });
     const { message, mediaUrl } = req.body;
+    const mediaMime = XL_MEDIA_TYPES[String(req.body.mediaMime || '').toLowerCase()] ? String(req.body.mediaMime).toLowerCase() : 'image/jpeg';
     if (!message) return res.json({ success: false, message: 'Message required' });
     try {
         const users = await User.find({ xameId: { $ne: OFFICIAL_ID } }, { xameId: 1 }).lean();
@@ -20258,7 +20259,8 @@ app.post('/api/admin/official-account/broadcast', async (req, res) => {
                     text:     message,
                     ts,
                     status:   'delivered',
-                    ...(mediaUrl && { fileUrl: mediaUrl, fileMime: 'image/jpeg' }),
+                    ...(mediaUrl && { fileUrl: mediaUrl, fileMime: mediaMime }),
+                    ...(mediaUrl && { file: { url: mediaUrl, name: 'media', type: mediaMime } }), // ADMIN_BCAST_FILEOBJ_V1: the app reads file.url/name/type
                 };
                 // Save to DB
                 await new Message({
@@ -20268,7 +20270,7 @@ app.post('/api/admin/official-account/broadcast', async (req, res) => {
                     ts,
                     text: message,
                     isBroadcast: true,
-                    ...(mediaUrl && { file: { url: mediaUrl, mime: 'image/jpeg', name: 'media' } }),
+                    ...(mediaUrl && { file: { url: mediaUrl, type: mediaMime, mime: mediaMime, name: 'media' } }),
                 }).save();
                 // Notify if online
                 const socketId = findSocketId(user.xameId);
@@ -20283,7 +20285,94 @@ app.post('/api/admin/official-account/broadcast', async (req, res) => {
     } catch (err) { res.json({ success: false, message: err.message }); }
 });
 
-    // Catch-all MUST be last — after every other route is registered,
+    // ADMIN_BROADCAST_MEDIA_V1: admin console uploads a local photo for the official broadcast. The browser cannot call the media worker (no CORS), so the server relays each chunk. Files go under xamepage/broadcast_media/.
+const ABM_MAX_BYTES = 100 * 1024 * 1024;
+function abmAuth(req, res) {
+    if (!process.env.ADMIN_SECRET || req.headers['x-admin-secret'] !== process.env.ADMIN_SECRET) {
+        res.status(401).json({ success: false, message: 'Unauthorized' });
+        return false;
+    }
+    return true;
+}
+function abmKeyOk(key) {
+    return typeof key === 'string' && key.indexOf('xamepage/broadcast_media/') === 0 && key.indexOf('..') < 0;
+}
+async function abmRelay(path, method, capability, body, contentType) {
+    const wr = await fetch(MEDIA_WORKER_URL + path, { method: method, headers: { 'Authorization': 'Bearer ' + capability, 'Content-Type': contentType }, body: body });
+    const text = await wr.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch (_) { data = null; }
+    return { ok: wr.ok, data: data, text: text };
+}
+app.post('/api/admin/broadcast-media/init', async (req, res) => {
+    try {
+        if (!abmAuth(req, res)) return;
+        const { fileName, contentType, size } = req.body || {};
+        const mime = String(contentType || '').toLowerCase();
+        if (!fileName || typeof fileName !== 'string') return res.status(400).json({ success: false, message: 'fileName is required.' });
+        if (!XL_MEDIA_TYPES[mime]) return res.status(415).json({ success: false, message: 'Use a JPG, PNG, WEBP, GIF, MP4, WEBM or MOV file.' });
+        if (!Number.isFinite(Number(size)) || Number(size) <= 0 || Number(size) > ABM_MAX_BYTES) return res.status(400).json({ success: false, message: 'A valid file size is required (100 MB maximum).' });
+        if (!MEDIA_API_SECRET) return res.status(500).json({ success: false, message: 'Media upload service is not configured.' });
+        const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/^_+/, '') || 'file';
+        const key = 'xamepage/broadcast_media/' + Date.now() + '_' + safeName;
+        const r = await abmRelay('/multipart/init', 'POST', MEDIA_API_SECRET, JSON.stringify({ key: key, contentType: mime, metadata: { xameId: String(OFFICIAL_ID), folder: 'broadcast_media', originalFileName: safeName } }), 'application/json');
+        if (!r.ok || !r.data || !r.data.success || !r.data.uploadId || !r.data.capability) {
+            console.error('[ADMIN-BCAST-MEDIA] init failed:', r.text.slice(0, 300));
+            return res.status(502).json({ success: false, message: 'Media upload initialization failed.' });
+        }
+        return res.json({ success: true, key: r.data.key || key, uploadId: r.data.uploadId, capability: r.data.capability, contentType: mime });
+    } catch (err) {
+        console.error('[ADMIN-BCAST-MEDIA] init error:', err);
+        return res.status(500).json({ success: false, message: 'Media upload initialization failed.' });
+    }
+});
+app.put('/api/admin/broadcast-media/part', express.raw({ type: '*/*', limit: '12mb' }), async (req, res) => {
+    try {
+        if (!abmAuth(req, res)) return;
+        const key = String(req.query.key || '');
+        const uploadId = String(req.query.uploadId || '');
+        const partNumber = parseInt(req.query.partNumber, 10);
+        const cap = String(req.headers['x-upload-capability'] || '');
+        if (!abmKeyOk(key) || !uploadId || !(partNumber >= 1) || !cap) return res.status(400).json({ success: false, message: 'Bad part request.' });
+        if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ success: false, message: 'Empty part.' });
+        const q = '?key=' + encodeURIComponent(key) + '&uploadId=' + encodeURIComponent(uploadId) + '&partNumber=' + partNumber;
+        const r = await abmRelay('/multipart/part' + q, 'PUT', cap, req.body, 'application/octet-stream');
+        if (!r.ok || !r.data || r.data.success !== true || !r.data.etag) {
+            console.error('[ADMIN-BCAST-MEDIA] part failed:', r.text.slice(0, 300));
+            return res.status(502).json({ success: false, message: 'Part failed.' });
+        }
+        return res.json({ success: true, etag: r.data.etag });
+    } catch (err) {
+        console.error('[ADMIN-BCAST-MEDIA] part error:', err);
+        return res.status(500).json({ success: false, message: 'Part failed.' });
+    }
+});
+app.post('/api/admin/broadcast-media/complete', async (req, res) => {
+    try {
+        if (!abmAuth(req, res)) return;
+        const { key, uploadId, parts, capability } = req.body || {};
+        if (!abmKeyOk(key) || !uploadId || !capability || !Array.isArray(parts) || !parts.length) return res.status(400).json({ success: false, message: 'Bad complete request.' });
+        const r = await abmRelay('/multipart/complete', 'POST', capability, JSON.stringify({ key: key, uploadId: uploadId, parts: parts }), 'application/json');
+        if (!r.ok || !r.data || r.data.success !== true || !r.data.url) {
+            console.error('[ADMIN-BCAST-MEDIA] complete failed:', r.text.slice(0, 300));
+            return res.status(502).json({ success: false, message: 'Upload could not finish.' });
+        }
+        return res.json({ success: true, url: r.data.url });
+    } catch (err) {
+        console.error('[ADMIN-BCAST-MEDIA] complete error:', err);
+        return res.status(500).json({ success: false, message: 'Upload could not finish.' });
+    }
+});
+app.post('/api/admin/broadcast-media/abort', async (req, res) => {
+    try {
+        if (!abmAuth(req, res)) return;
+        const { key, uploadId, capability } = req.body || {};
+        if (abmKeyOk(key) && uploadId && capability) await abmRelay('/multipart/abort', 'POST', capability, JSON.stringify({ key: key, uploadId: uploadId }), 'application/json');
+    } catch (_) {}
+    return res.json({ success: true });
+});
+
+// Catch-all MUST be last — after every other route is registered,
     // otherwise routes defined below this point would never be reached.
     app.get('*', (req, res) => {
         if (req.path.startsWith('/api/')) {
