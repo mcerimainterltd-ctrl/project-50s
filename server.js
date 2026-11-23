@@ -20301,6 +20301,18 @@ app.post('/api/admin/official-account/broadcast', async (req, res) => {
                     io.to(socketId).emit('receive-message', { senderId: OFFICIAL_ID, message: msgObj });
                     io.to(socketId).emit('new_message_count', { senderId: OFFICIAL_ID });
                 }
+                // ADMIN_BCAST_VIDEO_TEXT_V1: the app's video bubble has no caption, so a video broadcast also sends its text as the next message
+                if (mediaUrl && mediaMime.indexOf('video/') === 0 && message) {
+                    try {
+                        const tid = uuidv4b();
+                        const tts = ts + 1;
+                        await new Message({ messageId: tid, senderId: OFFICIAL_ID, recipientId: user.xameId, ts: tts, text: message, isBroadcast: true }).save();
+                        if (socketId) {
+                            io.to(socketId).emit('receive-message', { senderId: OFFICIAL_ID, message: { id: tid, senderId: OFFICIAL_ID, text: message, ts: tts, status: 'delivered' } });
+                            io.to(socketId).emit('new_message_count', { senderId: OFFICIAL_ID });
+                        }
+                    } catch (_) {}
+                }
                 sent++;
             } catch(_) {}
         }
