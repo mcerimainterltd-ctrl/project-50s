@@ -17742,6 +17742,12 @@ app.post('/api/discover/view', async (req, res) => {
         const post = await DiscoveryPost.findOne({ postId });
         if (!post) return res.json({ success: false });
 
+        // VIEW_UNIQUE_V1: count one view per user per post; the author's own views never count
+        const viewerIdEarly = req.body.userId;
+        if (viewerIdEarly && (String(viewerIdEarly) === String(post.authorId) || (post.viewedBy || []).includes(viewerIdEarly))) {
+            return res.json({ success: true, counted: false, isImmortal: !!post.isImmortal });
+        }
+
         const newViewCount = (post.viewCount || 0) + 1;
         const update = { $inc: { viewCount: 1 } };
 
