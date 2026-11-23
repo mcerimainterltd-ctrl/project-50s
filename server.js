@@ -4610,6 +4610,29 @@ async function createDirectories() {
 }
 
 // Static files
+// STATIC_LOCKDOWN_V1: express.static below serves the whole repo folder. Keep source, dependencies, build/key files and backups out of public reach, and make the admin console page go through its password gate.
+const SL_BLOCK_PREFIX = ['/node_modules', '/models', '/middleware', '/android', '/flutter_version', '/.github', '/.git'];
+const SL_BLOCK_FILE = /^\/(server[^\/]*\.js|package[^\/]*\.json)$/;
+const SL_BLOCK_EXT = /\.(bak[^\/]*|diff|patch|swp|apk|aab|ipa|jks|keystore|pem|p12|zip)$/;
+app.use(function (req, res, next) {
+    let p;
+    try { p = decodeURIComponent(req.path); } catch (_) { return res.status(400).end(); }
+    const lower = path.posix.normalize(p).toLowerCase();
+    if (lower === '/admin' || lower === '/admin/' || lower === '/admin/index.html') {
+        return adminConsoleAuth(req, res, function () {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.sendFile(path.join(BASE_DIR, 'admin', 'index.html'));
+        });
+    }
+    if (lower.indexOf('/admin/') === 0) return res.status(404).send('Not found');
+    for (const pre of SL_BLOCK_PREFIX) {
+        if (lower === pre || lower.indexOf(pre + '/') === 0) return res.status(404).send('Not found');
+    }
+    if (SL_BLOCK_FILE.test(lower) || SL_BLOCK_EXT.test(lower)) return res.status(404).send('Not found');
+    next();
+});
+
 app.use(express.static(BASE_DIR, { etag: false, lastModified: false, setHeaders: (res, path) => { if (path.endsWith('.js') || path.endsWith('.css')) { res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate'); } } }));
 // Uploaded files are served via authenticated /api/file/:filename route only
 // ── Cloudinary signed upload (duplicate for reliability) ─────────────────────
