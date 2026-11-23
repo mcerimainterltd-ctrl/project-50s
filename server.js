@@ -7466,6 +7466,11 @@ io.on('connection', (socket) => {
                 if (typeof callback === 'function') callback({ success: true, messageId: message.id });
                 return;
             }
+            // OFFICIAL_ONEWAY_V1: official account is announcement-only; ack as sent, never save or deliver
+            if (String(recipientId) === '058000000001' && senderId !== '058000000001') {
+                if (typeof callback === 'function') callback({ success: true, messageId: message.id });
+                return;
+            }
             const newMsg = new Message({
                 messageId:   message.id,
                 senderId,
@@ -17709,6 +17714,20 @@ app.post('/api/discover/like', async (req, res) => {
         res.json({ success: true, liked: !hasLiked, likeCount: post.likeCount });
     } catch (err) {
         console.error('Like error:', err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// ── GET /api/discover/like-status ─────────────────────────────────────────────
+// LIKE_STATUS_V1: read-only; tells the app whether this user already liked a post
+app.get('/api/discover/like-status', async (req, res) => {
+    try {
+        const { userId, postId } = req.query;
+        if (!userId || !postId) return res.json({ success: false, message: 'userId and postId required' });
+        const post = await DiscoveryPost.findOne({ postId }).select('likedBy likeCount').lean();
+        if (!post) return res.json({ success: false, message: 'Post not found' });
+        res.json({ success: true, liked: (post.likedBy || []).includes(String(userId)), likeCount: post.likeCount || 0 });
+    } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
 });
