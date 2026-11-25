@@ -6997,7 +6997,7 @@ io.on('connection', (socket) => {
                 !userId ||
                 !sessionId ||
                 typeof text !== 'string' ||
-                socket.liveSessionId !== sessionId
+                (socket.liveSessionId !== sessionId /* XL_WATCHER_SEND_V1 */ && !socket.rooms.has(`live:${sessionId}`))
             ) {
                 return;
             }
@@ -7052,7 +7052,7 @@ io.on('connection', (socket) => {
                 !userId ||
                 !sessionId ||
                 typeof reaction !== 'string' ||
-                socket.liveSessionId !== sessionId
+                (socket.liveSessionId !== sessionId /* XL_WATCHER_SEND_V1 */ && !socket.rooms.has(`live:${sessionId}`))
             ) {
                 return;
             }
